@@ -1,5 +1,4 @@
 ﻿using System;
-using System.Threading.Tasks;
 using System.Windows.Input;
 
 namespace MMAAgent.Desktop.ViewModels
@@ -14,7 +13,7 @@ namespace MMAAgent.Desktop.ViewModels
             private set => SetProperty(ref _currentPage, value);
         }
 
-        public GameViewModel Game { get; }
+        public DashboardViewModel Dashboard { get; }
         public RosterViewModel Roster { get; }
         public PromotionsViewModel Promotions { get; }
         public FightProfileViewModel FightProfile { get; }
@@ -30,15 +29,15 @@ namespace MMAAgent.Desktop.ViewModels
             PromotionsViewModel promotions,
             FightProfileViewModel fightProfile)
         {
-            Game = game;
+            Dashboard = dashboard;
             Roster = roster;
             Promotions = promotions;
             FightProfile = fightProfile;
 
             GoDashboardCommand = new RelayCommand(async () =>
             {
-                await Game.LoadAsync();
-                CurrentPage = Game;
+                await Dashboard.LoadAsync();
+                CurrentPage = Dashboard;
             });
 
             GoPromotionsCommand = new RelayCommand(() =>
@@ -52,7 +51,7 @@ namespace MMAAgent.Desktop.ViewModels
                 CurrentPage = Roster;
             });
 
-            CurrentPage = Game;
+            CurrentPage = Dashboard;
         }
     }
 
