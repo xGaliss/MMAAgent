@@ -23,7 +23,7 @@
                                FontSize="22"
                                FontWeight="Bold"
                                VerticalAlignment="Center"/>
-                    <TextBlock Text="   " />
+                    <TextBlock Text=" " />
                     <TextBlock Text="{Binding RosterCountText}"
                                VerticalAlignment="Center"
                                Opacity="0.8"/>
@@ -40,8 +40,8 @@
 
             <!-- LEFT: Fighters list -->
             <GroupBox Grid.Column="0" Header="Luchadores" Margin="0,0,10,0">
-                <DataGrid ItemsSource="{Binding Roster.Fighters}"
-                          SelectedItem="{Binding SelectedFighter}"
+                <DataGrid ItemsSource="{Binding Fighters}"
+                          SelectedItem="{Binding SelectedFighter, Mode=TwoWay}"
                           AutoGenerateColumns="False"
                           IsReadOnly="True"
                           CanUserAddRows="False"
@@ -61,7 +61,6 @@
             <GroupBox Grid.Column="1" Header="Detalle del luchador">
                 <ScrollViewer VerticalScrollBarVisibility="Auto">
                     <StackPanel Margin="12">
-
                         <TextBlock Text="{Binding SelectedFighter.Name, TargetNullValue=Selecciona un luchador}"
                                    FontSize="22"
                                    FontWeight="Bold"
@@ -108,7 +107,6 @@
                             <Run Text="{Binding SelectedFighter.Losses, TargetNullValue=0}"/>
                             <Run Text="."/>
                         </TextBlock>
-
                     </StackPanel>
                 </ScrollViewer>
             </GroupBox>

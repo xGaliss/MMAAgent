@@ -1,10 +1,13 @@
-﻿using System.Windows.Input;
+﻿using System;
+using System.Threading.Tasks;
+using System.Windows.Input;
 
 namespace MMAAgent.Desktop.ViewModels
 {
     public sealed class GameShellViewModel : ObservableObject
     {
         private object? _currentPage;
+
         public object? CurrentPage
         {
             get => _currentPage;
@@ -35,7 +38,7 @@ namespace MMAAgent.Desktop.ViewModels
             GoDashboardCommand = new RelayCommand(async () =>
             {
                 await Game.LoadAsync();
-                CurrentPage = dashboard;
+                CurrentPage = Game;
             });
 
             GoPromotionsCommand = new RelayCommand(() =>
@@ -49,7 +52,7 @@ namespace MMAAgent.Desktop.ViewModels
                 CurrentPage = Roster;
             });
 
-            CurrentPage = dashboard;
+            CurrentPage = Game;
         }
     }
 
@@ -57,6 +60,7 @@ namespace MMAAgent.Desktop.ViewModels
     {
         private readonly Action _execute;
         private readonly Func<bool>? _canExecute;
+
         public event EventHandler? CanExecuteChanged;
 
         public RelayCommand(Action execute, Func<bool>? canExecute = null)
@@ -66,7 +70,9 @@ namespace MMAAgent.Desktop.ViewModels
         }
 
         public bool CanExecute(object? parameter) => _canExecute?.Invoke() ?? true;
+
         public void Execute(object? parameter) => _execute();
+
         public void RaiseCanExecuteChanged() => CanExecuteChanged?.Invoke(this, EventArgs.Empty);
     }
 }
