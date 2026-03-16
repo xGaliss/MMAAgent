@@ -1,0 +1,107 @@
+﻿<UserControl x:Class="MMAAgent.Desktop.Views.FightProfileView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <Grid Margin="12">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+
+        <!-- Header -->
+        <Border Padding="12" CornerRadius="10" BorderBrush="#2A2A2A" BorderThickness="1">
+            <StackPanel>
+                <TextBlock FontSize="22" FontWeight="Bold"
+                           Text="{Binding Fighter.Name, FallbackValue=Fighter}" />
+                <StackPanel Orientation="Horizontal" Opacity="0.85">
+                    <TextBlock Text="{Binding Fighter.CountryName}" />
+                    <TextBlock Text=" • " />
+                    <TextBlock Text="{Binding Fighter.WeightClass}" />
+                    <TextBlock Text=" • Age " />
+                    <TextBlock Text="{Binding Fighter.Age}" />
+                    <TextBlock Text=" • " />
+                    <TextBlock Text="{Binding Fighter.Wins}" />
+                    <TextBlock Text="-" />
+                    <TextBlock Text="{Binding Fighter.Losses}" />
+                    <TextBlock Text="-" />
+                    <TextBlock Text="{Binding Fighter.Draws}" />
+                    <TextBlock Text="  " />
+                    <!--<TextBlock Text="{Binding Fighter.IsChampion, Converter={StaticResource BoolToChampionTextConverter}, FallbackValue=''}" />-->
+                </StackPanel>
+            </StackPanel>
+        </Border>
+
+        <!-- Stats + Contract -->
+        <Grid Grid.Row="1" Margin="0,10,0,10">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="2*"/>
+                <ColumnDefinition Width="3*"/>
+            </Grid.ColumnDefinitions>
+
+            <Border Grid.Column="0" Padding="12" CornerRadius="10" BorderBrush="#2A2A2A" BorderThickness="1" Margin="0,0,10,0">
+                <StackPanel>
+                    <TextBlock Text="Stats" FontWeight="Bold" Margin="0,0,0,6"/>
+                    <UniformGrid Columns="2">
+                        <TextBlock Text="Skill"/>
+                        <TextBlock Text="{Binding Fighter.Skill}"/>
+                        <TextBlock Text="Potential"/>
+                        <TextBlock Text="{Binding Fighter.Potential}"/>
+                        <TextBlock Text="Popularity"/>
+                        <TextBlock Text="{Binding Fighter.Popularity}"/>
+                        <TextBlock Text="Striking"/>
+                        <TextBlock Text="{Binding Fighter.Striking}"/>
+                        <TextBlock Text="Wrestling"/>
+                        <TextBlock Text="{Binding Fighter.Wrestling}"/>
+                        <TextBlock Text="Grappling"/>
+                        <TextBlock Text="{Binding Fighter.Grappling}"/>
+                        <TextBlock Text="Cardio"/>
+                        <TextBlock Text="{Binding Fighter.Cardio}"/>
+                        <TextBlock Text="Chin"/>
+                        <TextBlock Text="{Binding Fighter.Chin}"/>
+                        <TextBlock Text="IQ"/>
+                        <TextBlock Text="{Binding Fighter.FightIQ}"/>
+                    </UniformGrid>
+                </StackPanel>
+            </Border>
+
+            <Border Grid.Column="1" Padding="12" CornerRadius="10" BorderBrush="#2A2A2A" BorderThickness="1">
+                <StackPanel>
+                    <TextBlock Text="Contract / Ranking" FontWeight="Bold" Margin="0,0,0,6"/>
+                    <UniformGrid Columns="2">
+                        <TextBlock Text="Promotion"/>
+                        <TextBlock Text="{Binding Fighter.PromotionName}"/>
+                        <TextBlock Text="Status"/>
+                        <TextBlock Text="{Binding Fighter.ContractStatus}"/>
+                        <TextBlock Text="Salary"/>
+                        <TextBlock Text="{Binding Fighter.Salary}"/>
+                        <TextBlock Text="Remaining"/>
+                        <TextBlock Text="{Binding Fighter.ContractFightsRemaining}"/>
+                        <TextBlock Text="Total"/>
+                        <TextBlock Text="{Binding Fighter.TotalFightsInContract}"/>
+                        <TextBlock Text="Rank"/>
+                        <TextBlock Text="{Binding Fighter.RankPosition, TargetNullValue='—'}"/>
+                    </UniformGrid>
+                </StackPanel>
+            </Border>
+        </Grid>
+
+        <!-- History -->
+        <Border Grid.Row="2" Padding="12" CornerRadius="10" BorderBrush="#2A2A2A" BorderThickness="1">
+            <StackPanel>
+                <TextBlock Text="Recent fights" FontWeight="Bold" Margin="0,0,0,6"/>
+                <DataGrid ItemsSource="{Binding History}" AutoGenerateColumns="False" IsReadOnly="True">
+                    <DataGrid.Columns>
+                        <DataGridTextColumn Header="Date" Binding="{Binding Date}" Width="140"/>
+                        <DataGridTextColumn Header="W/L" Binding="{Binding Result}" Width="60"/>
+                        <DataGridTextColumn Header="Opponent" Binding="{Binding Opponent}" Width="*"/>
+                        <DataGridTextColumn Header="Method" Binding="{Binding Method}" Width="90"/>
+                        <DataGridTextColumn Header="Title" Binding="{Binding IsTitle}" Width="70"/>
+                        <DataGridTextColumn Header="Promotion" Binding="{Binding Promotion}" Width="140"/>
+                        <DataGridTextColumn Header="Event" Binding="{Binding EventName}" Width="200"/>
+                    </DataGrid.Columns>
+                </DataGrid>
+            </StackPanel>
+        </Border>
+    </Grid>
+</UserControl>

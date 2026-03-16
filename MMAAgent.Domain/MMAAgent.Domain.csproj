@@ -1,0 +1,22 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Remove="Fighters - Copia\**" />
+    <EmbeddedResource Remove="Fighters - Copia\**" />
+    <None Remove="Fighters - Copia\**" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Folder Include="Events\" />
+    <Folder Include="Contracts\" />
+    <Folder Include="Rankings\" />
+    <Folder Include="Promotions\" />
+  </ItemGroup>
+
+</Project>

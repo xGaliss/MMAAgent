@@ -1,0 +1,35 @@
+﻿<UserControl x:Class="MMAAgent.Desktop.Views.GameShellView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <Grid>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="240"/>
+            <ColumnDefinition Width="*"/>
+        </Grid.ColumnDefinitions>
+
+        <!-- Sidebar -->
+        <Border Grid.Column="0" BorderBrush="#DDD" BorderThickness="0,0,1,0" Padding="10">
+            <StackPanel>
+                <TextBlock Text="MMA Agent" FontSize="24" FontWeight="Bold" Margin="0,0,0,12"/>
+
+                <Button Content="Dashboard" Margin="0,0,0,8"
+                        Command="{Binding GoDashboardCommand}"/>
+
+                <Button Content="Promotions" Margin="0,0,0,8"
+                        Command="{Binding GoPromotionsCommand}"/>
+
+                <Button Content="Roster" Margin="0,0,0,8"
+                        Command="{Binding GoRosterCommand}"/>
+
+                <Separator Margin="0,14,0,10"/>
+
+                <TextBlock Text="Future" Opacity="0.7" Margin="0,0,0,6"/>
+                <Button Content="Gyms (soon)" IsEnabled="False"/>
+            </StackPanel>
+        </Border>
+
+        <!-- Page host -->
+        <ContentControl Grid.Column="1" Content="{Binding CurrentPage}" />
+    </Grid>
+</UserControl>

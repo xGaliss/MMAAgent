@@ -1,0 +1,39 @@
+﻿<Application x:Class="MMAAgent.Desktop.App"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="clr-namespace:MMAAgent.Desktop.ViewModels"
+             xmlns:views="clr-namespace:MMAAgent.Desktop.Views"
+             xmlns:conv="clr-namespace:MMAAgent.Desktop.Converters">
+
+    <Application.Resources>
+        <conv:InverseBoolConverter x:Key="InverseBoolConverter"/>
+
+        <DataTemplate DataType="{x:Type vm:MainMenuViewModel}">
+            <views:MainMenuView/>
+        </DataTemplate>
+
+        <DataTemplate DataType="{x:Type vm:GameShellViewModel}">
+            <views:GameShellView/>
+        </DataTemplate>
+
+        <DataTemplate DataType="{x:Type vm:DashboardViewModel}">
+            <views:DashboardView/>
+        </DataTemplate>
+
+        <DataTemplate DataType="{x:Type vm:PromotionsViewModel}">
+            <views:PromotionsView/>
+        </DataTemplate>
+
+        <DataTemplate DataType="{x:Type vm:RosterViewModel}">
+            <views:RosterView/>
+        </DataTemplate>
+
+        <DataTemplate DataType="{x:Type vm:GameViewModel}">
+            <views:GameView/>
+        </DataTemplate>
+
+        <DataTemplate DataType="{x:Type vm:FightProfileViewModel}">
+            <views:FightProfileView/>
+        </DataTemplate>
+    </Application.Resources>
+</Application>
