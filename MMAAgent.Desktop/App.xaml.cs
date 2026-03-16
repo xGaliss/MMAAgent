@@ -103,6 +103,9 @@ namespace MMAAgent.Desktop
             services.AddSingleton<IPromotionEventScheduleRepository, MMAAgent.Infrastructure.Persistence.Sqlite.Repositories.PromotionEventScheduleRepositorySqlite>();
             services.AddSingleton<IPromotionRepository, PromotionRepositorySqlite>();
             services.AddSingleton<PromotionsViewModel>();
+            services.AddSingleton<MMAAgent.Application.Abstractions.IAgentProfileRepository, MMAAgent.Infrastructure.Persistence.Sqlite.Repositories.AgentProfileRepository>();
+            services.AddSingleton<MMAAgent.Desktop.Services.CreateAgentProfileService>();
+            services.AddSingleton<MMAAgent.Desktop.ViewModels.NewGameSetupViewModel>();
             // ⚠️ dbPath aquí todavía NO lo usamos, porque ahora trabajamos con DB de partida (save).
             // Cuando hagamos DbBootstrap, ahí sí necesitaremos la ruta a la plantilla.
         }

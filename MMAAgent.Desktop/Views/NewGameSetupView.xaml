@@ -1,0 +1,58 @@
+<UserControl x:Class="MMAAgent.Desktop.Views.NewGameSetupView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <Grid Background="#111">
+        <Border Width="520"
+                Padding="24"
+                Background="#1E1E1E"
+                BorderBrush="#444"
+                BorderThickness="1"
+                CornerRadius="10"
+                HorizontalAlignment="Center"
+                VerticalAlignment="Center">
+            <StackPanel>
+                <TextBlock Text="Nueva partida"
+                           FontSize="28"
+                           FontWeight="Bold"
+                           Foreground="White"
+                           Margin="0,0,0,8"/>
+
+                <TextBlock Text="Crea tu agente antes de entrar al juego"
+                           Foreground="#CCCCCC"
+                           Margin="0,0,0,20"/>
+
+                <TextBlock Text="Nombre del agente"
+                           Foreground="White"
+                           Margin="0,0,0,6"/>
+                <TextBox Text="{Binding AgentName, UpdateSourceTrigger=PropertyChanged}"
+                         Height="34"
+                         Margin="0,0,0,16"/>
+
+                <TextBlock Text="Nombre de la agencia"
+                           Foreground="White"
+                           Margin="0,0,0,6"/>
+                <TextBox Text="{Binding AgencyName, UpdateSourceTrigger=PropertyChanged}"
+                         Height="34"
+                         Margin="0,0,0,16"/>
+
+                <TextBlock Text="{Binding ErrorText}"
+                           Foreground="#FF7B7B"
+                           Margin="0,0,0,16"
+                           TextWrapping="Wrap"/>
+
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                    <Button Content="Cancelar"
+                            Width="110"
+                            Height="36"
+                            Margin="0,0,10,0"
+                            Click="Cancel_Click"/>
+
+                    <Button Content="Crear partida"
+                            Width="140"
+                            Height="36"
+                            Click="Create_Click"/>
+                </StackPanel>
+            </StackPanel>
+        </Border>
+    </Grid>
+</UserControl>

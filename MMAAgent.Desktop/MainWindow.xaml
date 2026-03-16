@@ -1,9 +1,49 @@
 ﻿<Window x:Class="MMAAgent.Desktop.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="MMA Agent" Width="1100" Height="650"
-        WindowStartupLocation="CenterScreen">
-    <Grid Margin="10">
+        xmlns:vm="clr-namespace:MMAAgent.Desktop.ViewModels"
+        xmlns:views="clr-namespace:MMAAgent.Desktop.Views"
+        Title="MMA Agent"
+        Width="1200"
+        Height="800">
+
+    <Window.Resources>
+
+        <!-- MAIN MENU -->
+        <DataTemplate DataType="{x:Type vm:MainMenuViewModel}">
+            <views:MainMenuView />
+        </DataTemplate>
+
+        <!-- NEW GAME SETUP -->
+        <DataTemplate DataType="{x:Type vm:NewGameSetupViewModel}">
+            <views:NewGameSetupView />
+        </DataTemplate>
+
+        <!-- GAME SHELL -->
+        <DataTemplate DataType="{x:Type vm:GameShellViewModel}">
+            <views:GameShellView />
+        </DataTemplate>
+
+        <!-- DASHBOARD -->
+        <DataTemplate DataType="{x:Type vm:DashboardViewModel}">
+            <views:DashboardView />
+        </DataTemplate>
+
+        <!-- ROSTER -->
+        <DataTemplate DataType="{x:Type vm:RosterViewModel}">
+            <views:RosterView />
+        </DataTemplate>
+
+        <!-- PROMOTIONS -->
+        <DataTemplate DataType="{x:Type vm:PromotionsViewModel}">
+            <views:PromotionsView />
+        </DataTemplate>
+
+    </Window.Resources>
+
+    <Grid>
+        <!-- ESTA LÍNEA ES CLAVE -->
         <ContentControl Content="{Binding CurrentView}" />
     </Grid>
+
 </Window>

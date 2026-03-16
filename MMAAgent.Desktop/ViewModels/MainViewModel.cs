@@ -1,5 +1,5 @@
-﻿using MMAAgent.Application.Abstractions;
-using MMAAgent.Desktop.Services;
+﻿using System.Threading.Tasks;
+using MMAAgent.Application.Abstractions;
 
 namespace MMAAgent.Desktop.ViewModels
 {
@@ -14,41 +14,56 @@ namespace MMAAgent.Desktop.ViewModels
         }
 
         private readonly ISavePathProvider _savePath;
-        private readonly NewGameService _newGame;
         private readonly MainMenuViewModel _menuVm;
+        private readonly NewGameSetupViewModel _newGameSetupVm;
         private readonly GameShellViewModel _gameShellVm;
 
         public MainViewModel(
             ISavePathProvider savePath,
-            NewGameService newGame,
             MainMenuViewModel menuVm,
+            NewGameSetupViewModel newGameSetupVm,
             GameShellViewModel gameShellVm)
         {
             _savePath = savePath;
-            _newGame = newGame;
             _menuVm = menuVm;
+            _newGameSetupVm = newGameSetupVm;
             _gameShellVm = gameShellVm;
 
-            _menuVm.OnNewGame = NewGame;
+            _menuVm.OnNewGame = ShowNewGameSetup;
             _menuVm.OnLoadLast = LoadLast;
+
+            _newGameSetupVm.OnCancel = GoToMenu;
+            _newGameSetupVm.OnCreateCompleted = EnterGameAfterCreationAsync;
 
             CurrentView = _menuVm;
         }
 
-        public async void NewGame()
+        private void ShowNewGameSetup()
         {
-            _newGame.CreateAndLoadNewGame("MiPartida", fighterCount: 800);
+            _newGameSetupVm.AgentName = "";
+            _newGameSetupVm.AgencyName = "";
+            _newGameSetupVm.ErrorText = "";
+            CurrentView = _newGameSetupVm;
+        }
+
+        private async Task EnterGameAfterCreationAsync()
+        {
             await _gameShellVm.Dashboard.LoadAsync();
             CurrentView = _gameShellVm;
         }
 
-        public async void LoadLast()
+        private async void LoadLast()
         {
             if (!string.IsNullOrWhiteSpace(_savePath.CurrentPath))
             {
                 await _gameShellVm.Dashboard.LoadAsync();
                 CurrentView = _gameShellVm;
             }
+        }
+
+        private void GoToMenu()
+        {
+            CurrentView = _menuVm;
         }
     }
 }
