@@ -16,22 +16,26 @@ namespace MMAAgent.Desktop.ViewModels
         public DashboardViewModel Dashboard { get; }
         public RosterViewModel Roster { get; }
         public PromotionsViewModel Promotions { get; }
+        public MyFightersViewModel MyFighters { get; }
         public FightProfileViewModel FightProfile { get; }
 
         public ICommand GoDashboardCommand { get; }
         public ICommand GoPromotionsCommand { get; }
         public ICommand GoRosterCommand { get; }
+        public ICommand GoMyFightersCommand { get; }
 
         public GameShellViewModel(
             GameViewModel game,
             DashboardViewModel dashboard,
             RosterViewModel roster,
             PromotionsViewModel promotions,
+            MyFightersViewModel myFighters,
             FightProfileViewModel fightProfile)
         {
             Dashboard = dashboard;
             Roster = roster;
             Promotions = promotions;
+            MyFighters = myFighters;
             FightProfile = fightProfile;
 
             GoDashboardCommand = new RelayCommand(async () =>
@@ -49,6 +53,12 @@ namespace MMAAgent.Desktop.ViewModels
             {
                 await Roster.LoadAsync();
                 CurrentPage = Roster;
+            });
+
+            GoMyFightersCommand = new RelayCommand(async () =>
+            {
+                await MyFighters.LoadAsync();
+                CurrentPage = MyFighters;
             });
 
             CurrentPage = Dashboard;

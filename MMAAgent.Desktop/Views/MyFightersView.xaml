@@ -1,0 +1,109 @@
+<UserControl x:Class="MMAAgent.Desktop.Views.MyFightersView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <Grid Margin="10">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+
+        <Border Grid.Row="0"
+                Padding="12"
+                Margin="0,0,0,10"
+                BorderBrush="#666"
+                BorderThickness="1"
+                Background="#FFF8F8F8">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+
+                <StackPanel>
+                    <TextBlock Text="{Binding TitleText}"
+                               FontSize="24"
+                               FontWeight="Bold"/>
+                    <TextBlock Text="{Binding StatusText}"
+                               Margin="0,6,0,0"
+                               Opacity="0.8"/>
+                </StackPanel>
+
+                <Button Grid.Column="1"
+                        Content="Firmar luchador aleatorio"
+                        Padding="14,8"
+                        Margin="12,0,0,0"
+                        Command="{Binding SignRandomFighterCommand}"
+                        VerticalAlignment="Center"/>
+            </Grid>
+        </Border>
+
+        <Grid Grid.Row="1">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="2.2*"/>
+                <ColumnDefinition Width="1.2*"/>
+            </Grid.ColumnDefinitions>
+
+            <GroupBox Grid.Column="0" Header="Clientes">
+                <DataGrid ItemsSource="{Binding Fighters}"
+                          SelectedItem="{Binding SelectedFighter, Mode=TwoWay}"
+                          AutoGenerateColumns="False"
+                          IsReadOnly="True"
+                          CanUserAddRows="False">
+                    <DataGrid.Columns>
+                        <DataGridTextColumn Header="ID" Binding="{Binding FighterId}" Width="70"/>
+                        <DataGridTextColumn Header="Nombre" Binding="{Binding Name}" Width="*"/>
+                        <DataGridTextColumn Header="W" Binding="{Binding Wins}" Width="55"/>
+                        <DataGridTextColumn Header="L" Binding="{Binding Losses}" Width="55"/>
+                        <DataGridTextColumn Header="País" Binding="{Binding CountryName}" Width="140"/>
+                        <DataGridTextColumn Header="Peso" Binding="{Binding WeightClass}" Width="130"/>
+                        <DataGridTextColumn Header="% Agencia" Binding="{Binding ManagementPercent}" Width="90"/>
+                    </DataGrid.Columns>
+                </DataGrid>
+            </GroupBox>
+
+            <GroupBox Grid.Column="1" Header="Detalle" Margin="10,0,0,0">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel Margin="12">
+                        <TextBlock Text="{Binding SelectedFighter.Name, TargetNullValue=Sin selección}"
+                                   FontSize="22"
+                                   FontWeight="Bold"
+                                   Margin="0,0,0,12"/>
+
+                        <TextBlock Margin="0,0,0,6">
+                            <Run Text="ID: " FontWeight="Bold"/>
+                            <Run Text="{Binding SelectedFighter.FighterId, TargetNullValue=-}"/>
+                        </TextBlock>
+
+                        <TextBlock Margin="0,0,0,6">
+                            <Run Text="Récord: " FontWeight="Bold"/>
+                            <Run Text="{Binding SelectedFighter.Wins, TargetNullValue=0}"/>
+                            <Run Text="-"/>
+                            <Run Text="{Binding SelectedFighter.Losses, TargetNullValue=0}"/>
+                        </TextBlock>
+
+                        <TextBlock Margin="0,0,0,6">
+                            <Run Text="País: " FontWeight="Bold"/>
+                            <Run Text="{Binding SelectedFighter.CountryName, TargetNullValue=-}"/>
+                        </TextBlock>
+
+                        <TextBlock Margin="0,0,0,6">
+                            <Run Text="División: " FontWeight="Bold"/>
+                            <Run Text="{Binding SelectedFighter.WeightClass, TargetNullValue=-}"/>
+                        </TextBlock>
+
+                        <TextBlock Margin="0,0,0,6">
+                            <Run Text="% Agencia: " FontWeight="Bold"/>
+                            <Run Text="{Binding SelectedFighter.ManagementPercent, TargetNullValue=0}"/>
+                        </TextBlock>
+
+                        <TextBlock Margin="0,0,0,6">
+                            <Run Text="Firmado: " FontWeight="Bold"/>
+                            <Run Text="{Binding SelectedFighter.SignedDate, TargetNullValue=-}"/>
+                        </TextBlock>
+                    </StackPanel>
+                </ScrollViewer>
+            </GroupBox>
+        </Grid>
+    </Grid>
+</UserControl>

@@ -4,46 +4,48 @@
         xmlns:vm="clr-namespace:MMAAgent.Desktop.ViewModels"
         xmlns:views="clr-namespace:MMAAgent.Desktop.Views"
         Title="MMA Agent"
+        WindowStartupLocation="CenterScreen"
         Width="1200"
-        Height="800">
+        Height="800"
+        MinWidth="1000"
+        MinHeight="700">
 
     <Window.Resources>
-
-        <!-- MAIN MENU -->
         <DataTemplate DataType="{x:Type vm:MainMenuViewModel}">
             <views:MainMenuView />
         </DataTemplate>
 
-        <!-- NEW GAME SETUP -->
         <DataTemplate DataType="{x:Type vm:NewGameSetupViewModel}">
             <views:NewGameSetupView />
         </DataTemplate>
 
-        <!-- GAME SHELL -->
         <DataTemplate DataType="{x:Type vm:GameShellViewModel}">
             <views:GameShellView />
         </DataTemplate>
 
-        <!-- DASHBOARD -->
         <DataTemplate DataType="{x:Type vm:DashboardViewModel}">
             <views:DashboardView />
         </DataTemplate>
 
-        <!-- ROSTER -->
         <DataTemplate DataType="{x:Type vm:RosterViewModel}">
             <views:RosterView />
         </DataTemplate>
 
-        <!-- PROMOTIONS -->
         <DataTemplate DataType="{x:Type vm:PromotionsViewModel}">
             <views:PromotionsView />
         </DataTemplate>
 
+        <DataTemplate DataType="{x:Type vm:FightProfileViewModel}">
+            <views:FightProfileView />
+        </DataTemplate>
+
+        <DataTemplate DataType="{x:Type vm:MyFightersViewModel}">
+            <views:MyFightersView />
+        </DataTemplate>
+        
     </Window.Resources>
 
     <Grid>
-        <!-- ESTA LÍNEA ES CLAVE -->
         <ContentControl Content="{Binding CurrentView}" />
     </Grid>
-
 </Window>
