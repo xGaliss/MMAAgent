@@ -21,8 +21,16 @@
 
                 <Button Content="Roster" Margin="0,0,0,8"
                         Command="{Binding GoRosterCommand}"/>
-                <Button Content="Mis luchadores"
+
+                <Button Content="Mis luchadores" Margin="0,0,0,8"
                         Command="{Binding GoMyFightersCommand}" />
+
+                <Button Content="Scouting" Margin="0,0,0,8"
+                        Command="{Binding GoScoutingCommand}" />
+
+                <Button Content="Inbox" Margin="0,0,0,8"
+        Command="{Binding GoInboxCommand}" />
+
                 <Separator Margin="0,14,0,10"/>
 
                 <TextBlock Text="Future" Opacity="0.7" Margin="0,0,0,6"/>

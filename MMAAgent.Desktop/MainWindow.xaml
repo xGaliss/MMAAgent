@@ -42,7 +42,15 @@
         <DataTemplate DataType="{x:Type vm:MyFightersViewModel}">
             <views:MyFightersView />
         </DataTemplate>
-        
+
+        <DataTemplate DataType="{x:Type vm:ScoutingViewModel}">
+            <views:ScoutingView />
+        </DataTemplate>
+
+        <DataTemplate DataType="{x:Type vm:InboxViewModel}">
+            <views:InboxView />
+        </DataTemplate>
+
     </Window.Resources>
 
     <Grid>

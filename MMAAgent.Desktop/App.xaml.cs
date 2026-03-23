@@ -108,6 +108,13 @@ namespace MMAAgent.Desktop
             services.AddSingleton<MMAAgent.Desktop.ViewModels.NewGameSetupViewModel>();
             services.AddSingleton<IManagedFighterRepository, ManagedFighterRepository>();
             services.AddSingleton<MyFightersViewModel>();
+            services.AddSingleton<ScoutingViewModel>();
+
+            services.AddSingleton<IFightOfferRepository, FightOfferRepository>();
+            services.AddSingleton<IInboxRepository, InboxRepository>();
+
+            services.AddSingleton<GenerateFightOfferService>();
+            services.AddSingleton<InboxViewModel>();
             // ⚠️ dbPath aquí todavía NO lo usamos, porque ahora trabajamos con DB de partida (save).
             // Cuando hagamos DbBootstrap, ahí sí necesitaremos la ruta a la plantilla.
         }
