@@ -30,6 +30,7 @@ builder.Services.AddScoped<IEventRepository, SqliteEventRepository>();
 builder.Services.AddScoped<IAgentProfileRepository, AgentProfileRepository>();
 builder.Services.AddScoped<IInboxRepository, InboxRepository>();
 builder.Services.AddScoped<IFightOfferRepository, FightOfferRepository>();
+builder.Services.AddScoped<IManagedFighterRepository, ManagedFighterRepository>();
 
 builder.Services.AddScoped<IContractServiceSqlite, ContractServiceSqlite>();
 builder.Services.AddScoped<IEventSimulator, SimulateEventSqlite>();
@@ -46,8 +47,10 @@ builder.Services.AddScoped<PromotionScheduleSeeder>();
 builder.Services.AddScoped<WebGameSessionService>();
 builder.Services.AddScoped<WebInboxService>();
 builder.Services.AddScoped<WebAgentProfileService>();
+builder.Services.AddScoped<WebDashboardStatsService>();
+builder.Services.AddScoped<WebRosterService>();
+builder.Services.AddScoped<WebPromotionProfileService>();
 builder.Services.AddScoped<FightProfileReadService>();
-builder.Services.AddScoped<IManagedFighterRepository, ManagedFighterRepository>();
 
 var app = builder.Build();
 

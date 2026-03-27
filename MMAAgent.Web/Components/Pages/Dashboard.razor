@@ -3,10 +3,10 @@
 @using MMAAgent.Application
 @using MMAAgent.Application.Abstractions
 @using MMAAgent.Domain.Common
+@using MMAAgent.Web.Services
 @inject IGameStateRepository GameStateRepository
-@inject IFighterRepository FighterRepository
-@inject IPromotionRepository PromotionRepository
 @inject GameTimeService GameTimeService
+@inject WebDashboardStatsService DashboardStatsService
 
 <PageTitle>Dashboard - MMA Agent</PageTitle>
 
@@ -113,8 +113,9 @@ else
             _error = null;
 
             _gameState = await GameStateRepository.GetAsync();
-            _fighterCount = (await FighterRepository.GetRosterAsync(200)).Count;
-            _promotionCount = (await PromotionRepository.GetAllAsync()).Count;
+            var stats = await DashboardStatsService.LoadAsync();
+            _fighterCount = stats.FighterCount;
+            _promotionCount = stats.PromotionCount;
         }
         catch (Exception ex)
         {

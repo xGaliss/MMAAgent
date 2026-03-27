@@ -1,31 +1,68 @@
 ﻿@page "/roster"
-@using MMAAgent.Application.Abstractions
-@using MMAAgent.Domain.Fighters
-@inject IFighterRepository FighterRepository
+@rendermode InteractiveServer
+@using MMAAgent.Web.Models
+@using MMAAgent.Web.Services
+@inject WebRosterService RosterService
 
 <PageTitle>Roster - MMA Agent</PageTitle>
 
 <div class="page-header">
     <div>
         <h1>Roster</h1>
-        <p class="muted-text">Current fighters loaded from your save.</p>
+        <p class="muted-text">Search and filter the current save roster.</p>
     </div>
 </div>
 
+<section class="panel-card">
+    <div class="roster-filters">
+        <div>
+            <label class="field-label">Search</label>
+            <input class="text-input" @bind="_searchText" @bind:event="oninput" placeholder="Name or country..." />
+        </div>
+
+        <div>
+            <label class="field-label">Weight Class</label>
+            <select class="text-input" @bind="_weightClass">
+                <option value="">All</option>
+                @foreach (var item in _weightClasses)
+                {
+                    <option value="@item">@item</option>
+                }
+            </select>
+        </div>
+
+        <div>
+            <label class="field-label">Country</label>
+            <select class="text-input" @bind="_country">
+                <option value="">All</option>
+                @foreach (var item in _countries)
+                {
+                    <option value="@item">@item</option>
+                }
+            </select>
+        </div>
+
+        <div class="filter-actions">
+            <button class="btn-primary" @onclick="ApplyFiltersAsync">Apply filters</button>
+            <button class="btn-secondary" @onclick="ResetFiltersAsync">Reset</button>
+        </div>
+    </div>
+</section>
+
 @if (_error is not null)
 {
-    <div class="panel-card error-panel">@_error</div>
+    <div class="panel-card error-panel" style="margin-top:20px;">@_error</div>
 }
-else if (_fighters is null)
+else if (_loading)
 {
-    <div class="panel-card">Cargando roster...</div>
+    <div class="panel-card" style="margin-top:20px;">Cargando roster...</div>
 }
 else
 {
-    <div class="panel-card">
+    <div class="panel-card" style="margin-top:20px;">
         <div class="table-toolbar">
-            <div class="toolbar-title">@_fighters.Count fighters</div>
-            <div class="toolbar-subtitle">Click a fighter name to open the full profile</div>
+            <div class="toolbar-title">@_totalCount fighters</div>
+            <div class="toolbar-subtitle">Filtered live from the current save</div>
         </div>
 
         <table class="fighters-table">
@@ -38,14 +75,14 @@ else
                 </tr>
             </thead>
             <tbody>
-                @foreach (var fighter in _fighters)
+                @foreach (var fighter in _items)
                 {
                     <tr>
                         <td>
                             <a class="fighter-link" href="@($"/fighters/{fighter.Id}")">@fighter.Name</a>
                         </td>
                         <td>@fighter.WeightClass</td>
-                        <td>@fighter.Wins-@fighter.Losses</td>
+                        <td>@fighter.Wins-@fighter.Losses-@fighter.Draws</td>
                         <td>@fighter.CountryName</td>
                     </tr>
                 }
@@ -55,18 +92,51 @@ else
 }
 
 @code {
-    private IReadOnlyList<FighterSummary>? _fighters;
+    private string _searchText = "";
+    private string _weightClass = "";
+    private string _country = "";
+    private List<RosterListItemVm> _items = new();
+    private List<string> _weightClasses = new();
+    private List<string> _countries = new();
+    private int _totalCount;
+    private bool _loading = true;
     private string? _error;
 
     protected override async Task OnInitializedAsync()
     {
+        await LoadAsync();
+    }
+
+    private async Task ApplyFiltersAsync() => await LoadAsync();
+
+    private async Task ResetFiltersAsync()
+    {
+        _searchText = "";
+        _weightClass = "";
+        _country = "";
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
         try
         {
-            _fighters = await FighterRepository.GetRosterAsync(200);
+            _loading = true;
+            _error = null;
+
+            var result = await RosterService.SearchAsync(_searchText, _weightClass, _country, 500);
+            _items = result.Items.ToList();
+            _totalCount = result.TotalCount;
+            _weightClasses = result.Filters.WeightClasses.ToList();
+            _countries = result.Filters.Countries.ToList();
         }
         catch (Exception ex)
         {
             _error = ex.ToString();
+        }
+        finally
+        {
+            _loading = false;
         }
     }
 }

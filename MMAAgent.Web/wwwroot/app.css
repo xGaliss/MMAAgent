@@ -727,6 +727,10 @@ button {
     outline: none;
 }
 
+    .text-input::placeholder {
+        color: #95a4c6;
+    }
+
     .text-input:focus {
         border-color: rgba(212,175,55,0.28);
     }
@@ -1047,5 +1051,78 @@ button {
     }
 }
 
+/* Append this block at the end of your current app.css */
 
+.roster-filters {
+    display: grid;
+    grid-template-columns: 2fr 1fr 1fr auto;
+    gap: 14px;
+    align-items: end;
+}
 
+.filter-actions {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.promotion-champions-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 14px;
+}
+
+.ranking-block + .ranking-block {
+    margin-top: 20px;
+}
+
+.ranking-title {
+    font-size: 1.05rem;
+    font-weight: 900;
+    color: #eef3ff;
+    margin-bottom: 12px;
+}
+
+@media (max-width: 1100px) {
+    .roster-filters {
+        grid-template-columns: 1fr 1fr;
+    }
+
+    .promotion-champions-grid {
+        grid-template-columns: 1fr;
+    }
+}
+
+@media (max-width: 780px) {
+    .roster-filters {
+        grid-template-columns: 1fr;
+    }
+}
+
+select.text-input {
+    appearance: none;
+    -webkit-appearance: none;
+    -moz-appearance: none;
+    background: linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.04)), url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 20 20' fill='none'><path d='M5 7.5L10 12.5L15 7.5' stroke='%23d7dff7' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/></svg>");
+    background-repeat: no-repeat, no-repeat;
+    background-position: 0 0, right 12px center;
+    background-size: auto, 16px;
+    padding-right: 40px;
+    color: #eef3ff;
+}
+
+    select.text-input option {
+        background: #0f172a;
+        color: #eef3ff;
+    }
+
+    select.text-input:focus {
+        background-color: rgba(255,255,255,0.05);
+        color: #eef3ff;
+        border-color: rgba(212,175,55,0.28);
+        outline: none;
+    }
+
+    select.text-input::-ms-expand {
+        display: none;
+    }

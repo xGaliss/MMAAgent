@@ -26,7 +26,9 @@ else
         @foreach (var promotion in _promotions)
         {
             <article class="panel-card promotion-card">
-                <div class="promotion-name">@promotion.Name</div>
+                <div class="promotion-name">
+                    <a class="fighter-link" href="@($"/promotions/{promotion.Id}")">@promotion.Name</a>
+                </div>
                 <div class="promotion-meta">Prestige: @promotion.Prestige</div>
                 <div class="promotion-meta">Budget: @promotion.Budget</div>
                 <div class="promotion-meta">Active: @(promotion.IsActive ? "Yes" : "No")</div>
