@@ -11,6 +11,18 @@
         <h1>Inbox</h1>
         <p class="muted-text">Messages and fight offers for the current agent.</p>
     </div>
+
+    <div class="button-row">
+        <select class="text-input" @bind="_messageType">
+            <option value="">All message types</option>
+            @foreach (var item in _messageTypes)
+            {
+                <option value="@item">@item</option>
+            }
+        </select>
+        <button class="btn-secondary" @onclick="ReloadAsync">Apply</button>
+        <button class="btn-secondary" @onclick="MarkAllReadAsync">Mark all read</button>
+    </div>
 </div>
 
 @if (_error is not null)
@@ -105,6 +117,8 @@ else
     private InboxMessageVm? SelectedMessage;
     private bool _loading = true;
     private string? _error;
+    private string _messageType = "";
+    private List<string> _messageTypes = new();
 
     protected override async Task OnInitializedAsync()
     {
@@ -117,9 +131,10 @@ else
         {
             _loading = true;
             _error = null;
-            var result = await InboxService.LoadAsync();
+            var result = await InboxService.LoadAsync(_messageType);
             _messages = result.Messages.ToList();
             _offers = result.Offers.ToList();
+            _messageTypes = _messages.Select(x => x.MessageType).Distinct().OrderBy(x => x).ToList();
             SelectedMessage = _messages.FirstOrDefault();
         }
         catch (Exception ex)
@@ -129,6 +144,19 @@ else
         finally
         {
             _loading = false;
+        }
+    }
+
+    private async Task MarkAllReadAsync()
+    {
+        try
+        {
+            await InboxService.MarkAllReadAsync();
+            await ReloadAsync();
+        }
+        catch (Exception ex)
+        {
+            _error = ex.ToString();
         }
     }
 

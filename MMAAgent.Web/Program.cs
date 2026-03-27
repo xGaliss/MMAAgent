@@ -50,6 +50,10 @@ builder.Services.AddScoped<WebAgentProfileService>();
 builder.Services.AddScoped<WebDashboardStatsService>();
 builder.Services.AddScoped<WebRosterService>();
 builder.Services.AddScoped<WebPromotionProfileService>();
+builder.Services.AddScoped<WebMyFightersService>();
+builder.Services.AddScoped<WebMainMenuService>();
+builder.Services.AddScoped<WebDashboardFeedService>();
+builder.Services.AddScoped<WebWeeklySummaryService>();
 builder.Services.AddScoped<FightProfileReadService>();
 
 var app = builder.Build();

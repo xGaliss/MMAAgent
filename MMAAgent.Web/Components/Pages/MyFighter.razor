@@ -1,0 +1,132 @@
+﻿@page "/myfighters"
+@rendermode InteractiveServer
+@using MMAAgent.Web.Models
+@using MMAAgent.Web.Services
+@inject WebMyFightersService MyFightersService
+
+<PageTitle>My Fighters - MMA Agent</PageTitle>
+
+<div class="page-header">
+    <div>
+        <h1>My Fighters</h1>
+        <p class="muted-text">Your managed roster with fast access to profiles and contracts.</p>
+    </div>
+</div>
+
+<section class="panel-card">
+    <div class="roster-filters">
+        <div>
+            <label class="field-label">Search</label>
+            <input class="text-input" @bind="_search" @bind:event="oninput" placeholder="Name..." />
+        </div>
+        <div>
+            <label class="field-label">Promotion</label>
+            <select class="text-input" @bind="_promotion">
+                <option value="">All</option>
+                @foreach (var item in _promotions)
+                {
+                    <option value="@item">@item</option>
+                }
+            </select>
+        </div>
+        <div>
+            <label class="field-label">Weight Class</label>
+            <select class="text-input" @bind="_weightClass">
+                <option value="">All</option>
+                @foreach (var item in _weightClasses)
+                {
+                    <option value="@item">@item</option>
+                }
+            </select>
+        </div>
+        <div class="filter-actions">
+            <button class="btn-primary" @onclick="LoadAsync">Apply</button>
+            <button class="btn-secondary" @onclick="ResetAsync">Reset</button>
+        </div>
+    </div>
+</section>
+
+@if (_error is not null)
+{
+    <div class="panel-card error-panel" style="margin-top:20px;">@_error</div>
+}
+else if (_loading)
+{
+    <div class="panel-card" style="margin-top:20px;">Loading managed fighters...</div>
+}
+else
+{
+    <div class="myfighters-grid">
+        @foreach (var item in _fighters)
+        {
+            <article class="panel-card managed-fighter-card">
+                <div class="managed-top">
+                    <div>
+                        <div class="managed-name"><a class="fighter-link" href="@($"/fighters/{item.FighterId}")">@item.Name</a></div>
+                        <div class="muted-text">@item.WeightClass · @item.PromotionName</div>
+                    </div>
+                    @if (item.IsChampion)
+                    {
+                        <span class="champion-pill">Champion</span>
+                    }
+                </div>
+
+                <div class="managed-stats">
+                    <div><span>Record</span><strong>@item.Wins-@item.Losses-@item.Draws</strong></div>
+                    <div><span>Rank</span><strong>@(item.RankPosition?.ToString() ?? "-")</strong></div>
+                    <div><span>Contract</span><strong>@item.ContractStatus</strong></div>
+                    <div><span>Salary</span><strong>@item.Salary</strong></div>
+                </div>
+
+                <div class="muted-text" style="margin-top:10px;">
+                    Fights remaining: @item.ContractFightsRemaining / @item.TotalFightsInContract
+                </div>
+            </article>
+        }
+    </div>
+}
+
+@code {
+    private string _search = "";
+    private string _promotion = "";
+    private string _weightClass = "";
+    private List<string> _promotions = new();
+    private List<string> _weightClasses = new();
+    private List<ManagedFighterVm> _fighters = new();
+    private bool _loading = true;
+    private string? _error;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var filters = await MyFightersService.LoadFiltersAsync();
+        _promotions = filters.Promotions.ToList();
+        _weightClasses = filters.WeightClasses.ToList();
+        await LoadAsync();
+    }
+
+    private async Task ResetAsync()
+    {
+        _search = "";
+        _promotion = "";
+        _weightClass = "";
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        try
+        {
+            _loading = true;
+            _error = null;
+            _fighters = (await MyFightersService.LoadAsync(_search, _promotion, _weightClass)).ToList();
+        }
+        catch (Exception ex)
+        {
+            _error = ex.ToString();
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+}

@@ -3,10 +3,13 @@
 @using MMAAgent.Application
 @using MMAAgent.Application.Abstractions
 @using MMAAgent.Domain.Common
+@using MMAAgent.Web.Models
 @using MMAAgent.Web.Services
 @inject IGameStateRepository GameStateRepository
 @inject GameTimeService GameTimeService
 @inject WebDashboardStatsService DashboardStatsService
+@inject WebDashboardFeedService DashboardFeedService
+@inject WebWeeklySummaryService WeeklySummaryService
 
 <PageTitle>Dashboard - MMA Agent</PageTitle>
 
@@ -41,25 +44,75 @@ else if (_loading)
 else
 {
     <div class="stats-grid">
-        <article class="stat-card">
-            <div class="stat-label">Current Date</div>
-            <div class="stat-value">@(_gameState?.CurrentDate ?? "-")</div>
-        </article>
+        <article class="stat-card"><div class="stat-label">Current Date</div><div class="stat-value">@(_gameState?.CurrentDate ?? "-")</div></article>
+        <article class="stat-card"><div class="stat-label">Week</div><div class="stat-value">@(_gameState?.CurrentWeek.ToString() ?? "-")</div></article>
+        <article class="stat-card"><div class="stat-label">Fighters Loaded</div><div class="stat-value">@_fighterCount</div></article>
+        <article class="stat-card"><div class="stat-label">Promotions Loaded</div><div class="stat-value">@_promotionCount</div></article>
+    </div>
 
-        <article class="stat-card">
-            <div class="stat-label">Week</div>
-            <div class="stat-value">@(_gameState?.CurrentWeek.ToString() ?? "-")</div>
-        </article>
+    <div class="dashboard-live-grid">
+        <section class="panel-card">
+            <div class="toolbar-title">Latest Events</div>
+            <div class="dashboard-list">
+                @foreach (var item in _latestEvents)
+                {
+                    <div class="dashboard-list-item">@item</div>
+                }
+            </div>
+        </section>
 
-        <article class="stat-card">
-            <div class="stat-label">Fighters Loaded</div>
-            <div class="stat-value">@_fighterCount</div>
-        </article>
+        <section class="panel-card">
+            <div class="toolbar-title">Recent Inbox</div>
+            <div class="dashboard-list">
+                @foreach (var item in _recentMessages)
+                {
+                    <div class="dashboard-list-item">@item</div>
+                }
+            </div>
+        </section>
 
-        <article class="stat-card">
-            <div class="stat-label">Promotions Loaded</div>
-            <div class="stat-value">@_promotionCount</div>
-        </article>
+        <section class="panel-card">
+            <div class="toolbar-title">Top Managed Fighters</div>
+            <div class="dashboard-list">
+                @foreach (var item in _topManaged)
+                {
+                    <div class="dashboard-list-item">@item</div>
+                }
+            </div>
+        </section>
+
+        <section class="panel-card">
+            <div class="toolbar-title">Managed Champions</div>
+            <div class="dashboard-list">
+                @if (_managedChampions.Count == 0)
+                {
+                    <div class="dashboard-list-item">None yet</div>
+                }
+                else
+                {
+                    @foreach (var item in _managedChampions)
+                    {
+                        <div class="dashboard-list-item">@item</div>
+                    }
+                }
+            </div>
+        </section>
+    </div>
+
+    <div class="panel-card" style="margin-top:20px;">
+        <div class="toolbar-title">Pending Offers</div>
+        <div class="stat-value">@_pendingOffers</div>
+    </div>
+}
+
+@if (_summary is not null)
+{
+    <div class="panel-card" style="margin-top:20px;">
+        <div class="toolbar-title">Last Week Summary</div>
+        <div class="muted-text">Date: @_summary.NewDate · Week @_summary.NewWeek · Year @_summary.NewYear</div>
+        <div class="muted-text">New messages: @_summary.NewMessages</div>
+        <div class="muted-text">Events loaded: @_summary.RecentEventsLoaded</div>
+        <div class="muted-text">Headline: @(_summary.Headline ?? "-")</div>
     </div>
 }
 
@@ -72,10 +125,16 @@ else
     private GameState? _gameState;
     private int _fighterCount;
     private int _promotionCount;
+    private int _pendingOffers;
     private bool _loading = true;
     private bool _advancing;
     private string? _error;
     private string? _status;
+    private WeeklyAdvanceSummaryVm? _summary;
+    private List<string> _latestEvents = new();
+    private List<string> _recentMessages = new();
+    private List<string> _topManaged = new();
+    private List<string> _managedChampions = new();
 
     protected override async Task OnInitializedAsync()
     {
@@ -91,6 +150,7 @@ else
             _error = null;
 
             await GameTimeService.AdvanceWeeksAsync(1);
+            _summary = await WeeklySummaryService.BuildAsync();
             await ReloadAsync();
 
             _status = "Semana avanzada correctamente.";
@@ -116,6 +176,13 @@ else
             var stats = await DashboardStatsService.LoadAsync();
             _fighterCount = stats.FighterCount;
             _promotionCount = stats.PromotionCount;
+
+            var feed = await DashboardFeedService.LoadAsync();
+            _latestEvents = feed.Events.ToList();
+            _recentMessages = feed.Messages.ToList();
+            _topManaged = feed.Managed.ToList();
+            _managedChampions = feed.Champions.ToList();
+            _pendingOffers = feed.PendingOffers;
         }
         catch (Exception ex)
         {

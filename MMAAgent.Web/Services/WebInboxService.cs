@@ -23,15 +23,18 @@ public sealed class WebInboxService
         _fighterRepository = fighterRepository;
     }
 
-    public async Task<(IReadOnlyList<InboxMessageVm> Messages, IReadOnlyList<FightOfferVm> Offers)> LoadAsync()
+    public async Task<(IReadOnlyList<InboxMessageVm> Messages, IReadOnlyList<FightOfferVm> Offers)> LoadAsync(string? messageType = null)
     {
         var agent = await _agentRepository.GetAsync();
         if (agent == null)
             return (Array.Empty<InboxMessageVm>(), Array.Empty<FightOfferVm>());
 
         var messages = await _inboxRepository.GetByAgentAsync(agent.Id);
+        if (!string.IsNullOrWhiteSpace(messageType))
+            messages = messages.Where(x => x.MessageType == messageType).ToList();
+
         var offers = await _fightOfferRepository.GetByAgentAsync(agent.Id);
-        var roster = await _fighterRepository.GetRosterAsync(500);
+        var roster = await _fighterRepository.GetRosterAsync(5000);
 
         var messageRows = messages
             .Select(x => new InboxMessageVm(
@@ -60,18 +63,20 @@ public sealed class WebInboxService
         return (messageRows, offerRows);
     }
 
-    public Task MarkMessageAsReadAsync(int messageId) =>
-        _inboxRepository.MarkAsReadAsync(messageId);
+    public Task MarkMessageAsReadAsync(int messageId) => _inboxRepository.MarkAsReadAsync(messageId);
 
-    public async Task AcceptOfferAsync(int offerId)
+    public async Task MarkAllReadAsync()
     {
-        await UpdateOfferStatusAsync(offerId, "Accepted", "Oferta aceptada");
+        var agent = await _agentRepository.GetAsync();
+        if (agent == null) return;
+
+        var messages = await _inboxRepository.GetByAgentAsync(agent.Id);
+        foreach (var msg in messages.Where(x => !x.IsRead))
+            await _inboxRepository.MarkAsReadAsync(msg.Id);
     }
 
-    public async Task RejectOfferAsync(int offerId)
-    {
-        await UpdateOfferStatusAsync(offerId, "Rejected", "Oferta rechazada");
-    }
+    public async Task AcceptOfferAsync(int offerId) => await UpdateOfferStatusAsync(offerId, "Accepted", "Oferta aceptada");
+    public async Task RejectOfferAsync(int offerId) => await UpdateOfferStatusAsync(offerId, "Rejected", "Oferta rechazada");
 
     private async Task UpdateOfferStatusAsync(int offerId, string status, string subject)
     {

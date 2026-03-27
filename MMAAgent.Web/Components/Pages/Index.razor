@@ -1,8 +1,10 @@
 ﻿@page "/"
 @layout MMAAgent.Web.Components.Layout.MenuLayout
 @rendermode InteractiveServer
+@using MMAAgent.Web.Models
 @using MMAAgent.Web.Services
 @inject WebGameSessionService GameSession
+@inject WebMainMenuService MainMenuService
 @inject NavigationManager Navigation
 
 <PageTitle>Main Menu - MMA Agent</PageTitle>
@@ -18,8 +20,43 @@
 
     <div class="menu-card-grid">
         <section class="menu-card">
-            <div class="menu-card-title">Load Game</div>
-            <div class="menu-card-subtitle">Use the configured save, the last loaded save, or a custom path.</div>
+            <div class="menu-card-title">Detected Saves</div>
+            <div class="menu-card-subtitle">Recent saves found on this machine.</div>
+
+            <div class="save-card-list">
+                @foreach (var save in _saves)
+                {
+                    <article class="save-card">
+                        <div>
+                            <div class="save-name">@save.FileName</div>
+                            <div class="muted-text">@save.Path</div>
+                            <div class="muted-text">@save.LastWriteTimeUtc.ToLocalTime()</div>
+                        </div>
+                        <div class="button-row">
+                            <button class="btn-primary" @onclick="() => LoadDetectedAsync(save.Path)">Load</button>
+                            <button class="btn-secondary" @onclick="() => StartRename(save.Path)">Rename</button>
+                            <button class="btn-secondary" @onclick="() => DeleteSaveAsync(save.Path)">Delete</button>
+                        </div>
+                    </article>
+                }
+            </div>
+
+            @if (!string.IsNullOrWhiteSpace(_renamePath))
+            {
+                <div class="form-stack" style="margin-top:16px;">
+                    <label class="field-label">Rename selected save</label>
+                    <input class="text-input" @bind="_renameName" placeholder="New save name" />
+                    <div class="button-row">
+                        <button class="btn-primary" @onclick="RenameSaveAsync">Confirm rename</button>
+                        <button class="btn-secondary" @onclick="CancelRename">Cancel</button>
+                    </div>
+                </div>
+            }
+        </section>
+
+        <section class="menu-card">
+            <div class="menu-card-title">New Game / Manual Load</div>
+            <div class="menu-card-subtitle">Same flow as desktop: template DB, world generation, initial signing and rankings.</div>
 
             <div class="form-stack">
                 <label class="field-label">Save path</label>
@@ -31,15 +68,6 @@
                     <button class="btn-primary" @onclick="LoadByPathAsync" disabled="@_busy">Load by path</button>
                 </div>
 
-                <div class="muted-text">Active save: @(_currentSavePath ?? "none")</div>
-            </div>
-        </section>
-
-        <section class="menu-card">
-            <div class="menu-card-title">New Game</div>
-            <div class="menu-card-subtitle">Same flow as desktop: template DB, world generation, initial signing and rankings.</div>
-
-            <div class="form-stack">
                 <label class="field-label">Save name</label>
                 <input class="text-input" @bind="_saveName" placeholder="MiPartida" />
 
@@ -57,6 +85,8 @@
                         @(_busy ? "Working..." : "Create new game")
                     </button>
                 </div>
+
+                <div class="muted-text">Active save: @(_currentSavePath ?? "none")</div>
             </div>
         </section>
     </div>
@@ -82,10 +112,50 @@
     private string _agencyName = "";
     private int _fighterCount = 800;
     private string? _currentSavePath;
+    private List<SaveCardVm> _saves = new();
+    private string? _renamePath;
+    private string _renameName = "";
 
-    protected override void OnInitialized()
+    protected override async Task OnInitializedAsync()
     {
         _currentSavePath = GameSession.CurrentSavePath;
+        _saves = (await MainMenuService.DetectSavesAsync()).ToList();
+    }
+
+    private void StartRename(string path)
+    {
+        _renamePath = path;
+        _renameName = Path.GetFileNameWithoutExtension(path);
+    }
+
+    private void CancelRename()
+    {
+        _renamePath = null;
+        _renameName = "";
+    }
+
+    private async Task RenameSaveAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_renamePath)) return;
+        await MainMenuService.RenameSaveAsync(_renamePath, _renameName);
+        CancelRename();
+        _saves = (await MainMenuService.DetectSavesAsync()).ToList();
+    }
+
+    private async Task DeleteSaveAsync(string path)
+    {
+        await MainMenuService.DeleteSaveAsync(path);
+        _saves = (await MainMenuService.DetectSavesAsync()).ToList();
+    }
+
+    private async Task LoadDetectedAsync(string path)
+    {
+        await RunAsync(async () =>
+        {
+            await GameSession.LoadByPathAsync(path);
+            _currentSavePath = GameSession.CurrentSavePath;
+            Navigation.NavigateTo("/dashboard");
+        });
     }
 
     private async Task LoadConfiguredAsync()
@@ -94,7 +164,6 @@
         {
             await GameSession.LoadConfiguredSaveAsync();
             _currentSavePath = GameSession.CurrentSavePath;
-            _status = "Configured save loaded.";
             Navigation.NavigateTo("/dashboard");
         });
     }
@@ -104,11 +173,8 @@
         await RunAsync(async () =>
         {
             var ok = await GameSession.TryLoadLastSaveAsync();
-            if (!ok)
-                throw new InvalidOperationException("No last save was found.");
-
+            if (!ok) throw new InvalidOperationException("No last save was found.");
             _currentSavePath = GameSession.CurrentSavePath;
-            _status = "Last save loaded.";
             Navigation.NavigateTo("/dashboard");
         });
     }
@@ -119,7 +185,6 @@
         {
             await GameSession.LoadByPathAsync(_loadPath);
             _currentSavePath = GameSession.CurrentSavePath;
-            _status = "Save loaded by path.";
             Navigation.NavigateTo("/dashboard");
         });
     }
@@ -130,7 +195,6 @@
         {
             var path = await GameSession.CreateNewGameAsync(_saveName, _agentName, _agencyName, _fighterCount);
             _currentSavePath = path;
-            _status = $"New game created: {path}";
             Navigation.NavigateTo("/dashboard");
         });
     }
@@ -143,6 +207,7 @@
             _error = null;
             _status = null;
             await action();
+            _saves = (await MainMenuService.DetectSavesAsync()).ToList();
         }
         catch (Exception ex)
         {
