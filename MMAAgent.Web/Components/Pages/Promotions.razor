@@ -1,33 +1,55 @@
 ﻿@page "/promotions"
+@using MMAAgent.Application.Abstractions
+@using MMAAgent.Application.DTOs
+@inject IPromotionRepository PromotionRepository
 
 <PageTitle>Promotions - MMA Agent</PageTitle>
 
 <div class="page-header">
     <div>
         <h1>Promotions</h1>
-        <p class="muted-text">Track prestige, market power and championship ecosystems.</p>
+        <p class="muted-text">Promotion data loaded from your current save.</p>
     </div>
 </div>
 
-<div class="cards-3">
-    <article class="panel-card promotion-card premium-promotion-card">
-        <div class="promotion-topline gold"></div>
-        <div class="promotion-name">UFC</div>
-        <div class="promotion-meta">Global powerhouse</div>
-        <div class="promotion-score">Prestige 98</div>
-    </article>
+@if (_error is not null)
+{
+    <div class="panel-card error-panel">@_error</div>
+}
+else if (_promotions is null)
+{
+    <div class="panel-card">Cargando promotions...</div>
+}
+else
+{
+    <div class="promotion-grid">
+        @foreach (var promotion in _promotions)
+        {
+            <article class="panel-card promotion-card">
+                <div class="promotion-name">@promotion.Name</div>
+                <div class="promotion-meta">Prestige: @promotion.Prestige</div>
+                <div class="promotion-meta">Budget: @promotion.Budget</div>
+                <div class="promotion-meta">Active: @(promotion.IsActive ? "Yes" : "No")</div>
+                <div class="promotion-meta">Event Interval: @promotion.EventIntervalWeeks weeks</div>
+                <div class="promotion-meta">Next Event Week: @promotion.NextEventWeek</div>
+            </article>
+        }
+    </div>
+}
 
-    <article class="panel-card promotion-card premium-promotion-card">
-        <div class="promotion-topline purple"></div>
-        <div class="promotion-name">PFL</div>
-        <div class="promotion-meta">Tournament format</div>
-        <div class="promotion-score">Prestige 82</div>
-    </article>
+@code {
+    private IReadOnlyList<PromotionListItem>? _promotions;
+    private string? _error;
 
-    <article class="panel-card promotion-card premium-promotion-card">
-        <div class="promotion-topline blue"></div>
-        <div class="promotion-name">KSW</div>
-        <div class="promotion-meta">European giant</div>
-        <div class="promotion-score">Prestige 79</div>
-    </article>
-</div>
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            _promotions = await PromotionRepository.GetAllAsync();
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+    }
+}

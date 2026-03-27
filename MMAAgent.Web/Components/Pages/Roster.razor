@@ -1,87 +1,70 @@
 ﻿@page "/roster"
+@using MMAAgent.Application.Abstractions
+@using MMAAgent.Domain.Fighters
+@inject IFighterRepository FighterRepository
 
 <PageTitle>Roster - MMA Agent</PageTitle>
 
 <div class="page-header">
     <div>
         <h1>Roster</h1>
-        <p class="muted-text">Manage fighters, skill curves, popularity and contracts.</p>
-    </div>
-
-    <div class="page-header-actions">
-        <button class="btn-secondary">Filters</button>
-        <button class="btn-primary">Add Fighter</button>
+        <p class="muted-text">Current fighters loaded from your save.</p>
     </div>
 </div>
 
-<div class="table-card premium-table-card">
-    <div class="table-toolbar">
-        <div class="toolbar-title">All Fighters</div>
-        <div class="toolbar-subtitle">12 fighters in your management group</div>
+@if (_error is not null)
+{
+    <div class="panel-card error-panel">@_error</div>
+}
+else if (_fighters is null)
+{
+    <div class="panel-card">Cargando roster...</div>
+}
+else
+{
+    <div class="panel-card">
+        <div class="table-toolbar">
+            <div class="toolbar-title">@_fighters.Count fighters</div>
+            <div class="toolbar-subtitle">Live data from the current save file</div>
+        </div>
+
+        <table class="fighters-table">
+            <thead>
+                <tr>
+                    <th>Name</th>
+                    <th>Weight Class</th>
+                    <th>Record</th>
+                    <th>Country</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var fighter in _fighters)
+                {
+                    <tr>
+                        <td>@fighter.Name</td>
+                        <td>@fighter.WeightClass</td>
+                        <td>@fighter.Wins-@fighter.Losses</td>
+                        <td>@fighter.CountryName</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
     </div>
+}
 
-    <table class="fighters-table">
-        <thead>
-            <tr>
-                <th>Name</th>
-                <th>Weight Class</th>
-                <th>Age</th>
-                <th>Skill</th>
-                <th>Popularity</th>
-                <th>Contract</th>
-            </tr>
-        </thead>
-        <tbody>
-            <tr>
-                <td>
-                    <div class="fighter-name-cell">
-                        <div class="fighter-avatar">RC</div>
-                        <div>
-                            <div class="fighter-name">Rafael Costa</div>
-                            <div class="fighter-sub">Top prospect</div>
-                        </div>
-                    </div>
-                </td>
-                <td>Lightweight</td>
-                <td>24</td>
-                <td><span class="pill-skill">78</span></td>
-                <td>55</td>
-                <td><span class="pill-status active">Active</span></td>
-            </tr>
+@code {
+    private IReadOnlyList<FighterSummary>? _fighters;
+    private string? _error;
 
-            <tr>
-                <td>
-                    <div class="fighter-name-cell">
-                        <div class="fighter-avatar">DK</div>
-                        <div>
-                            <div class="fighter-name">Daniel Kovac</div>
-                            <div class="fighter-sub">Veteran contender</div>
-                        </div>
-                    </div>
-                </td>
-                <td>Welterweight</td>
-                <td>29</td>
-                <td><span class="pill-skill">84</span></td>
-                <td>72</td>
-                <td><span class="pill-status active">Active</span></td>
-            </tr>
-
-            <tr>
-                <td>
-                    <div class="fighter-name-cell">
-                        <div class="fighter-avatar">LH</div>
-                        <div>
-                            <div class="fighter-name">Luis Herrera</div>
-                            <div class="fighter-sub">Breakout name</div>
-                        </div>
-                    </div>
-                </td>
-                <td>Featherweight</td>
-                <td>22</td>
-                <td><span class="pill-skill">69</span></td>
-                <td>38</td>
-                <td><span class="pill-status prospect">Prospect</span></td>
-            </tr>
-        </tbody>
-    </table>
-</div>
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            _fighters = await FighterRepository.GetRosterAsync(200);
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+    }
+}
