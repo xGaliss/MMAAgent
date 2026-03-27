@@ -1,0 +1,284 @@
+﻿@page "/"
+
+<PageTitle>Dashboard - MMA Agent</PageTitle>
+
+<div class="dashboard-premium-v2">
+    <section class="hero-v2">
+        <div class="hero-v2-bg"></div>
+        <div class="hero-v2-overlay"></div>
+
+        <div class="hero-v2-content">
+            <div class="hero-v2-top">
+                <span class="eyebrow">GLOBAL MMA MANAGEMENT SIM</span>
+                <div class="hero-pills">
+                    <span class="hero-pill gold">Career Mode</span>
+                    <span class="hero-pill dark">World Save #001</span>
+                </div>
+            </div>
+
+            <h1>Build champions. Control promotions. Shape the sport.</h1>
+
+            <p>
+                Scout elite prospects, negotiate high-stakes deals, follow title pictures,
+                navigate injuries, rankings and momentum swings, and build a legacy across
+                a living MMA world.
+            </p>
+
+            <div class="hero-v2-actions">
+                <button class="btn-primary btn-xl" @onclick="AdvanceWeek">Advance Week</button>
+                <a class="btn-secondary btn-xl link-button" href="/roster">Open Roster</a>
+            </div>
+
+            <div class="hero-v2-metrics">
+                <article class="hero-metric">
+                    <span>Next Major Event</span>
+                    <strong>UFC 312</strong>
+                </article>
+                <article class="hero-metric">
+                    <span>Hot Prospect</span>
+                    <strong>Rafael Costa</strong>
+                </article>
+                <article class="hero-metric">
+                    <span>Market Trend</span>
+                    <strong>Lightweight Boom</strong>
+                </article>
+            </div>
+        </div>
+    </section>
+
+    <section class="command-grid">
+        <article class="command-card">
+            <div class="command-kicker">Managed Fighters</div>
+            <div class="command-value">12</div>
+            <div class="command-sub">3 future contenders</div>
+        </article>
+
+        <article class="command-card">
+            <div class="command-kicker">Active Contracts</div>
+            <div class="command-value">8</div>
+            <div class="command-sub">2 expiring soon</div>
+        </article>
+
+        <article class="command-card">
+            <div class="command-kicker">World Prestige</div>
+            <div class="command-value">84</div>
+            <div class="command-sub">Reputation rising</div>
+        </article>
+
+        <article class="command-card">
+            <div class="command-kicker">Cash Flow</div>
+            <div class="command-value">$1.2M</div>
+            <div class="command-sub">Healthy position</div>
+        </article>
+    </section>
+
+    <section class="dashboard-columns">
+        <div class="dashboard-main-column">
+            <section class="premium-panel glass-panel">
+                <div class="section-head">
+                    <div>
+                        <div class="section-kicker">LIVE STORYLINES</div>
+                        <h2>Champions & headlines</h2>
+                    </div>
+                    <span class="panel-chip">Universe Feed</span>
+                </div>
+
+                <div class="headline-grid">
+                    <article class="headline-card featured">
+                        <div class="headline-tag">MAIN STORY</div>
+                        <h3>Marcus Steele extends heavyweight dominance with another finish.</h3>
+                        <p>The division is active, contenders are stacking wins, and pressure is building for a superfight.</p>
+                    </article>
+
+                    <article class="headline-card">
+                        <div class="headline-tag">BREAKING</div>
+                        <h3>Late injury reshapes next week’s event.</h3>
+                        <p>Bellator Europe forced into a major card reshuffle after a training camp setback.</p>
+                    </article>
+
+                    <article class="headline-card">
+                        <div class="headline-tag">TRENDING</div>
+                        <h3>Lightweight talent wave keeps growing.</h3>
+                        <p>Prospects from Brazil, Japan and Eastern Europe are climbing faster than expected.</p>
+                    </article>
+                </div>
+            </section>
+
+            <section class="premium-panel glass-panel">
+                <div class="section-head">
+                    <div>
+                        <div class="section-kicker">CHAMPION SNAPSHOT</div>
+                        <h2>Current belt holders</h2>
+                    </div>
+                    <span class="panel-chip">Top divisions</span>
+                </div>
+
+                <div class="belt-grid">
+                    <article class="belt-card">
+                        <div class="belt-badge">HW</div>
+                        <div class="belt-info">
+                            <div class="belt-name">Marcus Steele</div>
+                            <div class="belt-meta">UFC Heavyweight Champion</div>
+                        </div>
+                    </article>
+
+                    <article class="belt-card">
+                        <div class="belt-badge">LW</div>
+                        <div class="belt-info">
+                            <div class="belt-name">Kenji Sato</div>
+                            <div class="belt-meta">UFC Lightweight Champion</div>
+                        </div>
+                    </article>
+
+                    <article class="belt-card">
+                        <div class="belt-badge">BW</div>
+                        <div class="belt-info">
+                            <div class="belt-name">Luis Herrera</div>
+                            <div class="belt-meta">KSW Bantamweight Champion</div>
+                        </div>
+                    </article>
+
+                    <article class="belt-card">
+                        <div class="belt-badge">WW</div>
+                        <div class="belt-info">
+                            <div class="belt-name">Daniel Kovac</div>
+                            <div class="belt-meta">PFL Welterweight Champion</div>
+                        </div>
+                    </article>
+                </div>
+            </section>
+
+            <section class="premium-panel glass-panel">
+                <div class="section-head">
+                    <div>
+                        <div class="section-kicker">RECENT ACTIVITY</div>
+                        <h2>Career feed</h2>
+                    </div>
+                    <span class="panel-chip">Latest</span>
+                </div>
+
+                <div class="timeline">
+                    <article class="timeline-item">
+                        <div class="timeline-dot gold"></div>
+                        <div class="timeline-content">
+                            <strong>New contract signed</strong>
+                            <p>Alejandro Torres agreed to a 4-fight deal with PFL after his breakout win.</p>
+                        </div>
+                    </article>
+
+                    <article class="timeline-item">
+                        <div class="timeline-dot purple"></div>
+                        <div class="timeline-content">
+                            <strong>Ranking update</strong>
+                            <p>Featherweight top 10 changed after a late submission in the co-main event.</p>
+                        </div>
+                    </article>
+
+                    <article class="timeline-item">
+                        <div class="timeline-dot blue"></div>
+                        <div class="timeline-content">
+                            <strong>Scouting report added</strong>
+                            <p>Rafael Costa flagged as elite upside talent with strong lightweight marketability.</p>
+                        </div>
+                    </article>
+                </div>
+            </section>
+        </div>
+
+        <aside class="dashboard-side-column">
+            <section class="premium-panel side-panel accent-border">
+                <div class="section-head compact">
+                    <div>
+                        <div class="section-kicker">SCOUTING</div>
+                        <h2>Prospect watch</h2>
+                    </div>
+                </div>
+
+                <div class="prospect-list">
+                    <article class="prospect-item">
+                        <div class="prospect-avatar">RC</div>
+                        <div>
+                            <div class="prospect-name">Rafael Costa</div>
+                            <div class="prospect-meta">Lightweight · Age 24 · Potential A</div>
+                        </div>
+                    </article>
+
+                    <article class="prospect-item">
+                        <div class="prospect-avatar">LH</div>
+                        <div>
+                            <div class="prospect-name">Luis Herrera</div>
+                            <div class="prospect-meta">Featherweight · Age 22 · Potential A-</div>
+                        </div>
+                    </article>
+
+                    <article class="prospect-item">
+                        <div class="prospect-avatar">MS</div>
+                        <div>
+                            <div class="prospect-name">Mateo Silva</div>
+                            <div class="prospect-meta">Bantamweight · Age 21 · Potential B+</div>
+                        </div>
+                    </article>
+                </div>
+            </section>
+
+            <section class="premium-panel side-panel">
+                <div class="section-head compact">
+                    <div>
+                        <div class="section-kicker">WORLD MARKET</div>
+                        <h2>Promotion power</h2>
+                    </div>
+                </div>
+
+                <div class="market-list">
+                    <div class="market-row">
+                        <span>UFC</span>
+                        <strong>98</strong>
+                    </div>
+                    <div class="market-row">
+                        <span>PFL</span>
+                        <strong>82</strong>
+                    </div>
+                    <div class="market-row">
+                        <span>KSW</span>
+                        <strong>79</strong>
+                    </div>
+                    <div class="market-row">
+                        <span>Bellator Europe</span>
+                        <strong>71</strong>
+                    </div>
+                </div>
+            </section>
+
+            <section class="premium-panel side-panel">
+                <div class="section-head compact">
+                    <div>
+                        <div class="section-kicker">MOMENTUM</div>
+                        <h2>What matters now</h2>
+                    </div>
+                </div>
+
+                <div class="momentum-list">
+                    <div class="momentum-item">
+                        <span class="momentum-label">Division Heat</span>
+                        <strong>Lightweight</strong>
+                    </div>
+                    <div class="momentum-item">
+                        <span class="momentum-label">Best Growth</span>
+                        <strong>Rafael Costa</strong>
+                    </div>
+                    <div class="momentum-item">
+                        <span class="momentum-label">Risk Alert</span>
+                        <strong>2 expiring deals</strong>
+                    </div>
+                </div>
+            </section>
+        </aside>
+    </section>
+</div>
+
+@code {
+    private void AdvanceWeek()
+    {
+        Console.WriteLine("Semana avanzada");
+    }
+}

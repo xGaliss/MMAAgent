@@ -13,6 +13,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MMAAgent.Desktop", "MMAAgen
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MMAAgent.Tools", "MMAAgent.Tools\MMAAgent.Tools.csproj", "{BB033E9E-5768-4824-98B0-0C526D88102B}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MMAAgent.Web", "MMAAgent.Web\MMAAgent.Web.csproj", "{128678D2-8247-496A-A828-B2ABEAC0637F}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -39,6 +41,10 @@ Global
 		{BB033E9E-5768-4824-98B0-0C526D88102B}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{BB033E9E-5768-4824-98B0-0C526D88102B}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{BB033E9E-5768-4824-98B0-0C526D88102B}.Release|Any CPU.Build.0 = Release|Any CPU
+		{128678D2-8247-496A-A828-B2ABEAC0637F}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{128678D2-8247-496A-A828-B2ABEAC0637F}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{128678D2-8247-496A-A828-B2ABEAC0637F}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{128678D2-8247-496A-A828-B2ABEAC0637F}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

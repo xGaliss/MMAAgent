@@ -1,0 +1,95 @@
+﻿@inherits LayoutComponentBase
+
+<div class="app-shell">
+    <aside class="sidebar">
+        <div class="sidebar-glow"></div>
+
+        <div class="brand-block">
+            <div class="brand-logo-wrap">
+                <div class="brand-logo">M</div>
+            </div>
+
+            <div class="brand-copy">
+                <div class="brand-title">MMA Agent</div>
+                <div class="brand-subtitle">Elite Fight Management</div>
+            </div>
+        </div>
+
+        <div class="sidebar-section-title">Navigation</div>
+
+        <nav class="sidebar-nav">
+            <NavLink href="/" Match="NavLinkMatch.All" class="nav-item">
+                <span class="nav-icon">🏠</span>
+                <span>Dashboard</span>
+            </NavLink>
+
+            <NavLink href="/roster" class="nav-item">
+                <span class="nav-icon">🥊</span>
+                <span>Roster</span>
+            </NavLink>
+
+            <NavLink href="/promotions" class="nav-item">
+                <span class="nav-icon">🏆</span>
+                <span>Promotions</span>
+            </NavLink>
+
+            <NavLink href="/events" class="nav-item">
+                <span class="nav-icon">📅</span>
+                <span>Events</span>
+            </NavLink>
+
+            <NavLink href="/contracts" class="nav-item">
+                <span class="nav-icon">📝</span>
+                <span>Contracts</span>
+            </NavLink>
+        </nav>
+
+        <div class="sidebar-section-title">Career</div>
+
+        <div class="career-card">
+            <div class="career-badge">World Save #001</div>
+            <div class="career-title">Manager Legacy</div>
+            <div class="career-text">
+                Build champions, dominate promotions and shape the future of MMA.
+            </div>
+
+            <div class="career-stats">
+                <div>
+                    <div class="career-stat-value">12</div>
+                    <div class="career-stat-label">Fighters</div>
+                </div>
+                <div>
+                    <div class="career-stat-value">8</div>
+                    <div class="career-stat-label">Contracts</div>
+                </div>
+            </div>
+        </div>
+    </aside>
+
+    <div class="main-area">
+        <header class="topbar">
+            <div class="topbar-left">
+                <div class="topbar-kicker">CAREER MODE</div>
+                <div class="topbar-title-row">
+                    <h1 class="topbar-title">MMA Agent</h1>
+                    <span class="live-pill">LIVE UNIVERSE</span>
+                </div>
+                <div class="topbar-subtitle">Elite fight business simulation</div>
+            </div>
+
+            <div class="topbar-right">
+                <div class="date-card">
+                    <div class="date-card-label">Current Week</div>
+                    <div class="date-card-value">Week 1 · Jan 2026</div>
+                </div>
+
+                <button type="button" class="btn-secondary">Scouting</button>
+                <button type="button" class="btn-primary">Advance Week</button>
+            </div>
+        </header>
+
+        <main class="page-content">
+            @Body
+        </main>
+    </div>
+</div>
