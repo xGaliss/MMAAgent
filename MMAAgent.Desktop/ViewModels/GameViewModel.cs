@@ -20,36 +20,19 @@ namespace MMAAgent.Desktop.ViewModels
         public RosterViewModel Roster => _roster;
 
         private string _dateText = "—";
-        public string DateText
-        {
-            get => _dateText;
-            private set => SetProperty(ref _dateText, value);
-        }
+        public string DateText { get => _dateText; private set => SetProperty(ref _dateText, value); }
 
         private string _weekYearText = "—";
-        public string WeekYearText
-        {
-            get => _weekYearText;
-            private set => SetProperty(ref _weekYearText, value);
-        }
+        public string WeekYearText { get => _weekYearText; private set => SetProperty(ref _weekYearText, value); }
 
         private string _seedText = "—";
-        public string SeedText
-        {
-            get => _seedText;
-            private set => SetProperty(ref _seedText, value);
-        }
+        public string SeedText { get => _seedText; private set => SetProperty(ref _seedText, value); }
 
         private bool _isBusy;
-        public bool IsBusy
-        {
-            get => _isBusy;
-            private set => SetProperty(ref _isBusy, value);
-        }
+        public bool IsBusy { get => _isBusy; private set => SetProperty(ref _isBusy, value); }
 
         public ObservableCollection<EventListItem> Events { get; } = new();
         public ObservableCollection<FightListItem> SelectedEventFights { get; } = new();
-
         public ObservableCollection<FeaturedFighterRow> FeaturedFighters { get; } = new();
         public ObservableCollection<string> WorldNotes { get; } = new();
 
@@ -80,15 +63,13 @@ namespace MMAAgent.Desktop.ViewModels
 
         public async Task LoadAsync()
         {
-            if (string.IsNullOrWhiteSpace(_savePath.CurrentPath))
-                return;
+            if (string.IsNullOrWhiteSpace(_savePath.CurrentPath)) return;
 
             IsBusy = true;
             try
             {
                 await LoadGameStateAsync();
                 await _roster.LoadAsync();
-
                 await LoadLastEventsAsync();
                 await LoadFeaturedFightersAsync();
                 LoadWorldNotes();
@@ -104,15 +85,13 @@ namespace MMAAgent.Desktop.ViewModels
 
         public async Task AdvanceWeekAsync()
         {
-            if (string.IsNullOrWhiteSpace(_savePath.CurrentPath))
-                return;
+            if (string.IsNullOrWhiteSpace(_savePath.CurrentPath)) return;
 
             IsBusy = true;
             try
             {
+                // GameTimeService.AdvanceWeeksAsync(1) ya ejecuta la simulación semanal.
                 var state = await _time.AdvanceWeeksAsync(1);
-
-                await _weekly.RunWeekAsync(state);
 
                 DateText = state.CurrentDate;
                 WeekYearText = $"Week {state.CurrentWeek} • Year {state.CurrentYear}";
@@ -164,12 +143,14 @@ namespace MMAAgent.Desktop.ViewModels
 
             var fights = await _eventRepo.GetFightsByEventAsync(ev.Id);
             foreach (var f in fights)
+            {
                 SelectedEventFights.Add(new FightListItem(
                     f.WeightClass,
                     f.Matchup,
                     f.Winner,
                     f.Method,
                     f.IsTitle));
+            }
         }
 
         private async Task LoadFeaturedFightersAsync()
@@ -177,12 +158,9 @@ namespace MMAAgent.Desktop.ViewModels
             FeaturedFighters.Clear();
 
             var fighters = _roster.Fighters.ToList();
-            if (fighters.Count == 0)
-                return;
+            if (fighters.Count == 0) return;
 
-            var mostWins = fighters
-                .OrderByDescending(f => f.Wins)
-                .First();
+            var mostWins = fighters.OrderByDescending(f => f.Wins).First();
 
             var bestRecord = fighters
                 .Where(f => (f.Wins + f.Losses) >= 10)
@@ -241,7 +219,6 @@ namespace MMAAgent.Desktop.ViewModels
         private void LoadWorldNotes()
         {
             WorldNotes.Clear();
-
             WorldNotes.Add($"{WeekYearText} en curso.");
             WorldNotes.Add($"Hay {Events.Count} eventos recientes cargados.");
             WorldNotes.Add($"Roster visible: {_roster.Fighters.Count} luchadores.");

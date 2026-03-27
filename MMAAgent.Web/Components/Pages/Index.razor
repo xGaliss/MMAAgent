@@ -1,9 +1,11 @@
 ﻿@page "/"
+@using MMAAgent.Application
 @using MMAAgent.Application.Abstractions
 @using MMAAgent.Domain.Common
 @inject IGameStateRepository GameStateRepository
 @inject IFighterRepository FighterRepository
 @inject IPromotionRepository PromotionRepository
+@inject GameTimeService GameTimeService
 
 <PageTitle>Dashboard - MMA Agent</PageTitle>
 
@@ -11,6 +13,19 @@
     <div>
         <h1>Dashboard</h1>
         <p class="muted-text">Live overview of your current MMA universe.</p>
+    </div>
+
+    <div style="display:flex; gap:12px; flex-wrap:wrap;">
+        <div class="date-card">
+            <div class="date-card-label">Current Week</div>
+            <div class="date-card-value">
+                @(_gameState is null ? "-" : $"Week {_gameState.CurrentWeek} · {_gameState.CurrentDate}")
+            </div>
+        </div>
+
+        <button type="button" class="btn-primary" @onclick="AdvanceWeekAsync" disabled="@_advancing">
+            @(_advancing ? "Advancing..." : "Advance Week")
+        </button>
     </div>
 </div>
 
@@ -47,28 +62,67 @@ else
     </div>
 }
 
+@if (!string.IsNullOrWhiteSpace(_status))
+{
+    <div class="muted-text" style="margin-top: 14px;">@_status</div>
+}
+
 @code {
     private GameState? _gameState;
     private int _fighterCount;
     private int _promotionCount;
     private bool _loading = true;
+    private bool _advancing;
     private string? _error;
+    private string? _status;
 
     protected override async Task OnInitializedAsync()
     {
+        await ReloadAsync();
+    }
+
+    private async Task AdvanceWeekAsync()
+    {
         try
         {
+            _advancing = true;
+            _status = null;
+            _error = null;
+
+            await GameTimeService.AdvanceWeeksAsync(1);
+            await ReloadAsync();
+
+            _status = "Semana avanzada correctamente.";
+        }
+        catch (Exception ex)
+        {
+            _error = ex.ToString();
+        }
+        finally
+        {
+            _advancing = false;
+        }
+    }
+
+    private async Task ReloadAsync()
+    {
+        try
+        {
+            _loading = true;
+            _error = null;
+
             _gameState = await GameStateRepository.GetAsync();
             _fighterCount = (await FighterRepository.GetRosterAsync(200)).Count;
             _promotionCount = (await PromotionRepository.GetAllAsync()).Count;
         }
         catch (Exception ex)
         {
-            _error = ex.Message;
+            _error = ex.ToString();
         }
         finally
         {
             _loading = false;
+            StateHasChanged();
         }
     }
 }
