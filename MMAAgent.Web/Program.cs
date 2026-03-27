@@ -6,6 +6,7 @@ using MMAAgent.Infrastructure.Persistence.Sqlite.Repositories;
 using MMAAgent.Infrastructure.Persistence.Sqlite.Services;
 using MMAAgent.Web.Components;
 using MMAAgent.Web.Infrastructure;
+using MMAAgent.Web.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -28,6 +29,10 @@ builder.Services.AddScoped<IEventSimulator, SimulateEventSqlite>();
 builder.Services.AddScoped<IPromotionEventScheduleRepository, PromotionEventScheduleRepositorySqlite>();
 builder.Services.AddScoped<IWeeklySimulationService, WeeklySimulationService>();
 builder.Services.AddScoped<GameTimeService>();
+
+// Eventos + Fight Profile
+builder.Services.AddScoped<IEventRepository, SqliteEventRepository>();
+builder.Services.AddScoped<FightProfileReadService>();
 
 var app = builder.Build();
 

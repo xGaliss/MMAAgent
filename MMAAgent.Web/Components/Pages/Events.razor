@@ -1,4 +1,129 @@
 ﻿@page "/events"
+@using MMAAgent.Infrastructure.Persistence.Sqlite.Repositories
+@inject IEventRepository EventRepository
 
-<h1>Events</h1>
-<p class="muted-text">Aquí irá el calendario de eventos y resultados.</p>
+<PageTitle>Events - MMA Agent</PageTitle>
+
+<div class="page-header">
+    <div>
+        <h1>Events</h1>
+        <p class="muted-text">Recent events and fight cards from the current save.</p>
+    </div>
+</div>
+
+@if (_error is not null)
+{
+    <div class="panel-card error-panel">@_error</div>
+}
+else if (_loading)
+{
+    <div class="panel-card">Cargando events...</div>
+}
+else
+{
+    <div class="events-layout">
+        <section class="panel-card">
+            <div class="table-toolbar">
+                <div class="toolbar-title">Recent Events</div>
+                <div class="toolbar-subtitle">@_events.Count loaded</div>
+            </div>
+
+            <div class="event-list">
+                @foreach (var ev in _events)
+                {
+                    <button type="button"
+                            class="event-list-item @(SelectedEvent?.Id == ev.Id ? "selected" : "")"
+                            @onclick="() => SelectEventAsync(ev)">
+                        <div class="event-date">@ev.EventDate</div>
+                        <div class="event-name">@ev.Name</div>
+                    </button>
+                }
+            </div>
+        </section>
+
+        <section class="panel-card">
+            <div class="table-toolbar">
+                <div class="toolbar-title">
+                    @(SelectedEvent is null ? "Event Fights" : SelectedEvent.Name)
+                </div>
+                <div class="toolbar-subtitle">
+                    @(SelectedEvent is null ? "Select an event" : SelectedEvent.EventDate)
+                </div>
+            </div>
+
+            @if (_selectedFights.Count == 0)
+            {
+                <div class="muted-text">No fights found for this event.</div>
+            }
+            else
+            {
+                <table class="fighters-table">
+                    <thead>
+                        <tr>
+                            <th>Weight Class</th>
+                            <th>Matchup</th>
+                            <th>Winner</th>
+                            <th>Method</th>
+                            <th>Title</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var fight in _selectedFights)
+                        {
+                            <tr>
+                                <td>@fight.WeightClass</td>
+                                <td>@fight.Matchup</td>
+                                <td>@fight.Winner</td>
+                                <td>@fight.Method</td>
+                                <td>@(fight.IsTitle ? "Yes" : "No")</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            }
+        </section>
+    </div>
+}
+
+@code {
+    private sealed record EventVm(int Id, string EventDate, string Name);
+    private sealed record FightVm(string WeightClass, string Matchup, string Winner, string Method, bool IsTitle);
+
+    private List<EventVm> _events = new();
+    private List<FightVm> _selectedFights = new();
+    private EventVm? SelectedEvent;
+    private bool _loading = true;
+    private string? _error;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            var rows = await EventRepository.GetLastEventsAsync(20);
+            _events = rows.Select(x => new EventVm(x.Id, x.EventDate, x.Name)).ToList();
+
+            if (_events.Count > 0)
+            {
+                await SelectEventAsync(_events[0]);
+            }
+        }
+        catch (Exception ex)
+        {
+            _error = ex.ToString();
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private async Task SelectEventAsync(EventVm ev)
+    {
+        SelectedEvent = ev;
+
+        var fights = await EventRepository.GetFightsByEventAsync(ev.Id);
+        _selectedFights = fights
+            .Select(x => new FightVm(x.WeightClass, x.Matchup, x.Winner, x.Method, x.IsTitle))
+            .ToList();
+    }
+}

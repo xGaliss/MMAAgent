@@ -25,7 +25,7 @@ else
     <div class="panel-card">
         <div class="table-toolbar">
             <div class="toolbar-title">@_fighters.Count fighters</div>
-            <div class="toolbar-subtitle">Live data from the current save file</div>
+            <div class="toolbar-subtitle">Click a fighter name to open the full profile</div>
         </div>
 
         <table class="fighters-table">
@@ -41,7 +41,9 @@ else
                 @foreach (var fighter in _fighters)
                 {
                     <tr>
-                        <td>@fighter.Name</td>
+                        <td>
+                            <a class="fighter-link" href="@($"/fighters/{fighter.Id}")">@fighter.Name</a>
+                        </td>
                         <td>@fighter.WeightClass</td>
                         <td>@fighter.Wins-@fighter.Losses</td>
                         <td>@fighter.CountryName</td>
@@ -64,7 +66,7 @@ else
         }
         catch (Exception ex)
         {
-            _error = ex.Message;
+            _error = ex.ToString();
         }
     }
 }

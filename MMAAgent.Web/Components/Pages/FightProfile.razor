@@ -1,0 +1,162 @@
+﻿@page "/fighters/{fighterId:int}"
+@using MMAAgent.Web.Models
+@using MMAAgent.Web.Services
+@inject FightProfileReadService FightProfileReadService
+
+<PageTitle>Fight Profile - MMA Agent</PageTitle>
+
+<div class="page-header">
+    <div>
+        <h1>Fight Profile</h1>
+        <p class="muted-text">Complete fighter profile and recent fight history.</p>
+    </div>
+</div>
+
+@if (_error is not null)
+{
+    <div class="panel-card error-panel">@_error</div>
+}
+else if (_loading)
+{
+    <div class="panel-card">Cargando perfil...</div>
+}
+else if (_fighter is null)
+{
+    <div class="panel-card">Fighter not found.</div>
+}
+else
+{
+    <div class="fight-profile-layout">
+        <section class="panel-card profile-hero">
+            <div class="profile-header">
+                <div>
+                    <div class="profile-name-row">
+                        <h2 class="profile-name">@_fighter.Name</h2>
+                        @if (_fighter.IsChampion)
+                        {
+                            <span class="champion-pill">Champion</span>
+                        }
+                    </div>
+                    <div class="muted-text">@_fighter.CountryName · @_fighter.WeightClass · Age @_fighter.Age</div>
+                </div>
+
+                <div class="profile-record">
+                    <span>@_fighter.Wins</span>-<span>@_fighter.Losses</span>-<span>@_fighter.Draws</span>
+                </div>
+            </div>
+
+            <div class="profile-meta-grid">
+                <div class="meta-box">
+                    <div class="meta-label">Promotion</div>
+                    <div class="meta-value">@(_fighter.PromotionName ?? "Free Agent")</div>
+                </div>
+                <div class="meta-box">
+                    <div class="meta-label">Rank</div>
+                    <div class="meta-value">@(_fighter.RankPosition?.ToString() ?? "-")</div>
+                </div>
+                <div class="meta-box">
+                    <div class="meta-label">Contract</div>
+                    <div class="meta-value">@_fighter.ContractStatus</div>
+                </div>
+                <div class="meta-box">
+                    <div class="meta-label">Salary</div>
+                    <div class="meta-value">@_fighter.Salary</div>
+                </div>
+            </div>
+        </section>
+
+        <section class="panel-card">
+            <div class="table-toolbar">
+                <div class="toolbar-title">Core Attributes</div>
+                <div class="toolbar-subtitle">Current overall and attribute breakdown</div>
+            </div>
+
+            <div class="attribute-grid">
+                <div class="attribute-card"><span>Skill</span><strong>@_fighter.Skill</strong></div>
+                <div class="attribute-card"><span>Potential</span><strong>@_fighter.Potential</strong></div>
+                <div class="attribute-card"><span>Popularity</span><strong>@_fighter.Popularity</strong></div>
+                <div class="attribute-card"><span>Striking</span><strong>@_fighter.Striking</strong></div>
+                <div class="attribute-card"><span>Grappling</span><strong>@_fighter.Grappling</strong></div>
+                <div class="attribute-card"><span>Wrestling</span><strong>@_fighter.Wrestling</strong></div>
+                <div class="attribute-card"><span>Cardio</span><strong>@_fighter.Cardio</strong></div>
+                <div class="attribute-card"><span>Chin</span><strong>@_fighter.Chin</strong></div>
+                <div class="attribute-card"><span>Fight IQ</span><strong>@_fighter.FightIQ</strong></div>
+                <div class="attribute-card"><span>Fights Left</span><strong>@_fighter.ContractFightsRemaining / @_fighter.TotalFightsInContract</strong></div>
+            </div>
+        </section>
+
+        <section class="panel-card">
+            <div class="table-toolbar">
+                <div class="toolbar-title">Recent Fight History</div>
+                <div class="toolbar-subtitle">@_history.Count fights</div>
+            </div>
+
+            @if (_history.Count == 0)
+            {
+                <div class="muted-text">No fight history found.</div>
+            }
+            else
+            {
+                <table class="fighters-table">
+                    <thead>
+                        <tr>
+                            <th>Date</th>
+                            <th>Opponent</th>
+                            <th>Result</th>
+                            <th>Method</th>
+                            <th>Promotion</th>
+                            <th>Event</th>
+                            <th>Title</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var item in _history)
+                        {
+                            <tr>
+                                <td>@item.Date</td>
+                                <td>@item.Opponent</td>
+                                <td>
+                                    <span class="result-pill @(item.Result == "W" ? "win" : "loss")">@item.Result</span>
+                                </td>
+                                <td>@item.Method</td>
+                                <td>@item.Promotion</td>
+                                <td>@(item.EventName ?? "-")</td>
+                                <td>@(item.IsTitle ? "Yes" : "No")</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            }
+        </section>
+    </div>
+}
+
+@code {
+    [Parameter] public int fighterId { get; set; }
+
+    private FighterProfile? _fighter;
+    private List<FightHistoryItem> _history = new();
+    private bool _loading = true;
+    private string? _error;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        try
+        {
+            _loading = true;
+            _error = null;
+
+            var result = await FightProfileReadService.LoadAsync(fighterId, 20);
+            _fighter = result.Fighter;
+            _history = result.History.ToList();
+        }
+        catch (Exception ex)
+        {
+            _error = ex.ToString();
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+}
