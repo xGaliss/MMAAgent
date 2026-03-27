@@ -1,98 +1,148 @@
 ﻿@page "/"
-@using MMAAgent.Application
-@using MMAAgent.Application.Abstractions
-@using MMAAgent.Domain.Common
-@inject IGameStateRepository GameStateRepository
-@inject IFighterRepository FighterRepository
-@inject IPromotionRepository PromotionRepository
-@inject GameTimeService GameTimeService
+@layout MMAAgent.Web.Components.Layout.MenuLayout
+@rendermode InteractiveServer
+@using MMAAgent.Web.Services
+@inject WebGameSessionService GameSession
+@inject NavigationManager Navigation
 
-<PageTitle>Dashboard - MMA Agent</PageTitle>
+<PageTitle>Main Menu - MMA Agent</PageTitle>
 
-<div class="page-header">
-    <div>
-        <h1>Dashboard</h1>
-        <p class="muted-text">Live overview of your current MMA universe.</p>
-    </div>
+<div class="menu-screen">
+    <section class="menu-hero-card">
+        <div class="menu-kicker">MAIN MENU</div>
+        <h1 class="menu-hero-title">Start your MMA management career</h1>
+        <p class="menu-hero-text">
+            Create a new world from the template database or load an existing save file.
+        </p>
+    </section>
 
-    <div style="display:flex; gap:12px; flex-wrap:wrap;">
-        <div class="date-card">
-            <div class="date-card-label">Current Week</div>
-            <div class="date-card-value">
-                @(_gameState is null ? "-" : $"Week {_gameState.CurrentWeek} · {_gameState.CurrentDate}")
+    <div class="menu-card-grid">
+        <section class="menu-card">
+            <div class="menu-card-title">Load Game</div>
+            <div class="menu-card-subtitle">Use the configured save, the last loaded save, or a custom path.</div>
+
+            <div class="form-stack">
+                <label class="field-label">Save path</label>
+                <input class="text-input" @bind="_loadPath" placeholder="C:\Ruta\A\Tu\Save.db" />
+
+                <div class="button-row">
+                    <button class="btn-secondary" @onclick="LoadConfiguredAsync" disabled="@_busy">Load configured save</button>
+                    <button class="btn-secondary" @onclick="LoadLastAsync" disabled="@_busy">Load last save</button>
+                    <button class="btn-primary" @onclick="LoadByPathAsync" disabled="@_busy">Load by path</button>
+                </div>
+
+                <div class="muted-text">Active save: @(_currentSavePath ?? "none")</div>
             </div>
-        </div>
+        </section>
 
-        <button type="button" class="btn-primary" @onclick="AdvanceWeekAsync" disabled="@_advancing">
-            @(_advancing ? "Advancing..." : "Advance Week")
-        </button>
+        <section class="menu-card">
+            <div class="menu-card-title">New Game</div>
+            <div class="menu-card-subtitle">Same flow as desktop: template DB, world generation, initial signing and rankings.</div>
+
+            <div class="form-stack">
+                <label class="field-label">Save name</label>
+                <input class="text-input" @bind="_saveName" placeholder="MiPartida" />
+
+                <label class="field-label">Agent name</label>
+                <input class="text-input" @bind="_agentName" placeholder="Alejandro" />
+
+                <label class="field-label">Agency name</label>
+                <input class="text-input" @bind="_agencyName" placeholder="Galiss Management" />
+
+                <label class="field-label">Fighter count</label>
+                <input class="text-input" type="number" @bind="_fighterCount" />
+
+                <div class="button-row">
+                    <button class="btn-primary" @onclick="CreateNewGameAsync" disabled="@_busy">
+                        @(_busy ? "Working..." : "Create new game")
+                    </button>
+                </div>
+            </div>
+        </section>
     </div>
+
+    @if (!string.IsNullOrWhiteSpace(_status))
+    {
+        <div class="menu-feedback success">@_status</div>
+    }
+
+    @if (!string.IsNullOrWhiteSpace(_error))
+    {
+        <div class="menu-feedback error">@_error</div>
+    }
 </div>
 
-@if (_error is not null)
-{
-    <div class="panel-card error-panel">@_error</div>
-}
-else if (_loading)
-{
-    <div class="panel-card">Cargando dashboard...</div>
-}
-else
-{
-    <div class="stats-grid">
-        <article class="stat-card">
-            <div class="stat-label">Current Date</div>
-            <div class="stat-value">@(_gameState?.CurrentDate ?? "-")</div>
-        </article>
-
-        <article class="stat-card">
-            <div class="stat-label">Week</div>
-            <div class="stat-value">@(_gameState?.CurrentWeek.ToString() ?? "-")</div>
-        </article>
-
-        <article class="stat-card">
-            <div class="stat-label">Fighters Loaded</div>
-            <div class="stat-value">@_fighterCount</div>
-        </article>
-
-        <article class="stat-card">
-            <div class="stat-label">Promotions Loaded</div>
-            <div class="stat-value">@_promotionCount</div>
-        </article>
-    </div>
-}
-
-@if (!string.IsNullOrWhiteSpace(_status))
-{
-    <div class="muted-text" style="margin-top: 14px;">@_status</div>
-}
-
 @code {
-    private GameState? _gameState;
-    private int _fighterCount;
-    private int _promotionCount;
-    private bool _loading = true;
-    private bool _advancing;
-    private string? _error;
+    private bool _busy;
     private string? _status;
+    private string? _error;
+    private string _loadPath = "";
+    private string _saveName = "MiPartida";
+    private string _agentName = "";
+    private string _agencyName = "";
+    private int _fighterCount = 800;
+    private string? _currentSavePath;
 
-    protected override async Task OnInitializedAsync()
+    protected override void OnInitialized()
     {
-        await ReloadAsync();
+        _currentSavePath = GameSession.CurrentSavePath;
     }
 
-    private async Task AdvanceWeekAsync()
+    private async Task LoadConfiguredAsync()
+    {
+        await RunAsync(async () =>
+        {
+            await GameSession.LoadConfiguredSaveAsync();
+            _currentSavePath = GameSession.CurrentSavePath;
+            _status = "Configured save loaded.";
+            Navigation.NavigateTo("/dashboard");
+        });
+    }
+
+    private async Task LoadLastAsync()
+    {
+        await RunAsync(async () =>
+        {
+            var ok = await GameSession.TryLoadLastSaveAsync();
+            if (!ok)
+                throw new InvalidOperationException("No last save was found.");
+
+            _currentSavePath = GameSession.CurrentSavePath;
+            _status = "Last save loaded.";
+            Navigation.NavigateTo("/dashboard");
+        });
+    }
+
+    private async Task LoadByPathAsync()
+    {
+        await RunAsync(async () =>
+        {
+            await GameSession.LoadByPathAsync(_loadPath);
+            _currentSavePath = GameSession.CurrentSavePath;
+            _status = "Save loaded by path.";
+            Navigation.NavigateTo("/dashboard");
+        });
+    }
+
+    private async Task CreateNewGameAsync()
+    {
+        await RunAsync(async () =>
+        {
+            var path = await GameSession.CreateNewGameAsync(_saveName, _agentName, _agencyName, _fighterCount);
+            _currentSavePath = path;
+            _status = $"New game created: {path}";
+            Navigation.NavigateTo("/dashboard");
+        });
+    }
+
+    private async Task RunAsync(Func<Task> action)
     {
         try
         {
-            _advancing = true;
+            _busy = true;
+            _error = null;
             _status = null;
-            _error = null;
-
-            await GameTimeService.AdvanceWeeksAsync(1);
-            await ReloadAsync();
-
-            _status = "Semana avanzada correctamente.";
+            await action();
         }
         catch (Exception ex)
         {
@@ -100,29 +150,7 @@ else
         }
         finally
         {
-            _advancing = false;
-        }
-    }
-
-    private async Task ReloadAsync()
-    {
-        try
-        {
-            _loading = true;
-            _error = null;
-
-            _gameState = await GameStateRepository.GetAsync();
-            _fighterCount = (await FighterRepository.GetRosterAsync(200)).Count;
-            _promotionCount = (await PromotionRepository.GetAllAsync()).Count;
-        }
-        catch (Exception ex)
-        {
-            _error = ex.ToString();
-        }
-        finally
-        {
-            _loading = false;
-            StateHasChanged();
+            _busy = false;
         }
     }
 }

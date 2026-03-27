@@ -1,6 +1,8 @@
 using MMAAgent.Application;
 using MMAAgent.Application.Abstractions;
 using MMAAgent.Application.Simulation;
+using MMAAgent.Infrastructure.Files;
+using MMAAgent.Infrastructure.Generation;
 using MMAAgent.Infrastructure.Persistence.Sqlite;
 using MMAAgent.Infrastructure.Persistence.Sqlite.Repositories;
 using MMAAgent.Infrastructure.Persistence.Sqlite.Services;
@@ -23,6 +25,11 @@ builder.Services.AddSingleton<IDatabasePathInitializer, DatabasePathInitializer>
 builder.Services.AddScoped<IFighterRepository, SqliteFighterRepository>();
 builder.Services.AddScoped<IPromotionRepository, PromotionRepositorySqlite>();
 builder.Services.AddScoped<IGameStateRepository, SqliteGameStateRepository>();
+builder.Services.AddScoped<IEventRepository, SqliteEventRepository>();
+
+builder.Services.AddScoped<IAgentProfileRepository, AgentProfileRepository>();
+builder.Services.AddScoped<IInboxRepository, InboxRepository>();
+builder.Services.AddScoped<IFightOfferRepository, FightOfferRepository>();
 
 builder.Services.AddScoped<IContractServiceSqlite, ContractServiceSqlite>();
 builder.Services.AddScoped<IEventSimulator, SimulateEventSqlite>();
@@ -30,9 +37,17 @@ builder.Services.AddScoped<IPromotionEventScheduleRepository, PromotionEventSche
 builder.Services.AddScoped<IWeeklySimulationService, WeeklySimulationService>();
 builder.Services.AddScoped<GameTimeService>();
 
-// Eventos + Fight Profile
-builder.Services.AddScoped<IEventRepository, SqliteEventRepository>();
+builder.Services.AddScoped<DbBootstrap>();
+builder.Services.AddScoped<WorldFighterGeneratorSqlite>();
+builder.Services.AddScoped<InitialSigningPassSqlite>();
+builder.Services.AddScoped<BuildInitialRankingsSqlite>();
+builder.Services.AddScoped<PromotionScheduleSeeder>();
+
+builder.Services.AddScoped<WebGameSessionService>();
+builder.Services.AddScoped<WebInboxService>();
+builder.Services.AddScoped<WebAgentProfileService>();
 builder.Services.AddScoped<FightProfileReadService>();
+builder.Services.AddScoped<IManagedFighterRepository, ManagedFighterRepository>();
 
 var app = builder.Build();
 

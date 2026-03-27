@@ -689,4 +689,363 @@ button {
     }
 }
 
+.menu-layout {
+    display: grid;
+    gap: 20px;
+}
+
+.menu-hero h1 {
+    margin: 0;
+    font-size: 2.4rem;
+    letter-spacing: -0.04em;
+}
+
+.menu-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 20px;
+}
+
+.form-stack {
+    display: grid;
+    gap: 10px;
+}
+
+.field-label {
+    color: #95a4c6;
+    font-size: 0.86rem;
+    font-weight: 700;
+}
+
+.text-input {
+    min-height: 46px;
+    border-radius: 14px;
+    border: 1px solid rgba(255,255,255,0.08);
+    background: rgba(255,255,255,0.04);
+    color: #eef3ff;
+    padding: 0 14px;
+    outline: none;
+}
+
+    .text-input:focus {
+        border-color: rgba(212,175,55,0.28);
+    }
+
+.inbox-layout {
+    display: grid;
+    grid-template-columns: 1.1fr 1fr;
+    gap: 20px;
+}
+
+.message-list, .offer-list {
+    display: grid;
+    gap: 12px;
+}
+
+.message-item {
+    width: 100%;
+    text-align: left;
+    padding: 16px;
+    border-radius: 16px;
+    border: 1px solid rgba(255,255,255,0.08);
+    background: rgba(255,255,255,0.03);
+    color: #eef3ff;
+    cursor: pointer;
+    transition: 0.18s ease;
+}
+
+    .message-item:hover, .message-item.selected {
+        background: linear-gradient(135deg, rgba(212,175,55,0.10), rgba(139,92,246,0.10));
+        border-color: rgba(212,175,55,0.22);
+    }
+
+.message-top {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    align-items: center;
+}
+
+.message-subject {
+    font-weight: 800;
+}
+
+.message-date, .message-type {
+    color: #95a4c6;
+    font-size: 0.84rem;
+}
+
+.message-body-preview, .message-full-body {
+    margin-top: 8px;
+    color: #d3dcf5;
+    line-height: 1.65;
+}
+
+.offer-card {
+    padding: 16px;
+    border-radius: 16px;
+    border: 1px solid rgba(255,255,255,0.08);
+    background: rgba(255,255,255,0.03);
+}
+
+.offer-title {
+    font-weight: 900;
+    font-size: 1.02rem;
+    margin-bottom: 8px;
+}
+
+.offer-meta {
+    color: #95a4c6;
+    margin-top: 6px;
+}
+
+.agent-grid {
+    display: grid;
+    grid-template-columns: 1.3fr repeat(4, minmax(0, 1fr));
+    gap: 18px;
+}
+
+@media (max-width: 1200px) {
+    .menu-grid, .inbox-layout, .agent-grid {
+        grid-template-columns: 1fr;
+    }
+}
+/* Append this block at the end of your current app.css */
+
+.menu-shell {
+    min-height: 100vh;
+    padding: 28px;
+    background: radial-gradient(circle at top left, rgba(139, 92, 246, 0.18), transparent 28%), radial-gradient(circle at top right, rgba(212, 175, 55, 0.14), transparent 22%), linear-gradient(180deg, #07101d 0%, #0a1220 46%, #0c1525 100%);
+}
+
+.menu-shell-inner {
+    max-width: 1300px;
+    margin: 0 auto;
+}
+
+.menu-topbar {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    margin-bottom: 24px;
+}
+
+.menu-brand-mark {
+    width: 54px;
+    height: 54px;
+    border-radius: 17px;
+    display: grid;
+    place-items: center;
+    background: linear-gradient(135deg, #d4af37, #8b5cf6);
+    color: #fff4c7;
+    font-weight: 900;
+    font-size: 1.4rem;
+}
+
+.menu-brand-title {
+    font-size: 1.6rem;
+    font-weight: 900;
+    color: #eef3ff;
+}
+
+.menu-brand-subtitle {
+    color: #95a4c6;
+    margin-top: 4px;
+}
+
+.menu-screen {
+    display: grid;
+    gap: 20px;
+}
+
+.menu-hero-card,
+.menu-card {
+    padding: 24px;
+    border-radius: 24px;
+    background: linear-gradient(180deg, rgba(16, 24, 43, 0.95), rgba(11, 18, 33, 0.92));
+    border: 1px solid rgba(255,255,255,0.08);
+    box-shadow: 0 18px 40px rgba(0,0,0,0.28);
+}
+
+.menu-kicker {
+    color: #8a99ba;
+    font-size: 0.76rem;
+    font-weight: 800;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    margin-bottom: 10px;
+}
+
+.menu-hero-title {
+    margin: 0;
+    font-size: 3rem;
+    line-height: 1;
+    letter-spacing: -0.05em;
+    color: #eef3ff;
+}
+
+.menu-hero-text {
+    margin-top: 16px;
+    color: #d2dcf5;
+    font-size: 1.02rem;
+    line-height: 1.7;
+}
+
+.menu-card-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 20px;
+}
+
+.menu-card-title {
+    font-size: 1.2rem;
+    font-weight: 800;
+    color: #eef3ff;
+}
+
+.menu-card-subtitle {
+    color: #95a4c6;
+    margin-top: 8px;
+    margin-bottom: 16px;
+}
+
+.menu-feedback {
+    padding: 18px 20px;
+    border-radius: 18px;
+    border: 1px solid rgba(255,255,255,0.08);
+}
+
+    .menu-feedback.success {
+        background: rgba(34,197,94,0.12);
+        color: #9ef3b7;
+    }
+
+    .menu-feedback.error {
+        background: rgba(120,22,22,0.45);
+        color: #fff;
+        border-color: rgba(255,123,123,.3);
+    }
+
+.form-stack {
+    display: grid;
+    gap: 10px;
+}
+
+.field-label {
+    color: #95a4c6;
+    font-size: 0.86rem;
+    font-weight: 700;
+}
+
+.text-input {
+    min-height: 46px;
+    border-radius: 14px;
+    border: 1px solid rgba(255,255,255,0.08);
+    background: rgba(255,255,255,0.04);
+    color: #eef3ff;
+    padding: 0 14px;
+    outline: none;
+}
+
+    .text-input:focus {
+        border-color: rgba(212,175,55,0.28);
+    }
+
+.inbox-layout {
+    display: grid;
+    grid-template-columns: 1.1fr 1fr;
+    gap: 20px;
+}
+
+.message-list,
+.offer-list {
+    display: grid;
+    gap: 12px;
+}
+
+.message-item {
+    width: 100%;
+    text-align: left;
+    padding: 16px;
+    border-radius: 16px;
+    border: 1px solid rgba(255,255,255,0.08);
+    background: rgba(255,255,255,0.03);
+    color: #eef3ff;
+    cursor: pointer;
+    transition: 0.18s ease;
+}
+
+    .message-item:hover,
+    .message-item.selected {
+        background: linear-gradient(135deg, rgba(212,175,55,0.10), rgba(139,92,246,0.10));
+        border-color: rgba(212,175,55,0.22);
+    }
+
+.message-top {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    align-items: center;
+}
+
+.message-subject {
+    font-weight: 800;
+}
+
+.message-date,
+.message-type {
+    color: #95a4c6;
+    font-size: 0.84rem;
+}
+
+.message-body-preview,
+.message-full-body {
+    margin-top: 8px;
+    color: #d3dcf5;
+    line-height: 1.65;
+}
+
+.offer-card {
+    padding: 16px;
+    border-radius: 16px;
+    border: 1px solid rgba(255,255,255,0.08);
+    background: rgba(255,255,255,0.03);
+}
+
+.offer-title {
+    font-weight: 900;
+    font-size: 1.02rem;
+    margin-bottom: 8px;
+}
+
+.offer-meta {
+    color: #95a4c6;
+    margin-top: 6px;
+}
+
+.agent-grid {
+    display: grid;
+    grid-template-columns: 1.3fr repeat(4, minmax(0, 1fr));
+    gap: 18px;
+}
+
+@media (max-width: 1200px) {
+    .menu-card-grid,
+    .inbox-layout,
+    .agent-grid {
+        grid-template-columns: 1fr;
+    }
+}
+
+@media (max-width: 800px) {
+    .menu-shell {
+        padding: 18px;
+    }
+
+    .menu-hero-title {
+        font-size: 2.2rem;
+    }
+}
+
+
 

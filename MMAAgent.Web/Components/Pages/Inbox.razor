@@ -1,0 +1,157 @@
+﻿@page "/inbox"
+@rendermode InteractiveServer
+@using MMAAgent.Web.Models
+@using MMAAgent.Web.Services
+@inject WebInboxService InboxService
+
+<PageTitle>Inbox - MMA Agent</PageTitle>
+
+<div class="page-header">
+    <div>
+        <h1>Inbox</h1>
+        <p class="muted-text">Messages and fight offers for the current agent.</p>
+    </div>
+</div>
+
+@if (_error is not null)
+{
+    <div class="panel-card error-panel">@_error</div>
+}
+else if (_loading)
+{
+    <div class="panel-card">Cargando inbox...</div>
+}
+else
+{
+    <div class="inbox-layout">
+        <section class="panel-card">
+            <div class="table-toolbar">
+                <div class="toolbar-title">Messages</div>
+                <div class="toolbar-subtitle">@_messages.Count loaded</div>
+            </div>
+
+            @if (_messages.Count == 0)
+            {
+                <div class="muted-text">No messages found.</div>
+            }
+            else
+            {
+                <div class="message-list">
+                    @foreach (var msg in _messages)
+                    {
+                        <button type="button"
+                                class="message-item @(SelectedMessage?.Id == msg.Id ? "selected" : "")"
+                                @onclick="() => SelectMessageAsync(msg)">
+                            <div class="message-top">
+                                <span class="message-subject">@msg.Subject</span>
+                                <span class="message-date">@msg.CreatedDate</span>
+                            </div>
+                            <div class="message-type">@msg.MessageType</div>
+                            <div class="message-body-preview">@msg.Body</div>
+                        </button>
+                    }
+                </div>
+            }
+        </section>
+
+        <section class="panel-card">
+            <div class="table-toolbar">
+                <div class="toolbar-title">Fight Offers</div>
+                <div class="toolbar-subtitle">@_offers.Count loaded</div>
+            </div>
+
+            @if (_offers.Count == 0)
+            {
+                <div class="muted-text">No fight offers found.</div>
+            }
+            else
+            {
+                <div class="offer-list">
+                    @foreach (var offer in _offers)
+                    {
+                        <div class="offer-card">
+                            <div class="offer-title">@offer.FighterName vs @offer.OpponentName</div>
+                            <div class="offer-meta">Purse: @offer.Purse · Bonus: @offer.WinBonus</div>
+                            <div class="offer-meta">Weeks until fight: @offer.WeeksUntilFight · Title: @(offer.IsTitleFight ? "Yes" : "No")</div>
+                            <div class="offer-meta">Status: @offer.Status</div>
+
+                            <div class="button-row" style="margin-top:12px;">
+                                <button class="btn-secondary" @onclick="() => AcceptOfferAsync(offer.OfferId)">Accept</button>
+                                <button class="btn-secondary" @onclick="() => RejectOfferAsync(offer.OfferId)">Reject</button>
+                                <a class="btn-secondary" href="@($"/fighters/{offer.FighterId}")">Open fighter</a>
+                            </div>
+                        </div>
+                    }
+                </div>
+            }
+        </section>
+    </div>
+
+    @if (SelectedMessage is not null)
+    {
+        <section class="panel-card" style="margin-top:20px;">
+            <div class="table-toolbar">
+                <div class="toolbar-title">@SelectedMessage.Subject</div>
+                <div class="toolbar-subtitle">@SelectedMessage.CreatedDate · @SelectedMessage.MessageType</div>
+            </div>
+            <div class="message-full-body">@SelectedMessage.Body</div>
+        </section>
+    }
+}
+
+@code {
+    private List<InboxMessageVm> _messages = new();
+    private List<FightOfferVm> _offers = new();
+    private InboxMessageVm? SelectedMessage;
+    private bool _loading = true;
+    private string? _error;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await ReloadAsync();
+    }
+
+    private async Task ReloadAsync()
+    {
+        try
+        {
+            _loading = true;
+            _error = null;
+            var result = await InboxService.LoadAsync();
+            _messages = result.Messages.ToList();
+            _offers = result.Offers.ToList();
+            SelectedMessage = _messages.FirstOrDefault();
+        }
+        catch (Exception ex)
+        {
+            _error = ex.ToString();
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private async Task SelectMessageAsync(InboxMessageVm msg)
+    {
+        SelectedMessage = msg;
+        if (!msg.IsRead)
+        {
+            await InboxService.MarkMessageAsReadAsync(msg.Id);
+            await ReloadAsync();
+            SelectedMessage = _messages.FirstOrDefault(x => x.Id == msg.Id);
+        }
+    }
+
+    private async Task AcceptOfferAsync(int offerId)
+    {
+        try { await InboxService.AcceptOfferAsync(offerId); await ReloadAsync(); }
+        catch (Exception ex) { _error = ex.ToString(); }
+    }
+
+    private async Task RejectOfferAsync(int offerId)
+    {
+        try { await InboxService.RejectOfferAsync(offerId); await ReloadAsync(); }
+        catch (Exception ex) { _error = ex.ToString(); }
+    }
+}

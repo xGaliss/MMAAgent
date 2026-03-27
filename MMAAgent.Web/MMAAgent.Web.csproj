@@ -7,6 +7,12 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <Content Include="Assets\Database\MMA_Agent.db">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\MMAAgent.Application\MMAAgent.Application.csproj" />
     <ProjectReference Include="..\MMAAgent.Domain\MMAAgent.Domain.csproj" />
     <ProjectReference Include="..\MMAAgent.Infrastructure\MMAAgent.Infrastructure.csproj" />

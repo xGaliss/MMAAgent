@@ -1,0 +1,70 @@
+﻿@page "/agent"
+@rendermode InteractiveServer
+@using MMAAgent.Web.Models
+@using MMAAgent.Web.Services
+@inject WebAgentProfileService AgentProfileService
+
+<PageTitle>Agent Profile - MMA Agent</PageTitle>
+
+<div class="page-header">
+    <div>
+        <h1>Agent Profile</h1>
+        <p class="muted-text">Read-only agent overview loaded from the current save.</p>
+    </div>
+</div>
+
+@if (_error is not null)
+{
+    <div class="panel-card error-panel">@_error</div>
+}
+else if (_loading)
+{
+    <div class="panel-card">Cargando agent profile...</div>
+}
+else if (_agent is null)
+{
+    <div class="panel-card">No agent profile found.</div>
+}
+else
+{
+    <div class="agent-grid">
+        <section class="panel-card">
+            <div class="section-kicker">AGENT</div>
+            <h2 class="profile-name">@_agent.Name</h2>
+            <div class="muted-text">@_agent.AgencyName</div>
+        </section>
+
+        <section class="stat-card">
+            <div class="stat-label">Money</div>
+            <div class="stat-value">@_agent.Money</div>
+        </section>
+
+        <section class="stat-card">
+            <div class="stat-label">Reputation</div>
+            <div class="stat-value">@_agent.Reputation</div>
+        </section>
+
+        <section class="stat-card">
+            <div class="stat-label">Managed Fighters</div>
+            <div class="stat-value">@_agent.ManagedFightersCount</div>
+        </section>
+
+        <section class="stat-card">
+            <div class="stat-label">Created</div>
+            <div class="stat-value">@_agent.CreatedDate</div>
+        </section>
+    </div>
+}
+
+@code {
+    private AgentProfileVm? _agent;
+    private bool _loading = true;
+    private string? _error;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try { _agent = await AgentProfileService.LoadAsync(); }
+        catch (Exception ex) { _error = ex.ToString(); }
+        finally { _loading = false; }
+    }
+}
