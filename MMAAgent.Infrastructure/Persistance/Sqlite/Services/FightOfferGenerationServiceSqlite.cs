@@ -36,31 +36,46 @@ public sealed class FightOfferGenerationServiceSqlite : IFightOfferGenerationSer
         using var conn = _factory.CreateConnection();
         using var tx = conn.BeginTransaction();
 
-        var upcomingEvents = await LoadUpcomingEventsAsync(
-    conn,
-    tx,
-    gameState.CurrentWeek,
-    cancellationToken);
-        var managedFighters = await LoadAvailableManagedFightersAsync(conn, tx, agent.Id, gameState.CurrentWeek, cancellationToken);
+        var absoluteWeek = await LoadAbsoluteWeekAsync(conn, tx, cancellationToken);
+        var upcomingEvents = await LoadUpcomingPromotionsAsync(conn, tx, absoluteWeek, cancellationToken);
+        var managedFighters = await LoadAvailableManagedFightersAsync(conn, tx, agent.Id, cancellationToken);
 
         var offersCreated = 0;
 
         foreach (var fighter in managedFighters)
         {
             var ev = upcomingEvents.FirstOrDefault(x =>
-    fighter.PromotionId == null || x.PromotionId == fighter.PromotionId.Value);
+                fighter.PromotionId == null || x.PromotionId == fighter.PromotionId.Value);
+
             if (ev is null)
-                break;
+                continue;
 
             if (await HasPendingOfferAsync(conn, tx, fighter.FighterId, cancellationToken))
                 continue;
 
-            var opponent = await FindOpponentAsync(conn, tx, fighter, ev.PromotionId, cancellationToken);
-            if (opponent is null)
+            if (fighter.WeeksUntilAvailable > 0 || fighter.InjuryWeeksRemaining > 0)
                 continue;
 
-            var weeksUntilFight = Math.Max(1, ev.EventWeek - gameState.CurrentWeek);
+            if (ev.EventWeek - absoluteWeek < 1)
+                continue;
 
+            var candidates = await FindOpponentCandidatesAsync(conn, tx, fighter, ev.PromotionId, cancellationToken);
+            OpponentSnapshot? opponent = null;
+
+            foreach (var candidate in candidates)
+            {
+                if (await HaveRecentRematchAsync(conn, tx, fighter.FighterId, candidate.FighterId, cancellationToken))
+                    continue;
+
+                if (!PassesCampAcceptance(fighter, candidate, ev.EventWeek - absoluteWeek))
+                    continue;
+
+                opponent = candidate;
+                break;
+            }
+
+            if (opponent is null)
+                continue;
             using (var cmd = conn.CreateCommand())
             {
                 cmd.Transaction = tx;
@@ -87,7 +102,7 @@ VALUES
     $weeksUntilFight,
     0,
     'Pending',
-    $eventId,
+    NULL,
     $promotionId,
     $weightClass
 );";
@@ -96,11 +111,9 @@ VALUES
                 cmd.Parameters.AddWithValue("$opponentId", opponent.FighterId);
                 cmd.Parameters.AddWithValue("$purse", 5000 + fighter.Skill * 100);
                 cmd.Parameters.AddWithValue("$winBonus", 2000 + fighter.Popularity * 50);
-                cmd.Parameters.AddWithValue("$weeksUntilFight", weeksUntilFight);
-                cmd.Parameters.AddWithValue("$eventId", DBNull.Value);
+                cmd.Parameters.AddWithValue("$weeksUntilFight", Math.Max(1, ev.EventWeek - absoluteWeek));
                 cmd.Parameters.AddWithValue("$promotionId", ev.PromotionId);
                 cmd.Parameters.AddWithValue("$weightClass", fighter.WeightClass);
-
                 await cmd.ExecuteNonQueryAsync(cancellationToken);
             }
 
@@ -120,11 +133,56 @@ VALUES
         tx.Commit();
 
         foreach (var msg in inboxMessages)
-        {
             await _inboxRepository.CreateAsync(msg);
-        }
 
         return offersCreated;
+    }
+
+    private static bool PassesCampAcceptance(ManagedAvailability fighter, OpponentSnapshot opponent, int weeksUntilFight)
+    {
+        if (weeksUntilFight < 2) return false;
+        if (fighter.ContractFightsRemaining <= 0) return false;
+        if (fighter.ContractFightsRemaining == 1 && opponent.Skill > fighter.Skill + 8) return false;
+        if (fighter.InjuryWeeksRemaining > 0) return false;
+        return true;
+    }
+
+    private static async Task<bool> HaveRecentRematchAsync(
+    SqliteConnection conn,
+    SqliteTransaction tx,
+    int fighterId,
+    int opponentId,
+    CancellationToken cancellationToken)
+    {
+        using var cmd = conn.CreateCommand();
+        cmd.Transaction = tx;
+        cmd.CommandText = @"
+SELECT COUNT(*)
+FROM
+(
+    SELECT Id
+    FROM FightHistory
+    WHERE
+    (
+        (FighterAId = $a AND FighterBId = $b)
+        OR
+        (FighterAId = $b AND FighterBId = $a)
+    )
+    ORDER BY Id DESC
+    LIMIT 2
+) t;";
+        cmd.Parameters.AddWithValue("$a", fighterId);
+        cmd.Parameters.AddWithValue("$b", opponentId);
+
+        return Convert.ToInt32(await cmd.ExecuteScalarAsync(cancellationToken)) >= 2;
+    }
+
+    private static async Task<int> LoadAbsoluteWeekAsync(SqliteConnection conn, SqliteTransaction tx, CancellationToken cancellationToken)
+    {
+        using var cmd = conn.CreateCommand();
+        cmd.Transaction = tx;
+        cmd.CommandText = "SELECT COALESCE(AbsoluteWeek, 1) FROM GameState LIMIT 1;";
+        return Convert.ToInt32(await cmd.ExecuteScalarAsync(cancellationToken));
     }
 
     private static async Task<bool> HasPendingOfferAsync(SqliteConnection conn, SqliteTransaction tx, int fighterId, CancellationToken cancellationToken)
@@ -136,32 +194,28 @@ VALUES
         return Convert.ToInt32(await cmd.ExecuteScalarAsync(cancellationToken)) > 0;
     }
 
-    private static async Task<List<UpcomingEvent>> LoadUpcomingEventsAsync(
-    SqliteConnection conn,
-    SqliteTransaction tx,
-    int currentWeek,
-    CancellationToken cancellationToken)
+    private static async Task<List<UpcomingEvent>> LoadUpcomingPromotionsAsync(
+        SqliteConnection conn,
+        SqliteTransaction tx,
+        int absoluteWeek,
+        CancellationToken cancellationToken)
     {
         using var cmd = conn.CreateCommand();
         cmd.Transaction = tx;
-
         cmd.CommandText = @"
 SELECT
     Id AS PromotionId,
     Name,
-    NextEventWeek,
-    EventIntervalWeeks
+    NextEventWeek
 FROM Promotions
 WHERE IsActive = 1
   AND NextEventWeek >= $minWeek
   AND NextEventWeek <= $maxWeek
 ORDER BY NextEventWeek;";
-
-        cmd.Parameters.AddWithValue("$minWeek", currentWeek + 1);
-        cmd.Parameters.AddWithValue("$maxWeek", currentWeek + 6);
+        cmd.Parameters.AddWithValue("$minWeek", absoluteWeek + 1);
+        cmd.Parameters.AddWithValue("$maxWeek", absoluteWeek + 10);
 
         var list = new List<UpcomingEvent>();
-
         using var r = await cmd.ExecuteReaderAsync(cancellationToken);
         while (await r.ReadAsync(cancellationToken))
         {
@@ -169,17 +223,13 @@ ORDER BY NextEventWeek;";
             var promoName = r["Name"]?.ToString() ?? $"Promotion {promotionId}";
             var nextEventWeek = Convert.ToInt32(r["NextEventWeek"]);
 
-            list.Add(new UpcomingEvent(
-                EventId: 0, // todavía no existe en Events
-                EventName: $"{promoName} Week {nextEventWeek}",
-                PromotionId: promotionId,
-                EventWeek: nextEventWeek));
+            list.Add(new UpcomingEvent(0, $"{promoName} Week {nextEventWeek}", promotionId, nextEventWeek));
         }
 
         return list;
     }
 
-    private static async Task<List<ManagedAvailability>> LoadAvailableManagedFightersAsync(SqliteConnection conn, SqliteTransaction tx, int agentId, int currentWeek, CancellationToken cancellationToken)
+    private static async Task<List<ManagedAvailability>> LoadAvailableManagedFightersAsync(SqliteConnection conn, SqliteTransaction tx, int agentId, CancellationToken cancellationToken)
     {
         using var cmd = conn.CreateCommand();
         cmd.Transaction = tx;
@@ -190,64 +240,89 @@ SELECT
     f.WeightClass,
     f.Skill,
     f.Popularity,
-    f.PromotionId
+    f.PromotionId,
+    COALESCE(f.WeeksUntilAvailable, 0) AS WeeksUntilAvailable,
+    COALESCE(f.InjuryWeeksRemaining, 0) AS InjuryWeeksRemaining,
+    COALESCE(f.ContractFightsRemaining, 0) AS ContractFightsRemaining
 FROM ManagedFighters mf
 JOIN Fighters f ON f.Id = mf.FighterId
 WHERE mf.AgentId = $agentId
-  AND COALESCE(f.IsInjured, 0) = 0
   AND COALESCE(f.IsBooked, 0) = 0
-  AND COALESCE(f.AvailableFromWeek, 0) <= $currentWeek
 ORDER BY f.Popularity DESC, f.Skill DESC;";
         cmd.Parameters.AddWithValue("$agentId", agentId);
-        cmd.Parameters.AddWithValue("$currentWeek", currentWeek);
 
         var list = new List<ManagedAvailability>();
         using var r = await cmd.ExecuteReaderAsync(cancellationToken);
         while (await r.ReadAsync(cancellationToken))
+        {
             list.Add(new ManagedAvailability(
-    Convert.ToInt32(r["FighterId"]),
-    r["FighterName"]?.ToString() ?? "",
-    r["WeightClass"]?.ToString() ?? "",
-    Convert.ToInt32(r["Skill"]),
-    Convert.ToInt32(r["Popularity"]),
-    r["PromotionId"] == DBNull.Value ? null : Convert.ToInt32(r["PromotionId"])));
+                Convert.ToInt32(r["FighterId"]),
+                r["FighterName"]?.ToString() ?? "",
+                r["WeightClass"]?.ToString() ?? "",
+                Convert.ToInt32(r["Skill"]),
+                Convert.ToInt32(r["Popularity"]),
+                r["PromotionId"] == DBNull.Value ? null : Convert.ToInt32(r["PromotionId"]),
+                Convert.ToInt32(r["WeeksUntilAvailable"]),
+                Convert.ToInt32(r["InjuryWeeksRemaining"]),
+                Convert.ToInt32(r["ContractFightsRemaining"])));
+        }
+
         return list;
     }
 
-    private static async Task<OpponentSnapshot?> FindOpponentAsync(SqliteConnection conn, SqliteTransaction tx, ManagedAvailability fighter, int promotionId, CancellationToken cancellationToken)
+    private static async Task<List<OpponentSnapshot>> FindOpponentCandidatesAsync(
+    SqliteConnection conn,
+    SqliteTransaction tx,
+    ManagedAvailability fighter,
+    int promotionId,
+    CancellationToken cancellationToken)
     {
         using var cmd = conn.CreateCommand();
         cmd.Transaction = tx;
         cmd.CommandText = @"
-SELECT f.Id AS FighterId, (f.FirstName || ' ' || f.LastName) AS FighterName
+SELECT
+    f.Id AS FighterId,
+    (f.FirstName || ' ' || f.LastName) AS FighterName,
+    f.Skill
 FROM Fighters f
 WHERE f.Id <> $fighterId
   AND f.WeightClass = $weightClass
-  AND COALESCE(f.IsInjured, 0) = 0
   AND COALESCE(f.IsBooked, 0) = 0
+  AND COALESCE(f.WeeksUntilAvailable, 0) = 0
+  AND COALESCE(f.InjuryWeeksRemaining, 0) = 0
   AND f.PromotionId = $promotionId
 ORDER BY ABS(f.Skill - $skill), ABS(f.Popularity - $popularity)
-LIMIT 1;";
+LIMIT 12;";
         cmd.Parameters.AddWithValue("$fighterId", fighter.FighterId);
         cmd.Parameters.AddWithValue("$weightClass", fighter.WeightClass);
         cmd.Parameters.AddWithValue("$promotionId", promotionId);
         cmd.Parameters.AddWithValue("$skill", fighter.Skill);
         cmd.Parameters.AddWithValue("$popularity", fighter.Popularity);
 
-        using var r = await cmd.ExecuteReaderAsync(cancellationToken);
-        if (!await r.ReadAsync(cancellationToken))
-            return null;
+        var list = new List<OpponentSnapshot>();
 
-        return new OpponentSnapshot(Convert.ToInt32(r["FighterId"]), r["FighterName"]?.ToString() ?? "");
+        using var r = await cmd.ExecuteReaderAsync(cancellationToken);
+        while (await r.ReadAsync(cancellationToken))
+        {
+            list.Add(new OpponentSnapshot(
+                Convert.ToInt32(r["FighterId"]),
+                r["FighterName"]?.ToString() ?? "",
+                Convert.ToInt32(r["Skill"])));
+        }
+
+        return list;
     }
 
     private sealed record UpcomingEvent(int EventId, string EventName, int PromotionId, int EventWeek);
     private sealed record ManagedAvailability(
-    int FighterId,
-    string Name,
-    string WeightClass,
-    int Skill,
-    int Popularity,
-    int? PromotionId);
-    private sealed record OpponentSnapshot(int FighterId, string Name);
+        int FighterId,
+        string Name,
+        string WeightClass,
+        int Skill,
+        int Popularity,
+        int? PromotionId,
+        int WeeksUntilAvailable,
+        int InjuryWeeksRemaining,
+        int ContractFightsRemaining);
+    private sealed record OpponentSnapshot(int FighterId, string Name, int Skill);
 }

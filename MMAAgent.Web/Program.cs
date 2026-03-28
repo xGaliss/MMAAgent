@@ -13,6 +13,7 @@ using MMAAgent.Application.Abstractions;
 using MMAAgent.Infrastructure.Persistance.Sqlite.Services;
 using MMAAgent.Web.Services;
 
+
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddRazorComponents()
@@ -20,6 +21,14 @@ builder.Services.AddRazorComponents()
 
 builder.Services.Configure<DatabaseOptions>(
     builder.Configuration.GetSection(DatabaseOptions.SectionName));
+
+
+
+builder.Services.AddScoped<IEventSimulator, SimulateEventSqlite>();
+builder.Services.AddScoped<IPromotionEventScheduleRepository, SqlitePromotionEventScheduleRepository>();
+builder.Services.AddScoped<IWeeklyWorldUpdateService, WeeklyWorldUpdateService>();
+builder.Services.AddScoped<IFightOfferGenerationService, FightOfferGenerationServiceSqlite>();
+
 
 builder.Services.AddSingleton<ISavePathProvider, WebSavePathProvider>();
 builder.Services.AddSingleton<SqliteConnectionFactory>();
@@ -69,6 +78,10 @@ builder.Services.AddScoped<WebFighterActionService>();
 builder.Services.AddScoped<IEventSimulator, SimulateEventSqlite>();
 builder.Services.AddScoped<IPromotionEventScheduleRepository, SqlitePromotionEventScheduleRepository>();
 builder.Services.AddScoped<IWeeklyWorldUpdateService, WeeklyWorldUpdateService>();
+builder.Services.AddScoped<IEventSimulator, SimulateEventSqlite>();
+builder.Services.AddScoped<IPromotionEventScheduleRepository, SqlitePromotionEventScheduleRepository>();
+builder.Services.AddScoped<IWeeklyWorldUpdateService, WeeklyWorldUpdateService>();
+builder.Services.AddScoped<IFightOfferGenerationService, FightOfferGenerationServiceSqlite>();
 
 
 var app = builder.Build();

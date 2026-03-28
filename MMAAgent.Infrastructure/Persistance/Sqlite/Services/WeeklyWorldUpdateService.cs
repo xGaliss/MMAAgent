@@ -31,8 +31,24 @@ public sealed class WeeklyWorldUpdateService : IWeeklyWorldUpdateService
     {
         var state = await _gameTimeService.AdvanceWeeksAsync(1);
 
-        // 1) Simular eventos debidos esta semana
-        var duePromotions = await _scheduleRepository.GetDueAsync(state.CurrentWeek);
+        using (var conn = _factory.CreateConnection())
+        using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText = "UPDATE GameState SET AbsoluteWeek = COALESCE(AbsoluteWeek, 0) + 1;";
+            await cmd.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        await TickRecoveryAsync(cancellationToken);
+
+        using var readConn = _factory.CreateConnection();
+        int absoluteWeek;
+        using (var cmd = readConn.CreateCommand())
+        {
+            cmd.CommandText = "SELECT COALESCE(AbsoluteWeek, 1) FROM GameState LIMIT 1;";
+            absoluteWeek = Convert.ToInt32(await cmd.ExecuteScalarAsync(cancellationToken));
+        }
+
+        var duePromotions = await _scheduleRepository.GetDueAsync(absoluteWeek);
         var simulatedEvents = 0;
 
         foreach (var promo in duePromotions)
@@ -40,18 +56,14 @@ public sealed class WeeklyWorldUpdateService : IWeeklyWorldUpdateService
             await _eventSimulator.SimulatePromotionEventAsync(promo.PromotionId, state);
             simulatedEvents++;
 
-            var nextWeek = state.CurrentWeek + Math.Max(1, promo.IntervalWeeks);
-            await _scheduleRepository.SetNextEventWeekAsync(promo.PromotionId, nextWeek);
+            var nextAbsoluteWeek = absoluteWeek + Math.Max(1, promo.IntervalWeeks);
+            await _scheduleRepository.SetNextEventWeekAsync(promo.PromotionId, nextAbsoluteWeek);
         }
 
-        // 2) Generar nuevas offers después de simular
         var newOffers = await _fightOfferGenerationService.GenerateWeeklyOffersAsync(cancellationToken);
 
-        // 3) Resumen básico
-        using var conn = _factory.CreateConnection();
-
         int newMessages;
-        using (var cmd = conn.CreateCommand())
+        using (var cmd = readConn.CreateCommand())
         {
             cmd.CommandText = @"
 SELECT COUNT(*)
@@ -62,8 +74,8 @@ WHERE CreatedDate = $date
             newMessages = Convert.ToInt32(await cmd.ExecuteScalarAsync(cancellationToken));
         }
 
-        string? headline = null;
-        using (var cmd = conn.CreateCommand())
+        string? headline;
+        using (var cmd = readConn.CreateCommand())
         {
             cmd.CommandText = "SELECT Name FROM Events ORDER BY Id DESC LIMIT 1;";
             headline = (await cmd.ExecuteScalarAsync(cancellationToken))?.ToString();
@@ -78,5 +90,27 @@ WHERE CreatedDate = $date
             newMessages,
             0,
             headline);
+    }
+
+    private async Task TickRecoveryAsync(CancellationToken cancellationToken)
+    {
+        using var conn = _factory.CreateConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = @"
+UPDATE Fighters
+SET
+    WeeksUntilAvailable = CASE
+        WHEN COALESCE(WeeksUntilAvailable, 0) > 0 THEN WeeksUntilAvailable - 1
+        ELSE 0
+    END,
+    InjuryWeeksRemaining = CASE
+        WHEN COALESCE(InjuryWeeksRemaining, 0) > 0 THEN InjuryWeeksRemaining - 1
+        ELSE 0
+    END,
+    IsInjured = CASE
+        WHEN COALESCE(InjuryWeeksRemaining, 0) > 1 THEN 1
+        ELSE 0
+    END;";
+        await cmd.ExecuteNonQueryAsync(cancellationToken);
     }
 }

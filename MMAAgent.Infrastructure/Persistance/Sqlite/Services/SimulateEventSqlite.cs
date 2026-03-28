@@ -23,25 +23,22 @@ namespace MMAAgent.Infrastructure.Persistence.Sqlite.Services
 
         public async Task SimulatePromotionEventAsync(int promotionId, GameState state)
         {
-            var eventDate = state.CurrentDate; // yyyy-MM-dd
+            var eventDate = state.CurrentDate;
             var seed = DeriveEventSeed(state.WorldSeed, state.CurrentYear, state.CurrentWeek, promotionId);
             var rng = new Random(seed);
 
             using var conn = _factory.CreateConnection();
             using var tx = conn.BeginTransaction();
 
-            // 1) Promo
             var promoName = await ScalarStringAsync(conn, tx,
                 "SELECT Name FROM Promotions WHERE Id = $id;",
                 ("$id", promotionId)) ?? $"Promotion {promotionId}";
 
-            // 2) Reutilizar o crear evento de esta semana
             var eventName = $"{promoName} Week {state.CurrentWeek}";
             var location = "TBD";
 
             int eventId = await EnsureWeeklyEventAsync(conn, tx, promotionId, eventDate, eventName, location);
 
-            // 3) Divisiones de la promo
             var divs = await QueryAsync(conn, tx, @"
 SELECT WeightClass, HasRanking, RankingSize
 FROM PromotionWeightClasses
@@ -57,7 +54,6 @@ WHERE PromotionId = $p;",
             var sb = new StringBuilder();
             sb.AppendLine($"===== SIM EVENT: {promoName} (EventId={eventId}, Date={eventDate}, seed={seed}) =====");
 
-            // 4) Primero simular peleas ya pactadas por offers (Method = Scheduled)
             var scheduledFights = await QueryAsync(conn, tx, @"
 SELECT Id, FighterAId, FighterBId, WeightClass, IsTitleFight
 FROM Fights
@@ -78,7 +74,7 @@ WHERE EventId = $eventId
                 if (fightersUsedThisEvent.Contains(aId) || fightersUsedThisEvent.Contains(bId))
                     continue;
 
-                var res = await SimFightAsync(conn, tx, rng, eventId, promotionId, wc, aId, bId, isTitle, eventDate);
+                var res = await SimFightAsync(conn, tx, rng, eventId, promotionId, wc, aId, bId, isTitle, eventDate, state.CurrentWeek);
 
                 await UpdateScheduledFightAsync(conn, tx, fightId, res.WinnerId, res.Method, null, eventDate);
 
@@ -88,7 +84,6 @@ WHERE EventId = $eventId
                 fightersUsedThisEvent.Add(bId);
             }
 
-            // 5) Completar el resto del evento con IA
             foreach (var d in divs)
             {
                 var wc = d.GetString("WeightClass");
@@ -98,7 +93,6 @@ WHERE EventId = $eventId
                 if (hasRanking != 1 || rankingSize <= 0)
                     continue;
 
-                // Ranking actual EXCLUYENDO managed fighters
                 var ranked = await QueryAsync(conn, tx, @"
 SELECT RankPosition, FighterId
 FROM PromotionRankings
@@ -138,7 +132,6 @@ WHERE FighterId = $fid
                         ("$fid", champId)) > 0;
                 }
 
-                // Defensa titular automática solo si el campeón NO es del jugador
                 bool doTitle = champId > 0 && !champIsManaged;
 
                 if (doTitle)
@@ -150,12 +143,7 @@ WHERE FighterId = $fid
                         !fightersUsedThisEvent.Contains(champId) &&
                         !fightersUsedThisEvent.Contains(rank1Id))
                     {
-                        var res = await SimFightAsync(
-                            conn, tx, rng,
-                            eventId, promotionId, wc,
-                            champId, rank1Id,
-                            isTitle: true,
-                            eventDate);
+                        var res = await SimFightAsync(conn, tx, rng, eventId, promotionId, wc, champId, rank1Id, true, eventDate, state.CurrentWeek);
 
                         sb.AppendLine($"[{wc}] TITLE: {res.Summary}");
                         fightersUsedThisEvent.Add(champId);
@@ -163,7 +151,6 @@ WHERE FighterId = $fid
                     }
                 }
 
-                // Parejas IA: #2 vs #3, #4 vs #5...
                 int made = 0;
                 int startIndex = 1;
 
@@ -178,12 +165,7 @@ WHERE FighterId = $fid
 
                     bool isTitleFight = champId > 0 && (aId == champId || bId == champId);
 
-                    var res = await SimFightAsync(
-                        conn, tx, rng,
-                        eventId, promotionId, wc,
-                        aId, bId,
-                        isTitle: isTitleFight,
-                        eventDate);
+                    var res = await SimFightAsync(conn, tx, rng, eventId, promotionId, wc, aId, bId, isTitleFight, eventDate, state.CurrentWeek);
 
                     sb.AppendLine($"[{wc}] {res.Summary}" + (isTitleFight ? " (TITLE AUTO)" : ""));
 
@@ -201,12 +183,10 @@ WHERE FighterId = $fid
             tx.Commit();
         }
 
-        // ---------------- Fight sim ----------------
-
         private async Task<SimFightResult> SimFightAsync(
             SqliteConnection conn, SqliteTransaction tx, Random rng,
             int eventId, int promotionId, string weightClass,
-            int aId, int bId, bool isTitle, string eventDate)
+            int aId, int bId, bool isTitle, string eventDate, int currentWeek)
         {
             var a = await GetFighterAsync(conn, tx, aId);
             var b = await GetFighterAsync(conn, tx, bId);
@@ -243,10 +223,7 @@ WHERE FighterId = $fid
             await _contracts.PostFightContractTickAsync(conn, tx, winnerId);
             await _contracts.PostFightContractTickAsync(conn, tx, loserId);
 
-            // Al terminar la pelea, ya no están booked
-            await ExecAsync(conn, tx,
-                "UPDATE Fighters SET IsBooked = 0 WHERE Id IN ($a, $b);",
-                ("$a", aId), ("$b", bId));
+            await ApplyRecoveryAsync(conn, tx, aId, bId, method, currentWeek, rng);
 
             if (isTitle)
             {
@@ -278,6 +255,38 @@ WHERE PromotionId = $p AND WeightClass = $wc;",
             return new SimFightResult(winnerId, loserId, method, isTitle, summary);
         }
 
+        private static async Task ApplyRecoveryAsync(SqliteConnection conn, SqliteTransaction tx, int aId, int bId, string method, int currentWeek, Random rng)
+        {
+            var baseWeeks = method switch
+            {
+                "DEC" => 4,
+                "SUB" => 5,
+                "KO/TKO" => 8,
+                _ => 4
+            };
+
+            var injuryWeeks = 0;
+            if (method == "KO/TKO" && rng.NextDouble() < 0.55)
+                injuryWeeks = rng.Next(6, 11);
+            else if (method == "SUB" && rng.NextDouble() < 0.20)
+                injuryWeeks = rng.Next(3, 6);
+            else if (method == "DEC" && rng.NextDouble() < 0.08)
+                injuryWeeks = rng.Next(2, 4);
+
+            await ExecAsync(conn, tx, @"
+UPDATE Fighters
+SET
+    IsBooked = 0,
+    WeeksUntilAvailable = $weeks,
+    InjuryWeeksRemaining = CASE WHEN $injuryWeeks > InjuryWeeksRemaining THEN $injuryWeeks ELSE InjuryWeeksRemaining END,
+    IsInjured = CASE WHEN $injuryWeeks > 0 THEN 1 ELSE 0 END
+WHERE Id IN ($a, $b);",
+                ("$weeks", baseWeeks),
+                ("$injuryWeeks", injuryWeeks),
+                ("$a", aId),
+                ("$b", bId));
+        }
+
         private static double CombatPower(FighterRow f, Random rng)
         {
             double core = 0.35 * f.Skill
@@ -298,7 +307,6 @@ WHERE PromotionId = $p AND WeightClass = $wc;",
             double subP = 0.22;
 
             koP += Clamp01((winner.Striking - loser.Chin) / 60.0) * 0.25;
-
             double groundEdge = (winner.Grappling + winner.Wrestling) - (loser.Grappling + loser.Wrestling);
             subP += Clamp01(groundEdge / 80.0) * 0.25;
 
@@ -329,8 +337,6 @@ WHERE PromotionId = $p AND WeightClass = $wc;",
             await ExecAsync(conn, tx, "UPDATE Fighters SET Popularity = MIN(100, Popularity + $d) WHERE Id = $id;", ("$d", wDelta), ("$id", winnerId));
             await ExecAsync(conn, tx, "UPDATE Fighters SET Popularity = MAX(0, Popularity - $d) WHERE Id = $id;", ("$d", lDelta), ("$id", loserId));
         }
-
-        // ---------------- Rankings rebuild ----------------
 
         private static async Task RebuildDivisionRankingsAndEnsureTitleAsync(
             SqliteConnection conn, SqliteTransaction tx,
@@ -388,8 +394,6 @@ WHERE PromotionId = $p AND WeightClass = $wc;",
             }
         }
 
-        // ---------------- Scheduled fight update ----------------
-
         private static async Task UpdateScheduledFightAsync(
             SqliteConnection conn,
             SqliteTransaction tx,
@@ -415,8 +419,6 @@ WHERE Id = $fightId;";
             cmd.Parameters.AddWithValue("$fightId", fightId);
             await cmd.ExecuteNonQueryAsync();
         }
-
-        // ---------------- Event ensure ----------------
 
         private static async Task<int> EnsureWeeklyEventAsync(
             SqliteConnection conn,
@@ -456,8 +458,6 @@ VALUES ($p, $d, $n, $l);";
             return Convert.ToInt32(await insertCmd.ExecuteScalarAsync());
         }
 
-        // ---------------- FightHistory ----------------
-
         private static Task InsertFightHistoryAsync(
             SqliteConnection conn, SqliteTransaction tx,
             string date, int promotionId, string weightClass,
@@ -484,8 +484,6 @@ VALUES
                 ("$eid", eventId)
             );
         }
-
-        // ---------------- Fighter read ----------------
 
         private static async Task<FighterRow?> GetFighterAsync(SqliteConnection conn, SqliteTransaction tx, int id)
         {
@@ -519,8 +517,6 @@ LIMIT 1;";
                 FightIQ = Convert.ToInt32(r["FightIQ"]),
             };
         }
-
-        // ---------------- SQL helpers ----------------
 
         private sealed class Row
         {
@@ -609,10 +605,8 @@ LIMIT 1;";
             public string FirstName { get; set; } = "";
             public string LastName { get; set; } = "";
             public int Retired { get; set; }
-
             public int Skill { get; set; }
             public int Popularity { get; set; }
-
             public int Striking { get; set; }
             public int Grappling { get; set; }
             public int Wrestling { get; set; }
@@ -621,11 +615,6 @@ LIMIT 1;";
             public int FightIQ { get; set; }
         }
 
-        private sealed record SimFightResult(
-            int WinnerId,
-            int LoserId,
-            string Method,
-            bool IsTitle,
-            string Summary);
+        private sealed record SimFightResult(int WinnerId, int LoserId, string Method, bool IsTitle, string Summary);
     }
 }

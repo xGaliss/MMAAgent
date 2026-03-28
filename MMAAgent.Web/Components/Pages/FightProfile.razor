@@ -45,10 +45,11 @@ else
 
                 <div class="profile-record">
                     <span>@_fighter.Wins</span>-<span>@_fighter.Losses</span>-<span>@_fighter.Draws</span>
+                    <button class="btn-primary" @onclick="SignCurrentFighterAsync">Sign fighter</button>
                 </div>
+                
             </div>
-            <button class="btn-primary" @onclick="SignCurrentFighterAsync">Sign fighter</button>
-
+            
             <div class="profile-meta-grid">
                 <div class="meta-box">
                     <div class="meta-label">Promotion</div>
@@ -67,6 +68,7 @@ else
                     <div class="meta-value">@_fighter.Salary</div>
                 </div>
             </div>
+           
         </section>
 
         <section class="panel-card">
