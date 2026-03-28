@@ -2,6 +2,8 @@
 @rendermode InteractiveServer
 @using MMAAgent.Web.Models
 @using MMAAgent.Web.Services
+@using MMAAgent.Application.Abstractions
+@inject IFightOfferResponseService FightOfferResponseService
 @inject WebInboxService InboxService
 
 <PageTitle>Inbox - MMA Agent</PageTitle>
@@ -173,13 +175,39 @@ else
 
     private async Task AcceptOfferAsync(int offerId)
     {
-        try { await InboxService.AcceptOfferAsync(offerId); await ReloadAsync(); }
-        catch (Exception ex) { _error = ex.ToString(); }
+        try
+        {
+            var result = await FightOfferResponseService.AcceptOfferAsync(offerId);
+            if (!result.Success)
+            {
+                _error = result.Message;
+                return;
+            }
+
+            await ReloadAsync();
+        }
+        catch (Exception ex)
+        {
+            _error = ex.ToString();
+        }
     }
 
     private async Task RejectOfferAsync(int offerId)
     {
-        try { await InboxService.RejectOfferAsync(offerId); await ReloadAsync(); }
-        catch (Exception ex) { _error = ex.ToString(); }
+        try
+        {
+            var result = await FightOfferResponseService.RejectOfferAsync(offerId);
+            if (!result.Success)
+            {
+                _error = result.Message;
+                return;
+            }
+
+            await ReloadAsync();
+        }
+        catch (Exception ex)
+        {
+            _error = ex.ToString();
+        }
     }
 }

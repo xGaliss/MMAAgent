@@ -10,6 +10,9 @@
 @inject WebDashboardStatsService DashboardStatsService
 @inject WebDashboardFeedService DashboardFeedService
 @inject WebWeeklySummaryService WeeklySummaryService
+@using MMAAgent.Application.Abstractions
+@inject IWeeklyWorldUpdateService WeeklyWorldUpdateService
+
 
 <PageTitle>Dashboard - MMA Agent</PageTitle>
 
@@ -109,9 +112,11 @@ else
 {
     <div class="panel-card" style="margin-top:20px;">
         <div class="toolbar-title">Last Week Summary</div>
-        <div class="muted-text">Date: @_summary.NewDate · Week @_summary.NewWeek · Year @_summary.NewYear</div>
-        <div class="muted-text">New messages: @_summary.NewMessages</div>
-        <div class="muted-text">Events loaded: @_summary.RecentEventsLoaded</div>
+        <div class="muted-text">Date: @_summary.CurrentDate · Week @_summary.CurrentWeek · Year @_summary.CurrentYear</div>
+        <div class="muted-text">Simulated events: @_summary.SimulatedEvents</div>
+        <div class="muted-text">New fight offers: @_summary.NewFightOffers</div>
+        <div class="muted-text">New messages: @_summary.NewInboxMessages</div>
+        <div class="muted-text">Ranking changes: @_summary.RankingChanges</div>
         <div class="muted-text">Headline: @(_summary.Headline ?? "-")</div>
     </div>
 }
@@ -130,7 +135,7 @@ else
     private bool _advancing;
     private string? _error;
     private string? _status;
-    private WeeklyAdvanceSummaryVm? _summary;
+    private WeeklyWorldUpdateSummary? _summary;
     private List<string> _latestEvents = new();
     private List<string> _recentMessages = new();
     private List<string> _topManaged = new();
@@ -149,11 +154,12 @@ else
             _status = null;
             _error = null;
 
-            await GameTimeService.AdvanceWeeksAsync(1);
-            _summary = await WeeklySummaryService.BuildAsync();
+            var summary = await WeeklyWorldUpdateService.AdvanceWeekAsync();
+            _summary = summary;
+
             await ReloadAsync();
 
-            _status = "Semana avanzada correctamente.";
+            _status = $"Week advanced. New offers: {summary.NewFightOffers}. New messages: {summary.NewInboxMessages}.";
         }
         catch (Exception ex)
         {
@@ -164,6 +170,7 @@ else
             _advancing = false;
         }
     }
+
 
     private async Task ReloadAsync()
     {

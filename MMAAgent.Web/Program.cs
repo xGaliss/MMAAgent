@@ -9,6 +9,9 @@ using MMAAgent.Infrastructure.Persistence.Sqlite.Services;
 using MMAAgent.Web.Components;
 using MMAAgent.Web.Infrastructure;
 using MMAAgent.Web.Services;
+using MMAAgent.Application.Abstractions;
+using MMAAgent.Infrastructure.Persistance.Sqlite.Services;
+using MMAAgent.Web.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -55,6 +58,18 @@ builder.Services.AddScoped<WebMainMenuService>();
 builder.Services.AddScoped<WebDashboardFeedService>();
 builder.Services.AddScoped<WebWeeklySummaryService>();
 builder.Services.AddScoped<FightProfileReadService>();
+builder.Services.AddScoped<IFighterSigningService, FighterSigningServiceSqlite>();
+builder.Services.AddScoped<IFightOfferGenerationService, FightOfferGenerationServiceSqlite>();
+builder.Services.AddScoped<IFightOfferResponseService, FightOfferResponseServiceSqlite>();
+builder.Services.AddScoped<IMatchmakingService, MatchmakingServiceSqlite>();
+builder.Services.AddScoped<IWeeklyWorldUpdateService, WeeklyWorldUpdateService>();
+
+builder.Services.AddScoped<SqliteActionBridge>();
+builder.Services.AddScoped<WebFighterActionService>();
+builder.Services.AddScoped<IEventSimulator, SimulateEventSqlite>();
+builder.Services.AddScoped<IPromotionEventScheduleRepository, SqlitePromotionEventScheduleRepository>();
+builder.Services.AddScoped<IWeeklyWorldUpdateService, WeeklyWorldUpdateService>();
+
 
 var app = builder.Build();
 

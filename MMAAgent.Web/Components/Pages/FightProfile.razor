@@ -2,6 +2,9 @@
 @using MMAAgent.Web.Models
 @using MMAAgent.Web.Services
 @inject FightProfileReadService FightProfileReadService
+@using MMAAgent.Web.Services
+@inject WebFighterActionService FighterActionService
+
 
 <PageTitle>Fight Profile - MMA Agent</PageTitle>
 
@@ -44,6 +47,7 @@ else
                     <span>@_fighter.Wins</span>-<span>@_fighter.Losses</span>-<span>@_fighter.Draws</span>
                 </div>
             </div>
+            <button class="btn-primary" @onclick="SignCurrentFighterAsync">Sign fighter</button>
 
             <div class="profile-meta-grid">
                 <div class="meta-box">
@@ -159,4 +163,21 @@ else
             _loading = false;
         }
     }
+
+    private async Task SignCurrentFighterAsync()
+    {
+        try
+        {
+            if (_fighter is null) return;
+            var result = await FighterActionService.AttemptSignAsync(_fighter.Id);
+            if (!result.Success)
+                _error = result.Message;
+        }
+        catch (Exception ex)
+        {
+            _error = ex.ToString();
+        }
+    }
+
+
 }
