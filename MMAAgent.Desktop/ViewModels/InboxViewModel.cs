@@ -78,7 +78,7 @@ namespace MMAAgent.Desktop.ViewModels
                 return;
             }
 
-            var messages = await _inboxRepo.GetByAgentAsync(agent.Id);
+            var messages = await _inboxRepo.ListAsync(agent.Id, null, false, false);
             foreach (var item in messages)
             {
                 Messages.Add(new InboxMessageRow

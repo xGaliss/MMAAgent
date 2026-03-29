@@ -22,7 +22,12 @@ builder.Services.AddRazorComponents()
 builder.Services.Configure<DatabaseOptions>(
     builder.Configuration.GetSection(DatabaseOptions.SectionName));
 
+builder.Services.AddScoped<MMAAgent.Application.Abstractions.IContractOfferRepository,
+    MMAAgent.Infrastructure.Persistence.Sqlite.Repositories.ContractOfferRepository>();
 
+// Service nuevo de contratos
+builder.Services.AddScoped<MMAAgent.Application.Abstractions.IContractLifecycleService,
+    MMAAgent.Infrastructure.Persistance.Sqlite.Services.ContractLifecycleServiceSqlite>();
 
 builder.Services.AddScoped<IEventSimulator, SimulateEventSqlite>();
 builder.Services.AddScoped<IPromotionEventScheduleRepository, SqlitePromotionEventScheduleRepository>();
@@ -82,6 +87,16 @@ builder.Services.AddScoped<IEventSimulator, SimulateEventSqlite>();
 builder.Services.AddScoped<IPromotionEventScheduleRepository, SqlitePromotionEventScheduleRepository>();
 builder.Services.AddScoped<IWeeklyWorldUpdateService, WeeklyWorldUpdateService>();
 builder.Services.AddScoped<IFightOfferGenerationService, FightOfferGenerationServiceSqlite>();
+builder.Services.AddScoped<WebInboxService>();
+builder.Services.AddScoped<WebDashboardStatsService>();
+builder.Services.AddScoped<WebDashboardFeedService>();
+builder.Services.AddScoped<WebWeeklySummaryService>();
+
+builder.Services.AddScoped<IContractOfferRepository, ContractOfferRepository>();
+builder.Services.AddScoped<IContractOfferResponseService, ContractOfferResponseServiceSqlite>();
+
+builder.Services.AddScoped<IInboxRepository, InboxRepository>();
+builder.Services.AddScoped<IFightOfferResponseService, FightOfferResponseServiceSqlite>();
 
 
 var app = builder.Build();

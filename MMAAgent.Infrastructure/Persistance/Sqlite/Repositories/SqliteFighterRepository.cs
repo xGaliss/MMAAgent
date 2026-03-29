@@ -12,6 +12,21 @@ namespace MMAAgent.Infrastructure.Persistence.Sqlite.Repositories
         {
             _factory = factory;
         }
+        public async Task<bool> IsManagedAsync(int fighterId)
+        {
+            using var conn = _factory.CreateConnection();
+            using var cmd = conn.CreateCommand();
+
+            cmd.CommandText = @"
+SELECT COUNT(1)
+FROM ManagedFighters
+WHERE FighterId = $id;";
+
+            cmd.Parameters.AddWithValue("$id", fighterId);
+
+            var result = Convert.ToInt32(await cmd.ExecuteScalarAsync());
+            return result > 0;
+        }
 
         public async Task<IReadOnlyList<FighterSummary>> GetRosterAsync(int take = 200)
         {

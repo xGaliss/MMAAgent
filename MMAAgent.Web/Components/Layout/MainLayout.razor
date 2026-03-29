@@ -1,4 +1,10 @@
 ﻿@inherits LayoutComponentBase
+@using MMAAgent.Application.Abstractions
+@using MMAAgent.Domain.Common
+
+@inject IGameStateRepository GameStateRepository
+@inject IWeeklyWorldUpdateService WeeklyWorldUpdateService
+@inject NavigationManager Navigation
 
 <div class="app-shell">
     <aside class="sidebar">
@@ -28,28 +34,111 @@
             <NavLink href="/" class="nav-item"><span class="nav-icon">🎮</span><span>Main Menu</span></NavLink>
         </nav>
 
-        <div class="sidebar-section-title">Career</div>
-        <div class="career-card">
-            <div class="career-badge">World Save #001</div>
-            <div class="career-title">Manager Legacy</div>
-            <div class="career-text">Build champions, dominate promotions and shape the future of MMA.</div>
-        </div>
+        
     </aside>
 
     <div class="main-area">
         <header class="topbar">
             <div class="topbar-left">
                 <div class="topbar-kicker">CAREER MODE</div>
+
                 <div class="topbar-title-row">
                     <h1 class="topbar-title">MMA Agent</h1>
                     <span class="live-pill">LIVE UNIVERSE</span>
                 </div>
+
                 <div class="topbar-subtitle">Elite fight business simulation</div>
             </div>
+
+            <div class="topbar-right">
+                <div class="date-card topbar-date-card">
+                    <div class="date-card-label">Current Week</div>
+                    <div class="date-card-value">
+                        @(_gameState is null ? "-" : $"Week {_gameState.CurrentWeek} · {_gameState.CurrentDate}")
+                    </div>
+                </div>
+
+                <button type="button"
+                        class="btn-primary"
+                        @onclick="AdvanceWeekAsync"
+                        disabled="@(_advancing || _loadingState)">
+                    @(_advancing ? "Advancing..." : "Advance Week")
+                </button>
+
+                <button type="button"
+                        class="btn-secondary"
+                        @onclick="OpenInbox">
+                    Open Inbox
+                </button>
+            </div>
         </header>
+
+        @if (!string.IsNullOrWhiteSpace(_layoutStatus))
+        {
+            <div class="layout-status muted-text">@_layoutStatus</div>
+        }
 
         <main class="page-content">
             @Body
         </main>
     </div>
 </div>
+
+@code {
+    private GameState? _gameState;
+    private bool _loadingState = true;
+    private bool _advancing;
+    private string? _layoutStatus;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadGameStateAsync();
+    }
+
+    private async Task LoadGameStateAsync()
+    {
+        try
+        {
+            _loadingState = true;
+            _gameState = await GameStateRepository.GetAsync();
+        }
+        finally
+        {
+            _loadingState = false;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private async Task AdvanceWeekAsync()
+    {
+        if (_advancing)
+            return;
+
+        try
+        {
+            _advancing = true;
+            _layoutStatus = null;
+
+            var summary = await WeeklyWorldUpdateService.AdvanceWeekAsync();
+            await LoadGameStateAsync();
+
+            _layoutStatus = $"Week advanced. New fight offers: {summary.NewFightOffers}. New messages: {summary.NewInboxMessages}.";
+
+            Navigation.NavigateTo(Navigation.Uri, forceLoad: false);
+        }
+        catch (Exception ex)
+        {
+            _layoutStatus = ex.Message;
+        }
+        finally
+        {
+            _advancing = false;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private void OpenInbox()
+    {
+        Navigation.NavigateTo("/inbox");
+    }
+}

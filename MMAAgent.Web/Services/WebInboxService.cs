@@ -1,104 +1,184 @@
-﻿using MMAAgent.Application.Abstractions;
-using MMAAgent.Domain.Agents;
+﻿using Microsoft.Data.Sqlite;
+using MMAAgent.Application.Abstractions;
 using MMAAgent.Web.Models;
+using MMAAgent.Infrastructure.Persistence.Sqlite;
 
 namespace MMAAgent.Web.Services;
 
 public sealed class WebInboxService
 {
-    private readonly IAgentProfileRepository _agentRepository;
+    private readonly IAgentProfileRepository _agentProfileRepository;
     private readonly IInboxRepository _inboxRepository;
-    private readonly IFightOfferRepository _fightOfferRepository;
-    private readonly IFighterRepository _fighterRepository;
+    private readonly SqliteConnectionFactory _factory;
 
     public WebInboxService(
-        IAgentProfileRepository agentRepository,
+        IAgentProfileRepository agentProfileRepository,
         IInboxRepository inboxRepository,
-        IFightOfferRepository fightOfferRepository,
-        IFighterRepository fighterRepository)
+        SqliteConnectionFactory factory)
     {
-        _agentRepository = agentRepository;
+        _agentProfileRepository = agentProfileRepository;
         _inboxRepository = inboxRepository;
-        _fightOfferRepository = fightOfferRepository;
-        _fighterRepository = fighterRepository;
+        _factory = factory;
     }
 
-    public async Task<(IReadOnlyList<InboxMessageVm> Messages, IReadOnlyList<FightOfferVm> Offers)> LoadAsync(string? messageType = null)
+    public async Task<WebInboxResult> LoadAsync(string? messageType, bool includeArchived = false, bool archivedOnly = false)
     {
-        var agent = await _agentRepository.GetAsync();
-        if (agent == null)
-            return (Array.Empty<InboxMessageVm>(), Array.Empty<FightOfferVm>());
+        var agent = await _agentProfileRepository.GetAsync();
+        if (agent is null)
+            return new WebInboxResult();
 
-        var messages = await _inboxRepository.GetByAgentAsync(agent.Id);
-        if (!string.IsNullOrWhiteSpace(messageType))
-            messages = messages.Where(x => x.MessageType == messageType).ToList();
+        var messages = await _inboxRepository.ListAsync(agent.Id, messageType, includeArchived, archivedOnly);
+        var fightOffers = await LoadFightOffersAsync(agent.Id);
+        var contractOffers = await LoadContractOffersAsync(agent.Id);
 
-        var offers = await _fightOfferRepository.GetByAgentAsync(agent.Id);
-        var roster = await _fighterRepository.GetRosterAsync(5000);
-
-        var messageRows = messages
-            .Select(x => new InboxMessageVm(
-                x.Id,
-                x.MessageType,
-                x.Subject,
-                x.Body,
-                x.CreatedDate,
-                x.IsRead))
-            .ToList();
-
-        var offerRows = offers
-            .Select(x => new FightOfferVm(
-                x.Id,
-                x.FighterId,
-                roster.FirstOrDefault(r => r.Id == x.FighterId)?.Name ?? $"Fighter {x.FighterId}",
-                x.OpponentFighterId,
-                roster.FirstOrDefault(r => r.Id == x.OpponentFighterId)?.Name ?? $"Fighter {x.OpponentFighterId}",
-                x.Purse,
-                x.WinBonus,
-                x.WeeksUntilFight,
-                x.IsTitleFight,
-                x.Status))
-            .ToList();
-
-        return (messageRows, offerRows);
+        return new WebInboxResult
+        {
+            Messages = messages.Select(x => new InboxMessageVm
+            {
+                Id = x.Id,
+                Subject = x.Subject,
+                Body = x.Body,
+                MessageType = x.MessageType,
+                CreatedDate = x.CreatedDate,
+                IsRead = x.IsRead,
+                IsArchived = x.IsArchived
+            }).ToList(),
+            Offers = fightOffers,
+            ContractOffers = contractOffers
+        };
     }
-
-    public Task MarkMessageAsReadAsync(int messageId) => _inboxRepository.MarkAsReadAsync(messageId);
 
     public async Task MarkAllReadAsync()
     {
-        var agent = await _agentRepository.GetAsync();
-        if (agent == null) return;
-
-        var messages = await _inboxRepository.GetByAgentAsync(agent.Id);
-        foreach (var msg in messages.Where(x => !x.IsRead))
-            await _inboxRepository.MarkAsReadAsync(msg.Id);
+        var agent = await _agentProfileRepository.GetAsync();
+        if (agent is null) return;
+        await _inboxRepository.MarkAllReadAsync(agent.Id);
     }
 
-    public async Task AcceptOfferAsync(int offerId) => await UpdateOfferStatusAsync(offerId, "Accepted", "Oferta aceptada");
-    public async Task RejectOfferAsync(int offerId) => await UpdateOfferStatusAsync(offerId, "Rejected", "Oferta rechazada");
+    public Task MarkMessageAsReadAsync(int messageId)
+        => _inboxRepository.MarkAsReadAsync(messageId);
 
-    private async Task UpdateOfferStatusAsync(int offerId, string status, string subject)
+    public Task ArchiveMessageAsync(int messageId)
+        => _inboxRepository.ArchiveAsync(messageId);
+
+    public Task RestoreMessageAsync(int messageId)
+        => _inboxRepository.RestoreAsync(messageId);
+
+    public Task DeleteMessageAsync(int messageId)
+        => _inboxRepository.DeleteAsync(messageId);
+
+    public async Task ArchiveReadAsync()
     {
-        var agent = await _agentRepository.GetAsync();
-        if (agent == null)
-            throw new InvalidOperationException("No se encontró el agente.");
+        var agent = await _agentProfileRepository.GetAsync();
+        if (agent is null) return;
+        await _inboxRepository.ArchiveReadAsync(agent.Id);
+    }
 
-        var result = await LoadAsync();
-        var offer = result.Offers.FirstOrDefault(x => x.OfferId == offerId);
-        if (offer == null)
-            throw new InvalidOperationException("No se encontró la oferta.");
+    public async Task DeleteReadAsync()
+    {
+        var agent = await _agentProfileRepository.GetAsync();
+        if (agent is null) return;
+        await _inboxRepository.DeleteReadAsync(agent.Id);
+    }
 
-        await _fightOfferRepository.UpdateStatusAsync(offerId, status);
+    private async Task<IReadOnlyList<FightOfferVm>> LoadFightOffersAsync(int agentId)
+    {
+        var list = new List<FightOfferVm>();
 
-        await _inboxRepository.CreateAsync(new InboxMessage
+        using var conn = _factory.CreateConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = @"
+SELECT fo.Id,
+       fo.FighterId,
+       (f.FirstName || ' ' || f.LastName) AS FighterName,
+       fo.OpponentFighterId,
+       (o.FirstName || ' ' || o.LastName) AS OpponentName,
+       fo.PromotionId,
+       COALESCE(p.Name, 'Unknown Promotion') AS PromotionName,
+       fo.Purse,
+       fo.WinBonus,
+       fo.WeeksUntilFight,
+       COALESCE(fo.IsTitleFight, 0) AS IsTitleFight,
+       fo.Status
+FROM FightOffers fo
+JOIN ManagedFighters mf ON mf.FighterId = fo.FighterId AND mf.AgentId = $agentId
+JOIN Fighters f ON f.Id = fo.FighterId
+JOIN Fighters o ON o.Id = fo.OpponentFighterId
+LEFT JOIN Promotions p ON p.Id = fo.PromotionId
+ORDER BY CASE WHEN fo.Status = 'Pending' THEN 0 ELSE 1 END,
+         fo.Id DESC;";
+        cmd.Parameters.AddWithValue("$agentId", agentId);
+
+        using var reader = await cmd.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
         {
-            AgentId = agent.Id,
-            MessageType = "FightOfferResponse",
-            Subject = subject,
-            Body = $"Oferta #{offerId}: {offer.FighterName} vs {offer.OpponentName}.",
-            CreatedDate = DateTime.UtcNow.ToString("yyyy-MM-dd"),
-            IsRead = false
-        });
+            list.Add(new FightOfferVm
+            {
+                OfferId = Convert.ToInt32(reader["Id"]),
+                FighterId = Convert.ToInt32(reader["FighterId"]),
+                FighterName = reader["FighterName"]?.ToString() ?? "",
+                OpponentId = Convert.ToInt32(reader["OpponentFighterId"]),
+                OpponentName = reader["OpponentName"]?.ToString() ?? "",
+                PromotionId = reader["PromotionId"] == DBNull.Value ? 0 : Convert.ToInt32(reader["PromotionId"]),
+                PromotionName = reader["PromotionName"]?.ToString() ?? "",
+                Purse = Convert.ToInt32(reader["Purse"]),
+                WinBonus = Convert.ToInt32(reader["WinBonus"]),
+                WeeksUntilFight = Convert.ToInt32(reader["WeeksUntilFight"]),
+                IsTitleFight = Convert.ToInt32(reader["IsTitleFight"]) == 1,
+                Status = reader["Status"]?.ToString() ?? ""
+            });
+        }
+
+        return list;
+    }
+
+    private async Task<IReadOnlyList<ContractOfferVm>> LoadContractOffersAsync(int agentId)
+    {
+        var list = new List<ContractOfferVm>();
+
+        using var conn = _factory.CreateConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = @"
+SELECT co.Id,
+       co.FighterId,
+       (f.FirstName || ' ' || f.LastName) AS FighterName,
+       co.PromotionId,
+       COALESCE(p.Name, 'Unknown Promotion') AS PromotionName,
+       co.OfferedFights,
+       co.BasePurse,
+       co.WinBonus,
+       co.WeeksToRespond,
+       co.Status,
+       co.SourceType,
+       co.Notes
+FROM ContractOffers co
+JOIN ManagedFighters mf ON mf.FighterId = co.FighterId AND mf.AgentId = $agentId
+JOIN Fighters f ON f.Id = co.FighterId
+LEFT JOIN Promotions p ON p.Id = co.PromotionId
+ORDER BY CASE WHEN co.Status = 'Pending' THEN 0 ELSE 1 END,
+         co.Id DESC;";
+        cmd.Parameters.AddWithValue("$agentId", agentId);
+
+        using var reader = await cmd.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+        {
+            list.Add(new ContractOfferVm
+            {
+                Id = Convert.ToInt32(reader["Id"]),
+                FighterId = Convert.ToInt32(reader["FighterId"]),
+                FighterName = reader["FighterName"]?.ToString() ?? "",
+                PromotionId = Convert.ToInt32(reader["PromotionId"]),
+                PromotionName = reader["PromotionName"]?.ToString() ?? "",
+                OfferedFights = Convert.ToInt32(reader["OfferedFights"]),
+                BasePurse = Convert.ToInt32(reader["BasePurse"]),
+                WinBonus = Convert.ToInt32(reader["WinBonus"]),
+                WeeksToRespond = Convert.ToInt32(reader["WeeksToRespond"]),
+                Status = reader["Status"]?.ToString() ?? "",
+                SourceType = reader["SourceType"]?.ToString() ?? "",
+                Notes = reader["Notes"] == DBNull.Value ? null : reader["Notes"]?.ToString()
+            });
+        }
+
+        return list;
     }
 }

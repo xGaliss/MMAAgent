@@ -1,28 +1,63 @@
-﻿using MMAAgent.Infrastructure.Persistence.Sqlite;
+﻿using Microsoft.Data.Sqlite;
+using MMAAgent.Application.Abstractions;
+using MMAAgent.Infrastructure.Persistence.Sqlite;
+using MMAAgent.Web.Models;
 
 namespace MMAAgent.Web.Services;
 
 public sealed class WebDashboardStatsService
 {
+    private readonly IAgentProfileRepository _agentProfileRepository;
+    private readonly IInboxRepository _inboxRepository;
+    private readonly IContractOfferRepository _contractOfferRepository;
     private readonly SqliteConnectionFactory _factory;
 
-    public WebDashboardStatsService(SqliteConnectionFactory factory)
+    public WebDashboardStatsService(
+        IAgentProfileRepository agentProfileRepository,
+        IInboxRepository inboxRepository,
+        IContractOfferRepository contractOfferRepository,
+        SqliteConnectionFactory factory)
     {
+        _agentProfileRepository = agentProfileRepository;
+        _inboxRepository = inboxRepository;
+        _contractOfferRepository = contractOfferRepository;
         _factory = factory;
     }
 
-    public async Task<(int FighterCount, int PromotionCount)> LoadAsync()
+    public async Task<DashboardStatsVm> LoadAsync()
     {
+        var vm = new DashboardStatsVm();
+        var agent = await _agentProfileRepository.GetAsync();
+
         using var conn = _factory.CreateConnection();
 
-        using var fightersCmd = conn.CreateCommand();
-        fightersCmd.CommandText = "SELECT COUNT(*) FROM Fighters;";
-        var fighters = Convert.ToInt32(await fightersCmd.ExecuteScalarAsync());
+        using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText = "SELECT COUNT(*) FROM Fighters;";
+            vm.FighterCount = Convert.ToInt32(await cmd.ExecuteScalarAsync());
+        }
 
-        using var promotionsCmd = conn.CreateCommand();
-        promotionsCmd.CommandText = "SELECT COUNT(*) FROM Promotions;";
-        var promotions = Convert.ToInt32(await promotionsCmd.ExecuteScalarAsync());
+        using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText = "SELECT COUNT(*) FROM Promotions;";
+            vm.PromotionCount = Convert.ToInt32(await cmd.ExecuteScalarAsync());
+        }
 
-        return (fighters, promotions);
+        if (agent is not null)
+        {
+            vm.UnreadMessages = await _inboxRepository.CountUnreadAsync(agent.Id);
+            vm.PendingContractOffers = await _contractOfferRepository.CountPendingByAgentAsync(agent.Id);
+
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = @"
+SELECT COUNT(*)
+FROM FightOffers fo
+JOIN ManagedFighters mf ON mf.FighterId = fo.FighterId AND mf.AgentId = $agentId
+WHERE fo.Status = 'Pending';";
+            cmd.Parameters.AddWithValue("$agentId", agent.Id);
+            vm.PendingFightOffers = Convert.ToInt32(await cmd.ExecuteScalarAsync());
+        }
+
+        return vm;
     }
 }

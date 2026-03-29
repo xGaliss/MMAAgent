@@ -5,14 +5,12 @@
 @using MMAAgent.Domain.Common
 @using MMAAgent.Web.Models
 @using MMAAgent.Web.Services
+
 @inject IGameStateRepository GameStateRepository
 @inject GameTimeService GameTimeService
 @inject WebDashboardStatsService DashboardStatsService
 @inject WebDashboardFeedService DashboardFeedService
 @inject WebWeeklySummaryService WeeklySummaryService
-@using MMAAgent.Application.Abstractions
-@inject IWeeklyWorldUpdateService WeeklyWorldUpdateService
-
 
 <PageTitle>Dashboard - MMA Agent</PageTitle>
 
@@ -20,19 +18,6 @@
     <div>
         <h1>Dashboard</h1>
         <p class="muted-text">Live overview of your current MMA universe.</p>
-    </div>
-
-    <div style="display:flex; gap:12px; flex-wrap:wrap;">
-        <div class="date-card">
-            <div class="date-card-label">Current Week</div>
-            <div class="date-card-value">
-                @(_gameState is null ? "-" : $"Week {_gameState.CurrentWeek} · {_gameState.CurrentDate}")
-            </div>
-        </div>
-
-        <button type="button" class="btn-primary" @onclick="AdvanceWeekAsync" disabled="@_advancing">
-            @(_advancing ? "Advancing..." : "Advance Week")
-        </button>
     </div>
 </div>
 
@@ -42,54 +27,115 @@
 }
 else if (_loading)
 {
-    <div class="panel-card">Cargando dashboard...</div>
+    <div class="panel-card">Loading dashboard...</div>
 }
 else
 {
     <div class="stats-grid">
-        <article class="stat-card"><div class="stat-label">Current Date</div><div class="stat-value">@(_gameState?.CurrentDate ?? "-")</div></article>
-        <article class="stat-card"><div class="stat-label">Week</div><div class="stat-value">@(_gameState?.CurrentWeek.ToString() ?? "-")</div></article>
-        <article class="stat-card"><div class="stat-label">Fighters Loaded</div><div class="stat-value">@_fighterCount</div></article>
-        <article class="stat-card"><div class="stat-label">Promotions Loaded</div><div class="stat-value">@_promotionCount</div></article>
+        <article class="stat-card">
+            <div class="stat-label">Fighters Loaded</div>
+            <div class="stat-value">@_fighterCount</div>
+        </article>
+
+        <article class="stat-card">
+            <div class="stat-label">Promotions Loaded</div>
+            <div class="stat-value">@_promotionCount</div>
+        </article>
+
+        <article class="stat-card">
+            <div class="stat-label">Pending Fight Offers</div>
+            <div class="stat-value">@_pendingFightOffers</div>
+        </article>
+
+        <article class="stat-card">
+            <div class="stat-label">Pending Contract Offers</div>
+            <div class="stat-value">@_pendingContractOffers</div>
+        </article>
+
+        <article class="stat-card">
+            <div class="stat-label">Unread Messages</div>
+            <div class="stat-value">@_unreadMessages</div>
+        </article>
     </div>
 
     <div class="dashboard-live-grid">
         <section class="panel-card">
-            <div class="toolbar-title">Latest Events</div>
+            <div class="table-toolbar">
+                <div class="toolbar-title">Latest Events</div>
+                <div class="toolbar-subtitle">@_latestEvents.Count items</div>
+            </div>
+
             <div class="dashboard-list">
-                @foreach (var item in _latestEvents)
+                @if (_latestEvents.Count == 0)
                 {
-                    <div class="dashboard-list-item">@item</div>
+                    <div class="dashboard-list-item">No recent events.</div>
+                }
+                else
+                {
+                    @foreach (var item in _latestEvents)
+                    {
+                        <div class="dashboard-list-item">@item</div>
+                    }
                 }
             </div>
         </section>
 
         <section class="panel-card">
-            <div class="toolbar-title">Recent Inbox</div>
+            <div class="table-toolbar">
+                <div class="toolbar-title">Recent Inbox</div>
+                <div class="toolbar-subtitle">@_recentMessages.Count items</div>
+            </div>
+
             <div class="dashboard-list">
-                @foreach (var item in _recentMessages)
+                @if (_recentMessages.Count == 0)
                 {
-                    <div class="dashboard-list-item">@item</div>
+                    <div class="dashboard-list-item">No recent messages.</div>
+                }
+                else
+                {
+                    @foreach (var item in _recentMessages)
+                    {
+                        <div class="dashboard-list-item">@item</div>
+                    }
+                }
+            </div>
+
+            <div style="margin-top:12px;">
+                <a class="btn-secondary" href="/inbox">Go to Inbox</a>
+            </div>
+        </section>
+
+        <section class="panel-card">
+            <div class="table-toolbar">
+                <div class="toolbar-title">Top Managed Fighters</div>
+                <div class="toolbar-subtitle">@_topManaged.Count items</div>
+            </div>
+
+            <div class="dashboard-list">
+                @if (_topManaged.Count == 0)
+                {
+                    <div class="dashboard-list-item">No managed fighters yet.</div>
+                }
+                else
+                {
+                    @foreach (var item in _topManaged)
+                    {
+                        <div class="dashboard-list-item">@item</div>
+                    }
                 }
             </div>
         </section>
 
         <section class="panel-card">
-            <div class="toolbar-title">Top Managed Fighters</div>
-            <div class="dashboard-list">
-                @foreach (var item in _topManaged)
-                {
-                    <div class="dashboard-list-item">@item</div>
-                }
+            <div class="table-toolbar">
+                <div class="toolbar-title">Managed Champions</div>
+                <div class="toolbar-subtitle">@_managedChampions.Count items</div>
             </div>
-        </section>
 
-        <section class="panel-card">
-            <div class="toolbar-title">Managed Champions</div>
             <div class="dashboard-list">
                 @if (_managedChampions.Count == 0)
                 {
-                    <div class="dashboard-list-item">None yet</div>
+                    <div class="dashboard-list-item">None yet.</div>
                 }
                 else
                 {
@@ -102,75 +148,100 @@ else
         </section>
     </div>
 
-    <div class="panel-card" style="margin-top:20px;">
-        <div class="toolbar-title">Pending Offers</div>
-        <div class="stat-value">@_pendingOffers</div>
+    <div class="dashboard-live-grid" style="margin-top:20px;">
+        <section class="panel-card">
+            <div class="table-toolbar">
+                <div class="toolbar-title">Pending Fight Offers</div>
+                <div class="toolbar-subtitle">@_pendingFightOffers</div>
+            </div>
+
+            <div class="dashboard-list">
+                @if (_pendingFightOfferItems.Count == 0)
+                {
+                    <div class="dashboard-list-item">No pending fight offers.</div>
+                }
+                else
+                {
+                    @foreach (var item in _pendingFightOfferItems)
+                    {
+                        <div class="dashboard-list-item">@item</div>
+                    }
+                }
+            </div>
+        </section>
+
+        <section class="panel-card">
+            <div class="table-toolbar">
+                <div class="toolbar-title">Pending Contract Offers</div>
+                <div class="toolbar-subtitle">@_pendingContractOffers</div>
+            </div>
+
+            <div class="dashboard-list">
+                @if (_pendingContractOfferItems.Count == 0)
+                {
+                    <div class="dashboard-list-item">No pending contract offers.</div>
+                }
+                else
+                {
+                    @foreach (var item in _pendingContractOfferItems)
+                    {
+                        <div class="dashboard-list-item">@item</div>
+                    }
+                }
+            </div>
+        </section>
     </div>
 }
 
 @if (_summary is not null)
 {
     <div class="panel-card" style="margin-top:20px;">
-        <div class="toolbar-title">Last Week Summary</div>
-        <div class="muted-text">Date: @_summary.CurrentDate · Week @_summary.CurrentWeek · Year @_summary.CurrentYear</div>
-        <div class="muted-text">Simulated events: @_summary.SimulatedEvents</div>
-        <div class="muted-text">New fight offers: @_summary.NewFightOffers</div>
-        <div class="muted-text">New messages: @_summary.NewInboxMessages</div>
-        <div class="muted-text">Ranking changes: @_summary.RankingChanges</div>
-        <div class="muted-text">Headline: @(_summary.Headline ?? "-")</div>
+        <div class="table-toolbar">
+            <div class="toolbar-title">Last Week Summary</div>
+            <div class="toolbar-subtitle">Week @_summary.CurrentWeek · @_summary.CurrentDate</div>
+        </div>
+
+        <div class="summary-grid">
+            <div class="summary-row"><strong>Year:</strong> @_summary.CurrentYear</div>
+            <div class="summary-row"><strong>Simulated events:</strong> @_summary.SimulatedEvents</div>
+            <div class="summary-row"><strong>New fight offers:</strong> @_summary.NewFightOffers</div>
+            <div class="summary-row"><strong>New inbox messages:</strong> @_summary.NewInboxMessages</div>
+            <div class="summary-row"><strong>Ranking changes:</strong> @_summary.RankingChanges</div>
+            <div class="summary-row"><strong>Headline:</strong> @(_summary.Headline ?? "-")</div>
+        </div>
     </div>
 }
 
 @if (!string.IsNullOrWhiteSpace(_status))
 {
-    <div class="muted-text" style="margin-top: 14px;">@_status</div>
+    <div class="muted-text" style="margin-top:14px;">@_status</div>
 }
 
 @code {
     private GameState? _gameState;
     private int _fighterCount;
     private int _promotionCount;
-    private int _pendingOffers;
+    private int _pendingFightOffers;
+    private int _pendingContractOffers;
+    private int _unreadMessages;
+
     private bool _loading = true;
-    private bool _advancing;
     private string? _error;
     private string? _status;
+
     private WeeklyWorldUpdateSummary? _summary;
+
     private List<string> _latestEvents = new();
     private List<string> _recentMessages = new();
     private List<string> _topManaged = new();
     private List<string> _managedChampions = new();
+    private List<string> _pendingFightOfferItems = new();
+    private List<string> _pendingContractOfferItems = new();
 
     protected override async Task OnInitializedAsync()
     {
         await ReloadAsync();
     }
-
-    private async Task AdvanceWeekAsync()
-    {
-        try
-        {
-            _advancing = true;
-            _status = null;
-            _error = null;
-
-            var summary = await WeeklyWorldUpdateService.AdvanceWeekAsync();
-            _summary = summary;
-
-            await ReloadAsync();
-
-            _status = $"Week advanced. New offers: {summary.NewFightOffers}. New messages: {summary.NewInboxMessages}.";
-        }
-        catch (Exception ex)
-        {
-            _error = ex.ToString();
-        }
-        finally
-        {
-            _advancing = false;
-        }
-    }
-
 
     private async Task ReloadAsync()
     {
@@ -180,16 +251,21 @@ else
             _error = null;
 
             _gameState = await GameStateRepository.GetAsync();
+
             var stats = await DashboardStatsService.LoadAsync();
             _fighterCount = stats.FighterCount;
             _promotionCount = stats.PromotionCount;
+            _unreadMessages = stats.UnreadMessages;
+            _pendingFightOffers = stats.PendingFightOffers;
+            _pendingContractOffers = stats.PendingContractOffers;
 
             var feed = await DashboardFeedService.LoadAsync();
             _latestEvents = feed.Events.ToList();
             _recentMessages = feed.Messages.ToList();
             _topManaged = feed.Managed.ToList();
             _managedChampions = feed.Champions.ToList();
-            _pendingOffers = feed.PendingOffers;
+            _pendingFightOfferItems = feed.PendingFightOfferItems?.ToList() ?? new();
+            _pendingContractOfferItems = feed.PendingContractOfferItems?.ToList() ?? new();
         }
         catch (Exception ex)
         {
@@ -198,7 +274,7 @@ else
         finally
         {
             _loading = false;
-            StateHasChanged();
+            await InvokeAsync(StateHasChanged);
         }
     }
 }

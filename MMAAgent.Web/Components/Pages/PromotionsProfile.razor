@@ -29,37 +29,67 @@ else if (_profile is null)
 else
 {
     <div class="fight-profile-layout">
-        <section class="panel-card profile-hero">
-            <div class="profile-header">
-                <div>
-                    <div class="profile-name-row">
-                        <h2 class="profile-name">@_profile.Name</h2>
+        <section class="panel-card profile-hero promotion-profile-hero @GetPromotionClass(_profile.Name)">
+            <div class="promotion-hero-main">
+                <div class="promotion-hero-left">
+                    <div class="profile-header">
+                        <div>
+                            <div class="profile-name-row">
+                                <h2 class="profile-name">@_profile.Name</h2>
+                            </div>
+
+                            <div class="muted-text">
+                                Prestige @_profile.Prestige · Budget @_profile.Budget · Active: @(_profile.IsActive ? "Yes" : "No")
+                            </div>
+                        </div>
+
+                        <div class="profile-record">@_profile.EventIntervalWeeks wk</div>
                     </div>
-                    <div class="muted-text">
-                        Prestige @_profile.Prestige · Budget @_profile.Budget · Active: @(_profile.IsActive ? "Yes" : "No")
+
+                    <div class="promotion-hero-stats">
+                        <article class="promotion-stat-card">
+                            <div class="promotion-stat-label">Next Event Week</div>
+                            <div class="promotion-stat-value">@_profile.NextEventWeek</div>
+                        </article>
+
+                        <article class="promotion-stat-card">
+                            <div class="promotion-stat-label">Champions</div>
+                            <div class="promotion-stat-value">@_profile.Champions.Count</div>
+                        </article>
+
+                        <article class="promotion-stat-card">
+                            <div class="promotion-stat-label">Ranked Fighters</div>
+                            <div class="promotion-stat-value">@_profile.Rankings.Count</div>
+                        </article>
+
+                        <article class="promotion-stat-card">
+                            <div class="promotion-stat-label">Status</div>
+                            <div class="promotion-stat-value">@(_profile.IsActive ? "Active" : "Inactive")</div>
+                        </article>
                     </div>
                 </div>
 
-                <div class="profile-record">@_profile.EventIntervalWeeks wk</div>
-            </div>
-
-            <div class="profile-meta-grid">
-                <div class="meta-box"><div class="meta-label">Next Event Week</div><div class="meta-value">@_profile.NextEventWeek</div></div>
-                <div class="meta-box"><div class="meta-label">Champions</div><div class="meta-value">@_profile.Champions.Count</div></div>
-                <div class="meta-box"><div class="meta-label">Ranked Fighters</div><div class="meta-value">@_profile.Rankings.Count</div></div>
-                <div class="meta-box"><div class="meta-label">Status</div><div class="meta-value">@(_profile.IsActive ? "Active" : "Inactive")</div></div>
+                <div class="promotion-hero-right">
+                    <img class="promotion-profile-logo-large"
+                         src="@PromotionAssetsHelper.GetPromotionLogo(_profile.Name)"
+                         alt="@_profile.Name" />
+                </div>
             </div>
         </section>
 
         <section class="panel-card">
             <div class="toolbar-title">Champions</div>
+
             <div class="promotion-champions-grid">
                 @foreach (var item in _profile.Champions)
                 {
                     <article class="belt-card">
                         <div class="belt-badge">@item.WeightClass[..Math.Min(2, item.WeightClass.Length)].ToUpper()</div>
+
                         <div class="belt-info">
-                            <div class="belt-name"><a class="fighter-link" href="@($"/fighters/{item.FighterId}")">@item.FighterName</a></div>
+                            <div class="belt-name">
+                                <a class="fighter-link" href="@($"/fighters/{item.FighterId}")">@item.FighterName</a>
+                            </div>
                             <div class="belt-meta">@item.WeightClass Champion</div>
                         </div>
                     </article>
@@ -69,16 +99,28 @@ else
 
         <section class="panel-card">
             <div class="toolbar-title">Top Rankings</div>
+
             @foreach (var group in _profile.Rankings.GroupBy(x => x.WeightClass))
             {
                 <div class="ranking-block">
                     <div class="ranking-title">@group.Key</div>
+
                     <table class="fighters-table">
-                        <thead><tr><th>Rank</th><th>Fighter</th></tr></thead>
+                        <thead>
+                            <tr>
+                                <th>Rank</th>
+                                <th>Fighter</th>
+                            </tr>
+                        </thead>
                         <tbody>
                             @foreach (var item in group)
                             {
-                                <tr><td>@item.RankPosition</td><td><a class="fighter-link" href="@($"/fighters/{item.FighterId}")">@item.FighterName</a></td></tr>
+                                <tr>
+                                    <td>@item.RankPosition</td>
+                                    <td>
+                                        <a class="fighter-link" href="@($"/fighters/{item.FighterId}")">@item.FighterName</a>
+                                    </td>
+                                </tr>
                             }
                         </tbody>
                     </table>
@@ -88,10 +130,18 @@ else
 
         <section class="panel-card">
             <div class="toolbar-title">Recent Events</div>
+
             <div class="dashboard-list">
-                @foreach (var item in _recentEvents)
+                @if (_recentEvents.Count == 0)
                 {
-                    <div class="dashboard-list-item">@item</div>
+                    <div class="dashboard-list-item">No recent events.</div>
+                }
+                else
+                {
+                    @foreach (var item in _recentEvents)
+                    {
+                        <div class="dashboard-list-item">@item</div>
+                    }
                 }
             </div>
         </section>
@@ -112,13 +162,15 @@ else
         {
             _loading = true;
             _error = null;
+
             _profile = await PromotionProfileService.LoadAsync(promotionId);
 
             var events = await EventRepository.GetLastEventsAsync(20);
-            _recentEvents = events.Where(x => x.Name.Contains(_profile?.Name ?? "", StringComparison.OrdinalIgnoreCase))
-                                  .Select(x => $"{x.EventDate} · {x.Name}")
-                                  .Take(8)
-                                  .ToList();
+            _recentEvents = events
+                .Where(x => x.Name.Contains(_profile?.Name ?? "", StringComparison.OrdinalIgnoreCase))
+                .Select(x => $"{x.EventDate} · {x.Name}")
+                .Take(8)
+                .ToList();
         }
         catch (Exception ex)
         {
@@ -128,5 +180,19 @@ else
         {
             _loading = false;
         }
+    }
+
+    private static string GetPromotionClass(string? name)
+    {
+        return name?.Trim().ToLowerInvariant() switch
+        {
+            "ufc" => "promotion-theme-ufc",
+            "bellator" => "promotion-theme-bellator",
+            "pfl" => "promotion-theme-pfl",
+            "ksw" => "promotion-theme-ksw",
+            "lux fight league" => "promotion-theme-lux",
+            "regional latam" => "promotion-theme-regional",
+            _ => "promotion-theme-default"
+        };
     }
 }

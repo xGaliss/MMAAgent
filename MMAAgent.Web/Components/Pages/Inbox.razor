@@ -3,7 +3,9 @@
 @using MMAAgent.Web.Models
 @using MMAAgent.Web.Services
 @using MMAAgent.Application.Abstractions
+
 @inject IFightOfferResponseService FightOfferResponseService
+@inject IContractOfferResponseService ContractOfferResponseService
 @inject WebInboxService InboxService
 
 <PageTitle>Inbox - MMA Agent</PageTitle>
@@ -11,10 +13,10 @@
 <div class="page-header">
     <div>
         <h1>Inbox</h1>
-        <p class="muted-text">Messages and fight offers for the current agent.</p>
+        <p class="muted-text">Messages, fight offers and contract offers for the current agent.</p>
     </div>
 
-    <div class="button-row">
+    <div class="button-row" style="flex-wrap:wrap;">
         <select class="text-input" @bind="_messageType">
             <option value="">All message types</option>
             @foreach (var item in _messageTypes)
@@ -22,8 +24,17 @@
                 <option value="@item">@item</option>
             }
         </select>
-        <button class="btn-secondary" @onclick="ReloadAsync">Apply</button>
-        <button class="btn-secondary" @onclick="MarkAllReadAsync">Mark all read</button>
+
+        <select class="text-input" @bind="_visibilityFilter">
+            <option value="active">Active only</option>
+            <option value="archived">Archived only</option>
+            <option value="all">All</option>
+        </select>
+
+        <button class="btn-secondary" @onclick="ReloadAsync" disabled="@_busy">Apply</button>
+        <button class="btn-secondary" @onclick="MarkAllReadAsync" disabled="@_busy">Mark all read</button>
+        <button class="btn-secondary" @onclick="ArchiveReadAsync" disabled="@_busy">Archive read</button>
+        <button class="btn-secondary" @onclick="DeleteReadAsync" disabled="@_busy">Delete read</button>
     </div>
 </div>
 
@@ -33,15 +44,70 @@
 }
 else if (_loading)
 {
-    <div class="panel-card">Cargando inbox...</div>
+    <div class="panel-card">Loading inbox...</div>
 }
 else
 {
+    <div class="stats-grid" style="margin-bottom:20px;">
+        <article class="stat-card">
+            <div class="stat-label">Messages</div>
+            <div class="stat-value">@_messages.Count</div>
+        </article>
+
+        <article class="stat-card">
+            <div class="stat-label">Fight Offers</div>
+            <div class="stat-value">@_fightOffers.Count</div>
+        </article>
+
+        <article class="stat-card">
+            <div class="stat-label">Contract Offers</div>
+            <div class="stat-value">@_contractOffers.Count</div>
+        </article>
+
+        <article class="stat-card">
+            <div class="stat-label">Unread Messages</div>
+            <div class="stat-value">@_messages.Count(x => !x.IsRead)</div>
+        </article>
+    </div>
+
     <div class="inbox-layout">
         <section class="panel-card">
             <div class="table-toolbar">
-                <div class="toolbar-title">Messages</div>
-                <div class="toolbar-subtitle">@_messages.Count loaded</div>
+                <div>
+                    <div class="toolbar-title">Messages</div>
+                    <div class="toolbar-subtitle">@_messages.Count loaded</div>
+                </div>
+
+                <div class="button-row">
+                    @if (_visibilityFilter != "archived")
+                    {
+                        <button class="btn-secondary"
+                                disabled="@(_busy || SelectedMessage is null)"
+                                @onclick="ArchiveSelectedAsync">
+                            Archive
+                        </button>
+
+                        <button class="btn-secondary"
+                                disabled="@(_busy || SelectedMessage is null)"
+                                @onclick="DeleteSelectedAsync">
+                            Delete
+                        </button>
+                    }
+                    else
+                    {
+                        <button class="btn-secondary"
+                                disabled="@(_busy || SelectedMessage is null)"
+                                @onclick="RestoreSelectedAsync">
+                            Restore
+                        </button>
+
+                        <button class="btn-secondary"
+                                disabled="@(_busy || SelectedMessage is null)"
+                                @onclick="DeleteSelectedAsync">
+                            Delete
+                        </button>
+                    }
+                </div>
             </div>
 
             @if (_messages.Count == 0)
@@ -54,13 +120,26 @@ else
                     @foreach (var msg in _messages)
                     {
                         <button type="button"
-                                class="message-item @(SelectedMessage?.Id == msg.Id ? "selected" : "")"
-                                @onclick="() => SelectMessageAsync(msg)">
+                                class="message-item @(SelectedMessage?.Id == msg.Id ? "selected" : "") @(!msg.IsRead ? "unread" : "")"
+                                @onclick="() => SelectMessageAsync(msg)"
+                                disabled="@_busy">
                             <div class="message-top">
                                 <span class="message-subject">@msg.Subject</span>
                                 <span class="message-date">@msg.CreatedDate</span>
                             </div>
-                            <div class="message-type">@msg.MessageType</div>
+
+                            <div class="message-type-row">
+                                <span class="message-type">@msg.MessageType</span>
+                                @if (!msg.IsRead)
+                                {
+                                    <span class="message-badge">Unread</span>
+                                }
+                                @if (msg.IsArchived)
+                                {
+                                    <span class="message-badge">Archived</span>
+                                }
+                            </div>
+
                             <div class="message-body-preview">@msg.Body</div>
                         </button>
                     }
@@ -71,27 +150,38 @@ else
         <section class="panel-card">
             <div class="table-toolbar">
                 <div class="toolbar-title">Fight Offers</div>
-                <div class="toolbar-subtitle">@_offers.Count loaded</div>
+                <div class="toolbar-subtitle">@_fightOffers.Count loaded</div>
             </div>
 
-            @if (_offers.Count == 0)
+            @if (_fightOffers.Count == 0)
             {
                 <div class="muted-text">No fight offers found.</div>
             }
             else
             {
                 <div class="offer-list">
-                    @foreach (var offer in _offers)
+                    @foreach (var offer in _fightOffers)
                     {
                         <div class="offer-card">
                             <div class="offer-title">@offer.FighterName vs @offer.OpponentName</div>
+                            <div class="offer-meta">Promotion: @offer.PromotionName</div>
                             <div class="offer-meta">Purse: @offer.Purse · Bonus: @offer.WinBonus</div>
                             <div class="offer-meta">Weeks until fight: @offer.WeeksUntilFight · Title: @(offer.IsTitleFight ? "Yes" : "No")</div>
                             <div class="offer-meta">Status: @offer.Status</div>
 
                             <div class="button-row" style="margin-top:12px;">
-                                <button class="btn-secondary" @onclick="() => AcceptOfferAsync(offer.OfferId)">Accept</button>
-                                <button class="btn-secondary" @onclick="() => RejectOfferAsync(offer.OfferId)">Reject</button>
+                                <button class="btn-secondary"
+                                        disabled="@(_busy || !IsPending(offer.Status))"
+                                        @onclick="() => AcceptFightOfferAsync(offer.OfferId)">
+                                    Accept
+                                </button>
+
+                                <button class="btn-secondary"
+                                        disabled="@(_busy || !IsPending(offer.Status))"
+                                        @onclick="() => RejectFightOfferAsync(offer.OfferId)">
+                                    Reject
+                                </button>
+
                                 <a class="btn-secondary" href="@($"/fighters/{offer.FighterId}")">Open fighter</a>
                             </div>
                         </div>
@@ -101,25 +191,121 @@ else
         </section>
     </div>
 
-    @if (SelectedMessage is not null)
-    {
-        <section class="panel-card" style="margin-top:20px;">
+    <div class="inbox-layout" style="margin-top:20px;">
+        <section class="panel-card">
             <div class="table-toolbar">
-                <div class="toolbar-title">@SelectedMessage.Subject</div>
-                <div class="toolbar-subtitle">@SelectedMessage.CreatedDate · @SelectedMessage.MessageType</div>
+                <div class="toolbar-title">Contract Offers</div>
+                <div class="toolbar-subtitle">@_contractOffers.Count loaded</div>
             </div>
-            <div class="message-full-body">@SelectedMessage.Body</div>
+
+            @if (_contractOffers.Count == 0)
+            {
+                <div class="muted-text">No contract offers found.</div>
+            }
+            else
+            {
+                <div class="offer-list">
+                    @foreach (var offer in _contractOffers)
+                    {
+                        <div class="offer-card">
+                            <div class="offer-title">@offer.FighterName · @offer.PromotionName</div>
+                            <div class="offer-meta">Source: @offer.SourceType</div>
+                            <div class="offer-meta">Fights: @offer.OfferedFights · Base purse: @offer.BasePurse · Win bonus: @offer.WinBonus</div>
+                            <div class="offer-meta">Weeks to respond: @offer.WeeksToRespond</div>
+                            <div class="offer-meta">Status: @offer.Status</div>
+
+                            @if (!string.IsNullOrWhiteSpace(offer.Notes))
+                            {
+                                <div class="offer-meta">Notes: @offer.Notes</div>
+                            }
+
+                            <div class="button-row" style="margin-top:12px;">
+                                <button class="btn-secondary"
+                                        disabled="@(_busy || !IsPending(offer.Status))"
+                                        @onclick="() => AcceptContractOfferAsync(offer.Id)">
+                                    Accept
+                                </button>
+
+                                <button class="btn-secondary"
+                                        disabled="@(_busy || !IsPending(offer.Status))"
+                                        @onclick="() => RejectContractOfferAsync(offer.Id)">
+                                    Reject
+                                </button>
+
+                                <a class="btn-secondary" href="@($"/fighters/{offer.FighterId}")">Open fighter</a>
+                            </div>
+                        </div>
+                    }
+                </div>
+            }
         </section>
-    }
+
+        <section class="panel-card">
+            @if (SelectedMessage is not null)
+            {
+                <div class="table-toolbar">
+                    <div>
+                        <div class="toolbar-title">@SelectedMessage.Subject</div>
+                        <div class="toolbar-subtitle">@SelectedMessage.CreatedDate · @SelectedMessage.MessageType</div>
+                    </div>
+
+                    <div class="button-row">
+                        @if (!SelectedMessage.IsRead)
+                        {
+                            <button class="btn-secondary" disabled="@_busy" @onclick="MarkSelectedReadAsync">
+                                Mark read
+                            </button>
+                        }
+
+                        @if (!SelectedMessage.IsArchived)
+                        {
+                            <button class="btn-secondary" disabled="@_busy" @onclick="ArchiveSelectedAsync">
+                                Archive
+                            </button>
+                        }
+                        else
+                        {
+                            <button class="btn-secondary" disabled="@_busy" @onclick="RestoreSelectedAsync">
+                                Restore
+                            </button>
+                        }
+
+                        <button class="btn-secondary" disabled="@_busy" @onclick="DeleteSelectedAsync">
+                            Delete
+                        </button>
+                    </div>
+                </div>
+
+                <div class="message-full-body">@SelectedMessage.Body</div>
+            }
+            else
+            {
+                <div class="toolbar-title">Message Detail</div>
+                <div class="muted-text">Select a message to view details.</div>
+            }
+        </section>
+    </div>
+}
+
+@if (!string.IsNullOrWhiteSpace(_status))
+{
+    <div class="muted-text" style="margin-top:14px;">@_status</div>
 }
 
 @code {
     private List<InboxMessageVm> _messages = new();
-    private List<FightOfferVm> _offers = new();
+    private List<FightOfferVm> _fightOffers = new();
+    private List<ContractOfferVm> _contractOffers = new();
+
     private InboxMessageVm? SelectedMessage;
+
     private bool _loading = true;
+    private bool _busy;
     private string? _error;
+    private string? _status;
+
     private string _messageType = "";
+    private string _visibilityFilter = "active";
     private List<string> _messageTypes = new();
 
     protected override async Task OnInitializedAsync()
@@ -132,12 +318,35 @@ else
         try
         {
             _loading = true;
+            _busy = true;
             _error = null;
-            var result = await InboxService.LoadAsync(_messageType);
+            _status = null;
+
+            var includeArchived = _visibilityFilter is "archived" or "all";
+            var archivedOnly = _visibilityFilter == "archived";
+
+            var result = await InboxService.LoadAsync(_messageType, includeArchived, archivedOnly);
+
             _messages = result.Messages.ToList();
-            _offers = result.Offers.ToList();
-            _messageTypes = _messages.Select(x => x.MessageType).Distinct().OrderBy(x => x).ToList();
-            SelectedMessage = _messages.FirstOrDefault();
+            _fightOffers = result.Offers.ToList();
+            _contractOffers = result.ContractOffers.ToList();
+
+            _messageTypes = _messages
+                .Select(x => x.MessageType)
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Distinct()
+                .OrderBy(x => x)
+                .ToList();
+
+            if (SelectedMessage is not null)
+            {
+                SelectedMessage = _messages.FirstOrDefault(x => x.Id == SelectedMessage.Id)
+                                  ?? _messages.FirstOrDefault();
+            }
+            else
+            {
+                SelectedMessage = _messages.FirstOrDefault();
+            }
         }
         catch (Exception ex)
         {
@@ -146,6 +355,8 @@ else
         finally
         {
             _loading = false;
+            _busy = false;
+            await InvokeAsync(StateHasChanged);
         }
     }
 
@@ -153,30 +364,190 @@ else
     {
         try
         {
+            _busy = true;
+            _error = null;
             await InboxService.MarkAllReadAsync();
+            _status = "All visible messages marked as read.";
             await ReloadAsync();
         }
         catch (Exception ex)
         {
             _error = ex.ToString();
         }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task ArchiveReadAsync()
+    {
+        try
+        {
+            _busy = true;
+            _error = null;
+            await InboxService.ArchiveReadAsync();
+            _status = "Read messages archived.";
+            await ReloadAsync();
+        }
+        catch (Exception ex)
+        {
+            _error = ex.ToString();
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task DeleteReadAsync()
+    {
+        try
+        {
+            _busy = true;
+            _error = null;
+            await InboxService.DeleteReadAsync();
+            _status = "Read messages deleted.";
+            await ReloadAsync();
+        }
+        catch (Exception ex)
+        {
+            _error = ex.ToString();
+        }
+        finally
+        {
+            _busy = false;
+        }
     }
 
     private async Task SelectMessageAsync(InboxMessageVm msg)
     {
+        if (_busy)
+            return;
+
         SelectedMessage = msg;
+        _status = null;
+        _error = null;
+
         if (!msg.IsRead)
         {
-            await InboxService.MarkMessageAsReadAsync(msg.Id);
-            await ReloadAsync();
-            SelectedMessage = _messages.FirstOrDefault(x => x.Id == msg.Id);
+            try
+            {
+                _busy = true;
+                await InboxService.MarkMessageAsReadAsync(msg.Id);
+                await ReloadAsync();
+                SelectedMessage = _messages.FirstOrDefault(x => x.Id == msg.Id);
+            }
+            catch (Exception ex)
+            {
+                _error = ex.ToString();
+            }
+            finally
+            {
+                _busy = false;
+            }
         }
     }
 
-    private async Task AcceptOfferAsync(int offerId)
+    private async Task MarkSelectedReadAsync()
+    {
+        if (SelectedMessage is null)
+            return;
+
+        try
+        {
+            _busy = true;
+            _error = null;
+            await InboxService.MarkMessageAsReadAsync(SelectedMessage.Id);
+            _status = "Message marked as read.";
+            await ReloadAsync();
+        }
+        catch (Exception ex)
+        {
+            _error = ex.ToString();
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task ArchiveSelectedAsync()
+    {
+        if (SelectedMessage is null)
+            return;
+
+        try
+        {
+            _busy = true;
+            _error = null;
+            await InboxService.ArchiveMessageAsync(SelectedMessage.Id);
+            _status = "Message archived.";
+            await ReloadAsync();
+        }
+        catch (Exception ex)
+        {
+            _error = ex.ToString();
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task RestoreSelectedAsync()
+    {
+        if (SelectedMessage is null)
+            return;
+
+        try
+        {
+            _busy = true;
+            _error = null;
+            await InboxService.RestoreMessageAsync(SelectedMessage.Id);
+            _status = "Message restored.";
+            await ReloadAsync();
+        }
+        catch (Exception ex)
+        {
+            _error = ex.ToString();
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task DeleteSelectedAsync()
+    {
+        if (SelectedMessage is null)
+            return;
+
+        try
+        {
+            _busy = true;
+            _error = null;
+            await InboxService.DeleteMessageAsync(SelectedMessage.Id);
+            _status = "Message deleted.";
+            await ReloadAsync();
+        }
+        catch (Exception ex)
+        {
+            _error = ex.ToString();
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task AcceptFightOfferAsync(int offerId)
     {
         try
         {
+            _busy = true;
+            _error = null;
+
             var result = await FightOfferResponseService.AcceptOfferAsync(offerId);
             if (!result.Success)
             {
@@ -184,18 +555,26 @@ else
                 return;
             }
 
+            _status = result.Message ?? "Fight offer accepted.";
             await ReloadAsync();
         }
         catch (Exception ex)
         {
             _error = ex.ToString();
         }
+        finally
+        {
+            _busy = false;
+        }
     }
 
-    private async Task RejectOfferAsync(int offerId)
+    private async Task RejectFightOfferAsync(int offerId)
     {
         try
         {
+            _busy = true;
+            _error = null;
+
             var result = await FightOfferResponseService.RejectOfferAsync(offerId);
             if (!result.Success)
             {
@@ -203,11 +582,73 @@ else
                 return;
             }
 
+            _status = result.Message ?? "Fight offer rejected.";
             await ReloadAsync();
         }
         catch (Exception ex)
         {
             _error = ex.ToString();
         }
+        finally
+        {
+            _busy = false;
+        }
     }
+
+    private async Task AcceptContractOfferAsync(int contractOfferId)
+    {
+        try
+        {
+            _busy = true;
+            _error = null;
+
+            var result = await ContractOfferResponseService.AcceptAsync(contractOfferId);
+            if (!result.Success)
+            {
+                _error = result.Message;
+                return;
+            }
+
+            _status = result.Message ?? "Contract offer accepted.";
+            await ReloadAsync();
+        }
+        catch (Exception ex)
+        {
+            _error = ex.ToString();
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task RejectContractOfferAsync(int contractOfferId)
+    {
+        try
+        {
+            _busy = true;
+            _error = null;
+
+            var result = await ContractOfferResponseService.RejectAsync(contractOfferId);
+            if (!result.Success)
+            {
+                _error = result.Message;
+                return;
+            }
+
+            _status = result.Message ?? "Contract offer rejected.";
+            await ReloadAsync();
+        }
+        catch (Exception ex)
+        {
+            _error = ex.ToString();
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private static bool IsPending(string? status)
+        => string.Equals(status, "Pending", StringComparison.OrdinalIgnoreCase);
 }

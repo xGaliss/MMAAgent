@@ -28,8 +28,7 @@ public sealed class FightOfferGenerationServiceSqlite : IFightOfferGenerationSer
     {
         var agent = await _agentRepository.GetAsync();
         var gameState = await _gameStateRepository.GetAsync();
-        if (agent == null || gameState == null)
-            return 0;
+        if (agent == null || gameState == null) return 0;
 
         var inboxMessages = new List<InboxMessage>();
 
@@ -44,24 +43,33 @@ public sealed class FightOfferGenerationServiceSqlite : IFightOfferGenerationSer
 
         foreach (var fighter in managedFighters)
         {
-            var ev = upcomingEvents.FirstOrDefault(x =>
-                fighter.PromotionId == null || x.PromotionId == fighter.PromotionId.Value);
+            // ✅ CAMBIO CLAVE:
+            // si no tiene promotora o no tiene peleas de contrato, no se le agenda pelea
+            if (fighter.PromotionId is null)
+                continue;
 
-            if (ev is null)
+            if (fighter.ContractFightsRemaining <= 0)
                 continue;
 
             if (await HasPendingOfferAsync(conn, tx, fighter.FighterId, cancellationToken))
                 continue;
 
+            if (await HasPendingContractOfferAsync(conn, tx, fighter.FighterId, cancellationToken))
+                continue;
+
             if (fighter.WeeksUntilAvailable > 0 || fighter.InjuryWeeksRemaining > 0)
+                continue;
+
+            var ev = upcomingEvents.FirstOrDefault(x => x.PromotionId == fighter.PromotionId.Value);
+            if (ev is null)
                 continue;
 
             if (ev.EventWeek - absoluteWeek < 1)
                 continue;
 
             var candidates = await FindOpponentCandidatesAsync(conn, tx, fighter, ev.PromotionId, cancellationToken);
-            OpponentSnapshot? opponent = null;
 
+            OpponentSnapshot? opponent = null;
             foreach (var candidate in candidates)
             {
                 if (await HaveRecentRematchAsync(conn, tx, fighter.FighterId, candidate.FighterId, cancellationToken))
@@ -76,6 +84,7 @@ public sealed class FightOfferGenerationServiceSqlite : IFightOfferGenerationSer
 
             if (opponent is null)
                 continue;
+
             using (var cmd = conn.CreateCommand())
             {
                 cmd.Transaction = tx;
@@ -106,7 +115,6 @@ VALUES
     $promotionId,
     $weightClass
 );";
-
                 cmd.Parameters.AddWithValue("$fighterId", fighter.FighterId);
                 cmd.Parameters.AddWithValue("$opponentId", opponent.FighterId);
                 cmd.Parameters.AddWithValue("$purse", 5000 + fighter.Skill * 100);
@@ -114,6 +122,7 @@ VALUES
                 cmd.Parameters.AddWithValue("$weeksUntilFight", Math.Max(1, ev.EventWeek - absoluteWeek));
                 cmd.Parameters.AddWithValue("$promotionId", ev.PromotionId);
                 cmd.Parameters.AddWithValue("$weightClass", fighter.WeightClass);
+
                 await cmd.ExecuteNonQueryAsync(cancellationToken);
             }
 
@@ -148,32 +157,25 @@ VALUES
     }
 
     private static async Task<bool> HaveRecentRematchAsync(
-    SqliteConnection conn,
-    SqliteTransaction tx,
-    int fighterId,
-    int opponentId,
-    CancellationToken cancellationToken)
+        SqliteConnection conn,
+        SqliteTransaction tx,
+        int fighterId,
+        int opponentId,
+        CancellationToken cancellationToken)
     {
         using var cmd = conn.CreateCommand();
         cmd.Transaction = tx;
         cmd.CommandText = @"
-SELECT COUNT(*)
-FROM
+SELECT COUNT(*) FROM
 (
     SELECT Id
     FROM FightHistory
-    WHERE
-    (
-        (FighterAId = $a AND FighterBId = $b)
-        OR
-        (FighterAId = $b AND FighterBId = $a)
-    )
+    WHERE ((FighterAId = $a AND FighterBId = $b) OR (FighterAId = $b AND FighterBId = $a))
     ORDER BY Id DESC
     LIMIT 2
 ) t;";
         cmd.Parameters.AddWithValue("$a", fighterId);
         cmd.Parameters.AddWithValue("$b", opponentId);
-
         return Convert.ToInt32(await cmd.ExecuteScalarAsync(cancellationToken)) >= 2;
     }
 
@@ -190,6 +192,15 @@ FROM
         using var cmd = conn.CreateCommand();
         cmd.Transaction = tx;
         cmd.CommandText = "SELECT COUNT(*) FROM FightOffers WHERE FighterId = $fighterId AND Status = 'Pending';";
+        cmd.Parameters.AddWithValue("$fighterId", fighterId);
+        return Convert.ToInt32(await cmd.ExecuteScalarAsync(cancellationToken)) > 0;
+    }
+
+    private static async Task<bool> HasPendingContractOfferAsync(SqliteConnection conn, SqliteTransaction tx, int fighterId, CancellationToken cancellationToken)
+    {
+        using var cmd = conn.CreateCommand();
+        cmd.Transaction = tx;
+        cmd.CommandText = "SELECT COUNT(*) FROM ContractOffers WHERE FighterId = $fighterId AND Status = 'Pending';";
         cmd.Parameters.AddWithValue("$fighterId", fighterId);
         return Convert.ToInt32(await cmd.ExecuteScalarAsync(cancellationToken)) > 0;
     }
@@ -222,14 +233,17 @@ ORDER BY NextEventWeek;";
             var promotionId = Convert.ToInt32(r["PromotionId"]);
             var promoName = r["Name"]?.ToString() ?? $"Promotion {promotionId}";
             var nextEventWeek = Convert.ToInt32(r["NextEventWeek"]);
-
             list.Add(new UpcomingEvent(0, $"{promoName} Week {nextEventWeek}", promotionId, nextEventWeek));
         }
 
         return list;
     }
 
-    private static async Task<List<ManagedAvailability>> LoadAvailableManagedFightersAsync(SqliteConnection conn, SqliteTransaction tx, int agentId, CancellationToken cancellationToken)
+    private static async Task<List<ManagedAvailability>> LoadAvailableManagedFightersAsync(
+        SqliteConnection conn,
+        SqliteTransaction tx,
+        int agentId,
+        CancellationToken cancellationToken)
     {
         using var cmd = conn.CreateCommand();
         cmd.Transaction = tx;
@@ -271,11 +285,11 @@ ORDER BY f.Popularity DESC, f.Skill DESC;";
     }
 
     private static async Task<List<OpponentSnapshot>> FindOpponentCandidatesAsync(
-    SqliteConnection conn,
-    SqliteTransaction tx,
-    ManagedAvailability fighter,
-    int promotionId,
-    CancellationToken cancellationToken)
+        SqliteConnection conn,
+        SqliteTransaction tx,
+        ManagedAvailability fighter,
+        int promotionId,
+        CancellationToken cancellationToken)
     {
         using var cmd = conn.CreateCommand();
         cmd.Transaction = tx;
@@ -300,7 +314,6 @@ LIMIT 12;";
         cmd.Parameters.AddWithValue("$popularity", fighter.Popularity);
 
         var list = new List<OpponentSnapshot>();
-
         using var r = await cmd.ExecuteReaderAsync(cancellationToken);
         while (await r.ReadAsync(cancellationToken))
         {
@@ -314,6 +327,7 @@ LIMIT 12;";
     }
 
     private sealed record UpcomingEvent(int EventId, string EventName, int PromotionId, int EventWeek);
+
     private sealed record ManagedAvailability(
         int FighterId,
         string Name,
@@ -324,5 +338,6 @@ LIMIT 12;";
         int WeeksUntilAvailable,
         int InjuryWeeksRemaining,
         int ContractFightsRemaining);
+
     private sealed record OpponentSnapshot(int FighterId, string Name, int Skill);
 }

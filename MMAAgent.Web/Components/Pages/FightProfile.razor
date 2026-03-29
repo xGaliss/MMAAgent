@@ -1,10 +1,11 @@
 ﻿@page "/fighters/{fighterId:int}"
 @using MMAAgent.Web.Models
 @using MMAAgent.Web.Services
-@inject FightProfileReadService FightProfileReadService
-@using MMAAgent.Web.Services
-@inject WebFighterActionService FighterActionService
+@using MMAAgent.Application.Abstractions
 
+@inject FightProfileReadService FightProfileReadService
+@inject WebFighterActionService FighterActionService
+@inject IFighterRepository FighterRepository
 
 <PageTitle>Fight Profile - MMA Agent</PageTitle>
 
@@ -32,7 +33,7 @@ else
     <div class="fight-profile-layout">
         <section class="panel-card profile-hero">
             <div class="profile-header">
-                <div>
+                <div class="profile-header-left">
                     <div class="profile-name-row">
                         <h2 class="profile-name">@_fighter.Name</h2>
                         @if (_fighter.IsChampion)
@@ -40,16 +41,34 @@ else
                             <span class="champion-pill">Champion</span>
                         }
                     </div>
+
                     <div class="muted-text">@_fighter.CountryName · @_fighter.WeightClass · Age @_fighter.Age</div>
+
+                    <div class="profile-action-row">
+                        @if (_isManaged)
+                        {
+                            <span class="managed-pill">Managed</span>
+                        }
+                        else
+                        {
+                            <button class="@GetSignButtonClass()"
+                                    @onclick="SignCurrentFighterAsync">
+                                @GetSignButtonText()
+                            </button>
+                        }
+                    </div>
                 </div>
 
                 <div class="profile-record">
-                    <span>@_fighter.Wins</span>-<span>@_fighter.Losses</span>-<span>@_fighter.Draws</span>
-                    <button class="btn-primary" @onclick="SignCurrentFighterAsync">Sign fighter</button>
+                    <span class="record-win">@_fighter.Wins</span>
+                    <span class="record-sep">-</span>
+                    <span class="record-loss">@_fighter.Losses</span>
+                    <span class="record-sep">-</span>
+                    <span class="record-draw">@_fighter.Draws</span>
                 </div>
-                
+
             </div>
-            
+
             <div class="profile-meta-grid">
                 <div class="meta-box">
                     <div class="meta-label">Promotion</div>
@@ -68,7 +87,6 @@ else
                     <div class="meta-value">@_fighter.Salary</div>
                 </div>
             </div>
-           
         </section>
 
         <section class="panel-card">
@@ -143,6 +161,7 @@ else
     private FighterProfile? _fighter;
     private List<FightHistoryItem> _history = new();
     private bool _loading = true;
+    private bool _isManaged;
     private string? _error;
 
     protected override async Task OnParametersSetAsync()
@@ -155,6 +174,8 @@ else
             var result = await FightProfileReadService.LoadAsync(fighterId, 20);
             _fighter = result.Fighter;
             _history = result.History.ToList();
+
+            _isManaged = await FighterRepository.IsManagedAsync(fighterId);
         }
         catch (Exception ex)
         {
@@ -170,10 +191,17 @@ else
     {
         try
         {
-            if (_fighter is null) return;
+            if (_fighter is null || _isManaged)
+                return;
+
             var result = await FighterActionService.AttemptSignAsync(_fighter.Id);
             if (!result.Success)
+            {
                 _error = result.Message;
+                return;
+            }
+
+            _isManaged = true;
         }
         catch (Exception ex)
         {
@@ -181,5 +209,25 @@ else
         }
     }
 
+    private string GetSignButtonClass()
+    {
+        if (_fighter is null)
+            return "btn-sign";
 
+        if (string.Equals(_fighter.ContractStatus, "FreeAgent", StringComparison.OrdinalIgnoreCase))
+            return "btn-sign";
+
+        return "btn-sign-alt";
+    }
+
+    private string GetSignButtonText()
+    {
+        if (_fighter is null)
+            return "Sign fighter";
+
+        if (string.Equals(_fighter.ContractStatus, "FreeAgent", StringComparison.OrdinalIgnoreCase))
+            return "Sign fighter";
+
+        return "Approach fighter";
+    }
 }
