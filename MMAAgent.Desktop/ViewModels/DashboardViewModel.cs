@@ -16,7 +16,6 @@ namespace MMAAgent.Desktop.ViewModels
         private readonly RosterViewModel _roster;
         private readonly GameTimeService _time;
         private readonly ISavePathProvider _savePath;
-        private readonly IWeeklySimulationService _weekly;
         private readonly IEventRepository _eventRepo;
 
         public ICommand AdvanceWeekCommand { get; }
@@ -69,13 +68,11 @@ namespace MMAAgent.Desktop.ViewModels
             RosterViewModel roster,
             GameTimeService time,
             ISavePathProvider savePath,
-            IWeeklySimulationService weekly,
             IEventRepository eventRepo)
         {
             _roster = roster;
             _time = time;
             _savePath = savePath;
-            _weekly = weekly;
             _eventRepo = eventRepo;
 
             AdvanceWeekCommand = new RelayCommand(async () => await AdvanceWeekAsync());
@@ -115,7 +112,6 @@ namespace MMAAgent.Desktop.ViewModels
             try
             {
                 var state = await _time.AdvanceWeeksAsync(1);
-                await _weekly.RunWeekAsync(state);
 
                 DateText = state.CurrentDate;
                 WeekYearText = $"Week {state.CurrentWeek} • Year {state.CurrentYear}";

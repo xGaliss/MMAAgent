@@ -56,7 +56,9 @@ public sealed class FightOfferResponseServiceSqlite : IFightOfferResponseService
             conn,
             tx,
             offer.PromotionId.Value,
+            gameState.CurrentYear,
             gameState.CurrentWeek,
+            gameState.CurrentDate,
             offer.WeeksUntilFight,
             cancellationToken);
 
@@ -235,19 +237,23 @@ LIMIT 1;";
         SqliteConnection conn,
         SqliteTransaction tx,
         int promotionId,
+        int currentYear,
         int currentWeek,
+        string currentDate,
         int weeksUntilFight,
         CancellationToken cancellationToken)
     {
-        var targetWeek = currentWeek + Math.Max(1, weeksUntilFight);
+        var promotion = await LoadPromotionSnapshotAsync(conn, tx, promotionId, cancellationToken);
+        var currentAbsoluteWeek = ToAbsoluteWeek(currentYear, currentWeek);
 
-        using var promoCmd = conn.CreateCommand();
-        promoCmd.Transaction = tx;
-        promoCmd.CommandText = "SELECT Name FROM Promotions WHERE Id = $id LIMIT 1;";
-        promoCmd.Parameters.AddWithValue("$id", promotionId);
-        var promoName = (await promoCmd.ExecuteScalarAsync(cancellationToken))?.ToString() ?? $"Promotion {promotionId}";
+        var targetAbsoluteWeek = promotion?.NextEventWeek > currentAbsoluteWeek
+            ? promotion.NextEventWeek
+            : currentAbsoluteWeek + Math.Max(1, weeksUntilFight);
 
-        var targetEventName = $"{promoName} Week {targetWeek}";
+        var promoName = promotion?.Name ?? $"Promotion {promotionId}";
+        var targetEventName = BuildEventName(promoName, targetAbsoluteWeek);
+
+        var eventDate = ResolveEventDate(currentDate, currentAbsoluteWeek, targetAbsoluteWeek);
 
         using (var findCmd = conn.CreateCommand())
         {
@@ -266,10 +272,6 @@ LIMIT 1;";
                 return Convert.ToInt32(existing);
         }
 
-        var eventDate = DateTime.UtcNow
-            .AddDays(Math.Max(7, weeksUntilFight * 7))
-            .ToString("yyyy-MM-dd");
-
         using var insertCmd = conn.CreateCommand();
         insertCmd.Transaction = tx;
         insertCmd.CommandText = @"
@@ -285,6 +287,47 @@ VALUES ($p, $d, $n, $l);";
         return Convert.ToInt32(await insertCmd.ExecuteScalarAsync(cancellationToken));
     }
 
+    private static async Task<PromotionSnapshot?> LoadPromotionSnapshotAsync(
+        SqliteConnection conn,
+        SqliteTransaction tx,
+        int promotionId,
+        CancellationToken cancellationToken)
+    {
+        using var cmd = conn.CreateCommand();
+        cmd.Transaction = tx;
+        cmd.CommandText = @"
+SELECT Name, COALESCE(NextEventWeek, 0) AS NextEventWeek
+FROM Promotions
+WHERE Id = $id
+LIMIT 1;";
+        cmd.Parameters.AddWithValue("$id", promotionId);
+
+        using var r = await cmd.ExecuteReaderAsync(cancellationToken);
+        if (!await r.ReadAsync(cancellationToken))
+            return null;
+
+        return new PromotionSnapshot(
+            r["Name"]?.ToString() ?? $"Promotion {promotionId}",
+            Convert.ToInt32(r["NextEventWeek"]));
+    }
+
+    private static string ResolveEventDate(string currentDate, int currentAbsoluteWeek, int targetAbsoluteWeek)
+    {
+        if (!DateTime.TryParse(currentDate, out var parsedCurrentDate))
+            parsedCurrentDate = DateTime.UtcNow.Date;
+
+        var weeksUntilEvent = Math.Max(1, targetAbsoluteWeek - currentAbsoluteWeek);
+        return parsedCurrentDate
+            .AddDays(weeksUntilEvent * 7)
+            .ToString("yyyy-MM-dd");
+    }
+
+    private static string BuildEventName(string promotionName, int absoluteWeek)
+        => $"{promotionName} Week {absoluteWeek}";
+
+    private static int ToAbsoluteWeek(int year, int week)
+        => Math.Max(0, (year - 1) * 52 + (week - 1));
+
     private sealed record OfferSnapshot(
         int Id,
         int FighterId,
@@ -294,4 +337,8 @@ VALUES ($p, $d, $n, $l);";
         int WeeksUntilFight,
         string WeightClass,
         bool IsTitleFight);
+
+    private sealed record PromotionSnapshot(
+        string Name,
+        int NextEventWeek);
 }

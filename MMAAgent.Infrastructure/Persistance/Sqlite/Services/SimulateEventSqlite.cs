@@ -26,6 +26,7 @@ namespace MMAAgent.Infrastructure.Persistence.Sqlite.Services
             var eventDate = state.CurrentDate;
             var seed = DeriveEventSeed(state.WorldSeed, state.CurrentYear, state.CurrentWeek, promotionId);
             var rng = new Random(seed);
+            var absoluteWeek = ToAbsoluteWeek(state.CurrentYear, state.CurrentWeek);
 
             using var conn = _factory.CreateConnection();
             using var tx = conn.BeginTransaction();
@@ -34,7 +35,7 @@ namespace MMAAgent.Infrastructure.Persistence.Sqlite.Services
                 "SELECT Name FROM Promotions WHERE Id = $id;",
                 ("$id", promotionId)) ?? $"Promotion {promotionId}";
 
-            var eventName = $"{promoName} Week {state.CurrentWeek}";
+            var eventName = BuildEventName(promoName, absoluteWeek);
             var location = "TBD";
 
             int eventId = await EnsureWeeklyEventAsync(conn, tx, promotionId, eventDate, eventName, location);
@@ -443,6 +444,48 @@ LIMIT 1;";
             if (existing != null && existing != DBNull.Value)
                 return Convert.ToInt32(existing);
 
+            using var scheduledCmd = conn.CreateCommand();
+            scheduledCmd.Transaction = tx;
+            scheduledCmd.CommandText = @"
+SELECT e.Id
+FROM Events e
+WHERE e.PromotionId = $p
+  AND EXISTS
+  (
+      SELECT 1
+      FROM Fights f
+      WHERE f.EventId = e.Id
+        AND f.Method = 'Scheduled'
+  )
+ORDER BY
+    CASE WHEN COALESCE(e.EventDate, '') = '' THEN 1 ELSE 0 END,
+    e.EventDate,
+    e.Id
+LIMIT 1;";
+            scheduledCmd.Parameters.AddWithValue("$p", promotionId);
+
+            var scheduledEvent = await scheduledCmd.ExecuteScalarAsync();
+            if (scheduledEvent != null && scheduledEvent != DBNull.Value)
+            {
+                var scheduledEventId = Convert.ToInt32(scheduledEvent);
+
+                using var updateCmd = conn.CreateCommand();
+                updateCmd.Transaction = tx;
+                updateCmd.CommandText = @"
+UPDATE Events
+SET EventDate = $d,
+    Name = $n,
+    Location = $l
+WHERE Id = $id;";
+                updateCmd.Parameters.AddWithValue("$d", eventDate);
+                updateCmd.Parameters.AddWithValue("$n", eventName);
+                updateCmd.Parameters.AddWithValue("$l", location);
+                updateCmd.Parameters.AddWithValue("$id", scheduledEventId);
+                await updateCmd.ExecuteNonQueryAsync();
+
+                return scheduledEventId;
+            }
+
             using var insertCmd = conn.CreateCommand();
             insertCmd.Transaction = tx;
             insertCmd.CommandText = @"
@@ -587,6 +630,12 @@ LIMIT 1;";
                 return Math.Abs(h);
             }
         }
+
+        private static string BuildEventName(string promotionName, int absoluteWeek)
+            => $"{promotionName} Week {absoluteWeek}";
+
+        private static int ToAbsoluteWeek(int year, int week)
+            => Math.Max(0, (year - 1) * 52 + (week - 1));
 
         private static double NextGaussian(Random rng, double mean, double stdDev)
         {
