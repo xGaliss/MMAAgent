@@ -2,7 +2,9 @@ using System.Threading;
 using MMAAgent.Application;
 using MMAAgent.Application.Abstractions;
 using MMAAgent.Application.Simulation;
+using MMAAgent.Infrastructure.Generation;
 using MMAAgent.Infrastructure.Persistence.Sqlite;
+using MMAAgent.Infrastructure.Persistence.Sqlite.Services;
 
 namespace MMAAgent.Infrastructure.Persistance.Sqlite.Services;
 
@@ -13,6 +15,8 @@ public sealed class WeeklyWorldUpdateService : IWeeklyWorldUpdateService
     private readonly GameTimeService _gameTimeService;
     private readonly IFightOfferGenerationService _fightOfferGenerationService;
     private readonly IContractLifecycleService _contractLifecycleService;
+    private readonly InitialSigningPassSqlite _initialSigningPass;
+    private readonly WorldFighterGeneratorSqlite _worldFighterGenerator;
     private readonly IPromotionEventScheduleRepository _scheduleRepository;
     private readonly IEventSimulator _eventSimulator;
     private readonly SqliteConnectionFactory _factory;
@@ -21,6 +25,8 @@ public sealed class WeeklyWorldUpdateService : IWeeklyWorldUpdateService
         GameTimeService gameTimeService,
         IFightOfferGenerationService fightOfferGenerationService,
         IContractLifecycleService contractLifecycleService,
+        InitialSigningPassSqlite initialSigningPass,
+        WorldFighterGeneratorSqlite worldFighterGenerator,
         IPromotionEventScheduleRepository scheduleRepository,
         IEventSimulator eventSimulator,
         SqliteConnectionFactory factory)
@@ -28,6 +34,8 @@ public sealed class WeeklyWorldUpdateService : IWeeklyWorldUpdateService
         _gameTimeService = gameTimeService;
         _fightOfferGenerationService = fightOfferGenerationService;
         _contractLifecycleService = contractLifecycleService;
+        _initialSigningPass = initialSigningPass;
+        _worldFighterGenerator = worldFighterGenerator;
         _scheduleRepository = scheduleRepository;
         _eventSimulator = eventSimulator;
         _factory = factory;
@@ -39,6 +47,10 @@ public sealed class WeeklyWorldUpdateService : IWeeklyWorldUpdateService
 
         try
         {
+            var previousState = await _gameTimeService.GetAsync();
+            var previousYear = previousState?.CurrentYear ?? 0;
+            var worldSeed = previousState?.WorldSeed ?? 0;
+
             var state = await _gameTimeService.AdvanceWeeksAsync(1);
 
             using (var conn = _factory.CreateConnection())
@@ -77,8 +89,17 @@ public sealed class WeeklyWorldUpdateService : IWeeklyWorldUpdateService
                 await _scheduleRepository.SetNextEventWeekAsync(promo.PromotionId, nextAbsoluteWeek);
             }
 
+            if (state.CurrentYear > previousYear)
+            {
+                _worldFighterGenerator.SetSeed(ComputeAnnualIntakeSeed(worldSeed, state.CurrentYear));
+                _worldFighterGenerator.GenerateAnnualNewcomers();
+            }
+
             // ✅ nuevo paso: contratos / renovaciones / mercado
             var contractOffers = await _contractLifecycleService.ProcessWeeklyAsync(cancellationToken);
+
+            // ✅ la CPU rellena huecos con agentes libres para que las divisiones no se vacíen
+            await _initialSigningPass.RunWeeklyTopUpAsync(cancellationToken);
 
             // ✅ luego se generan solo fight offers para fighters con contrato válido
             var newFightOffers = await _fightOfferGenerationService.GenerateWeeklyOffersAsync(cancellationToken);
@@ -130,6 +151,11 @@ SET WeeksUntilAvailable = CASE WHEN COALESCE(WeeksUntilAvailable, 0) > 0 THEN We
     IsInjured = CASE WHEN COALESCE(InjuryWeeksRemaining, 0) > 1 THEN 1 ELSE 0 END;";
         await cmd.ExecuteNonQueryAsync(cancellationToken);
     }
+
+    private static int ComputeAnnualIntakeSeed(int worldSeed, int currentYear)
+        => worldSeed == 0
+            ? currentYear
+            : unchecked((worldSeed * 397) ^ currentYear);
 
     private async Task EnsurePromotionEventExistsAsync(
     int promotionId,

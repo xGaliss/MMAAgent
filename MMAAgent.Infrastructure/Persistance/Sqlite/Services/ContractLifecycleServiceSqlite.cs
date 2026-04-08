@@ -52,7 +52,7 @@ public sealed class ContractLifecycleServiceSqlite : IContractLifecycleService
 
             if (fighter.PromotionId is int promotionId)
             {
-                if (fighter.ContractFightsRemaining > 1)
+                if (fighter.ContractFightsRemaining > 0)
                     continue;
 
                 var recentForm = await TryLoadRecentFormAsync(conn, tx, fighter.FighterId, cancellationToken);

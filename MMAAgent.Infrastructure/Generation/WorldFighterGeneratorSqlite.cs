@@ -17,6 +17,7 @@ namespace MMAAgent.Infrastructure.Generation
         }
 
         public int GenerateCount { get; set; } = 300;
+        public int AnnualNewcomerCount { get; set; } = 48;
         public bool ClearExistingFighters { get; set; } = true;
 
         // --- Caches ---
@@ -69,19 +70,7 @@ namespace MMAAgent.Infrastructure.Generation
             for (int i = 0; i < GenerateCount; i++)
             {
                 var c = PickCountry();
-                string first = PickFirstName(c.Id, c.CulturalGroup);
-                string last = PickLastName(c.Id, c.CulturalGroup);
-
-                string key = $"{first} {last} ({c.Name})";
-                int attempts = 0;
-                while (_usedFullNames.Contains(key) && attempts < 15)
-                {
-                    first = PickFirstName(c.Id, c.CulturalGroup);
-                    last = PickLastName(c.Id, c.CulturalGroup);
-                    key = $"{first} {last} ({c.Name})";
-                    attempts++;
-                }
-                _usedFullNames.Add(key);
+                var (first, last) = GenerateUniqueName(c);
 
                 int age = GenerateAge();
                 string wc = PickWeightClass();
@@ -118,6 +107,68 @@ namespace MMAAgent.Infrastructure.Generation
             }
 
             tx.Commit();
+        }
+
+        public int GenerateAnnualNewcomers(int? count = null)
+        {
+            var totalToGenerate = Math.Max(0, count ?? AnnualNewcomerCount);
+            if (totalToGenerate <= 0)
+                return 0;
+
+            using var conn = _factory.CreateConnection();
+            using var tx = conn.BeginTransaction();
+
+            LoadCountries(conn, tx);
+            LoadNameCaches(conn, tx);
+            LoadUsedFullNames(conn, tx);
+
+            if (_countries.Count == 0 || _totalCountryWeight <= 0)
+                throw new InvalidOperationException("No hay países válidos (FighterSpawnWeight > 0).");
+
+            var generated = 0;
+
+            for (int i = 0; i < totalToGenerate; i++)
+            {
+                var c = PickCountry();
+                var (first, last) = GenerateUniqueName(c);
+                var age = GenerateNewcomerAge();
+                var wc = PickWeightClass();
+
+                int primeStart = _rng.Next(26, 29);
+                int primeEnd = primeStart + _rng.Next(5, 8);
+
+                int potential = GenerateNewcomerPotential(c);
+                int skill = GenerateNewcomerSkill(age, potential);
+                string style = PickStyle(c);
+
+                var stats = GenerateStats(skill, potential, c, style);
+                var record = GenerateNewcomerRecord(age, skill);
+
+                InsertFighter(
+                    conn, tx,
+                    first, last, c.Id,
+                    age, wc,
+                    primeStart, primeEnd,
+                    potential, skill,
+                    stats.Striking, stats.Grappling, stats.Wrestling, stats.Cardio, stats.Chin, stats.FightIQ,
+                    style,
+                    record.W, record.L, record.D,
+                    record.KO, record.SUB, record.DEC,
+                    popularity: GenerateNewcomerPopularity(skill, record.W, record.L),
+                    retired: 0,
+                    promotionId: null,
+                    salary: 0,
+                    contractFightsRemaining: 0,
+                    totalFightsInContract: 0,
+                    contractStatus: "FreeAgent",
+                    negotiationTurnsRemaining: 0
+                );
+
+                generated++;
+            }
+
+            tx.Commit();
+            return generated;
         }
 
         // ---------------- Loaders ----------------
@@ -257,6 +308,27 @@ WHERE lng.Weight > 0;";
             }
         }
 
+        private void LoadUsedFullNames(SqliteConnection conn, SqliteTransaction tx)
+        {
+            _usedFullNames.Clear();
+
+            using var cmd = conn.CreateCommand();
+            cmd.Transaction = tx;
+            cmd.CommandText = @"
+SELECT f.FirstName, f.LastName, COALESCE(c.Name, '') AS CountryName
+FROM Fighters f
+LEFT JOIN Countries c ON c.Id = f.CountryId;";
+
+            using var reader = cmd.ExecuteReader();
+            while (reader.Read())
+            {
+                var first = reader["FirstName"]?.ToString() ?? "Unknown";
+                var last = reader["LastName"]?.ToString() ?? "Unknown";
+                var countryName = reader["CountryName"]?.ToString() ?? "";
+                _usedFullNames.Add(BuildNameKey(first, last, countryName));
+            }
+        }
+
         // ---------------- Picks ----------------
 
         private CountryRow PickCountry()
@@ -337,6 +409,28 @@ WHERE lng.Weight > 0;";
             return "AllRounder";
         }
 
+        private (string First, string Last) GenerateUniqueName(CountryRow c)
+        {
+            string first = PickFirstName(c.Id, c.CulturalGroup);
+            string last = PickLastName(c.Id, c.CulturalGroup);
+            string key = BuildNameKey(first, last, c.Name);
+            int attempts = 0;
+
+            while (_usedFullNames.Contains(key) && attempts < 15)
+            {
+                first = PickFirstName(c.Id, c.CulturalGroup);
+                last = PickLastName(c.Id, c.CulturalGroup);
+                key = BuildNameKey(first, last, c.Name);
+                attempts++;
+            }
+
+            _usedFullNames.Add(key);
+            return (first, last);
+        }
+
+        private static string BuildNameKey(string first, string last, string countryName)
+            => $"{first} {last} ({countryName})";
+
         // ---------------- Generation logic ----------------
 
         private int GenerateAge()
@@ -344,6 +438,19 @@ WHERE lng.Weight > 0;";
             int age = (int)Math.Round(NextGaussian(28, 5));
             return ClampInt(age, 18, 42);
         }
+
+        private int GenerateNewcomerAge()
+            => WeightedInt(new (int value, int weight)[]
+            {
+                (18, 24),
+                (19, 24),
+                (20, 22),
+                (21, 16),
+                (22, 10),
+                (23, 6),
+                (24, 3),
+                (25, 1)
+            });
 
         private int GenerateSkillFromAgePotential(int age, int potential)
         {
@@ -357,6 +464,27 @@ WHERE lng.Weight > 0;";
 
             int skill = (int)Math.Round(potential * t + NextGaussian(0, 6));
             return ClampInt(skill, 15, potential);
+        }
+
+        private int GenerateNewcomerPotential(CountryRow c)
+        {
+            int potential = ClampInt((int)Math.Round(c.MmaLevel + 6 + NextGaussian(0, 13)), 28, 92);
+            if (_rng.NextDouble() < 0.08)
+                potential = ClampInt(potential + _rng.Next(6, 14), 32, 97);
+
+            return potential;
+        }
+
+        private int GenerateNewcomerSkill(int age, int potential)
+        {
+            double readiness;
+            if (age <= 19) readiness = 0.32;
+            else if (age <= 21) readiness = 0.38;
+            else if (age <= 23) readiness = 0.45;
+            else readiness = 0.52;
+
+            int skill = (int)Math.Round(potential * readiness + NextGaussian(0, 5));
+            return ClampInt(skill, 12, Math.Min(72, potential));
         }
 
         private (int Striking, int Grappling, int Wrestling, int Cardio, int Chin, int FightIQ)
@@ -478,6 +606,56 @@ WHERE lng.Weight > 0;";
             return (wins, losses, draws, ko, sub, dec);
         }
 
+        private (int W, int L, int D, int KO, int SUB, int DEC) GenerateNewcomerRecord(int age, int skill)
+        {
+            int stage = WeightedInt(new (int value, int weight)[]
+            {
+                (0, 44),
+                (1, 36),
+                (2, 16),
+                (3, 4)
+            });
+
+            int fights = stage switch
+            {
+                0 => _rng.NextDouble() < 0.65 ? 0 : 1,
+                1 => _rng.Next(1, 4),
+                2 => _rng.Next(3, 7),
+                _ => _rng.Next(6, 11)
+            };
+
+            fights = Math.Min(fights, MaxFightsByAge(age));
+            if (fights <= 0)
+                return (0, 0, 0, 0, 0, 0);
+
+            double wr = 0.34 + (skill / 145.0) + NextGaussian(0, 0.05);
+            wr = ClampDouble(wr, 0.18, 0.86);
+
+            int wins = ClampInt((int)Math.Round(fights * wr), 0, fights);
+            int losses = fights - wins;
+            int draws = fights >= 4 && _rng.NextDouble() < 0.02 ? 1 : 0;
+
+            if (draws == 1)
+            {
+                if (losses > 0) losses -= 1;
+                else if (wins > 0) wins -= 1;
+            }
+
+            int ko = 0, sub = 0, dec = 0;
+            double koP = ClampDouble(0.26 + (skill - 45) / 240.0, 0.15, 0.48);
+            double subP = ClampDouble(0.18 + (skill - 45) / 280.0, 0.10, 0.34);
+
+            for (int i = 0; i < wins; i++)
+            {
+                double r = _rng.NextDouble();
+                if (r < koP) ko++;
+                else if (r < koP + subP) sub++;
+                else dec++;
+            }
+
+            return (wins, losses, draws, ko, sub, dec);
+        }
+
         private int MaxFightsByAge(int age)
         {
             if (age <= 18) return 2;
@@ -508,6 +686,12 @@ WHERE lng.Weight > 0;";
         {
             int pop = (int)Math.Round(NextGaussian(20, 12) + skill * 0.35 + (wins - losses) * 0.8);
             return ClampInt(pop, 0, 100);
+        }
+
+        private int GenerateNewcomerPopularity(int skill, int wins, int losses)
+        {
+            int pop = (int)Math.Round(NextGaussian(6, 5) + skill * 0.12 + wins * 0.7 - losses * 0.3);
+            return ClampInt(pop, 0, 35);
         }
 
         // ---------------- Insert ----------------

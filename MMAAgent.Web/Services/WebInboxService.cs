@@ -81,6 +81,96 @@ public sealed class WebInboxService
         await _inboxRepository.DeleteReadAsync(agent.Id);
     }
 
+    public async Task DeleteFightOfferAsync(int offerId)
+    {
+        var agent = await _agentProfileRepository.GetAsync();
+        if (agent is null) return;
+
+        using var conn = _factory.CreateConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = @"
+DELETE FROM FightOffers
+WHERE Id = $offerId
+  AND EXISTS (
+      SELECT 1
+      FROM ManagedFighters mf
+      WHERE mf.FighterId = FightOffers.FighterId
+        AND mf.AgentId = $agentId
+        AND COALESCE(mf.IsActive, 1) = 1
+  );";
+        cmd.Parameters.AddWithValue("$offerId", offerId);
+        cmd.Parameters.AddWithValue("$agentId", agent.Id);
+
+        await cmd.ExecuteNonQueryAsync();
+    }
+
+    public async Task DeleteProcessedFightOffersAsync()
+    {
+        var agent = await _agentProfileRepository.GetAsync();
+        if (agent is null) return;
+
+        using var conn = _factory.CreateConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = @"
+DELETE FROM FightOffers
+WHERE Status <> 'Pending'
+  AND EXISTS (
+      SELECT 1
+      FROM ManagedFighters mf
+      WHERE mf.FighterId = FightOffers.FighterId
+        AND mf.AgentId = $agentId
+        AND COALESCE(mf.IsActive, 1) = 1
+  );";
+        cmd.Parameters.AddWithValue("$agentId", agent.Id);
+
+        await cmd.ExecuteNonQueryAsync();
+    }
+
+    public async Task DeleteContractOfferAsync(int contractOfferId)
+    {
+        var agent = await _agentProfileRepository.GetAsync();
+        if (agent is null) return;
+
+        using var conn = _factory.CreateConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = @"
+DELETE FROM ContractOffers
+WHERE Id = $offerId
+  AND EXISTS (
+      SELECT 1
+      FROM ManagedFighters mf
+      WHERE mf.FighterId = ContractOffers.FighterId
+        AND mf.AgentId = $agentId
+        AND COALESCE(mf.IsActive, 1) = 1
+  );";
+        cmd.Parameters.AddWithValue("$offerId", contractOfferId);
+        cmd.Parameters.AddWithValue("$agentId", agent.Id);
+
+        await cmd.ExecuteNonQueryAsync();
+    }
+
+    public async Task DeleteProcessedContractOffersAsync()
+    {
+        var agent = await _agentProfileRepository.GetAsync();
+        if (agent is null) return;
+
+        using var conn = _factory.CreateConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = @"
+DELETE FROM ContractOffers
+WHERE Status <> 'Pending'
+  AND EXISTS (
+      SELECT 1
+      FROM ManagedFighters mf
+      WHERE mf.FighterId = ContractOffers.FighterId
+        AND mf.AgentId = $agentId
+        AND COALESCE(mf.IsActive, 1) = 1
+  );";
+        cmd.Parameters.AddWithValue("$agentId", agent.Id);
+
+        await cmd.ExecuteNonQueryAsync();
+    }
+
     private async Task<IReadOnlyList<FightOfferVm>> LoadFightOffersAsync(int agentId)
     {
         var list = new List<FightOfferVm>();
@@ -101,7 +191,7 @@ SELECT fo.Id,
        COALESCE(fo.IsTitleFight, 0) AS IsTitleFight,
        fo.Status
 FROM FightOffers fo
-JOIN ManagedFighters mf ON mf.FighterId = fo.FighterId AND mf.AgentId = $agentId
+JOIN ManagedFighters mf ON mf.FighterId = fo.FighterId AND mf.AgentId = $agentId AND COALESCE(mf.IsActive, 1) = 1
 JOIN Fighters f ON f.Id = fo.FighterId
 JOIN Fighters o ON o.Id = fo.OpponentFighterId
 LEFT JOIN Promotions p ON p.Id = fo.PromotionId
@@ -152,7 +242,7 @@ SELECT co.Id,
        co.SourceType,
        co.Notes
 FROM ContractOffers co
-JOIN ManagedFighters mf ON mf.FighterId = co.FighterId AND mf.AgentId = $agentId
+JOIN ManagedFighters mf ON mf.FighterId = co.FighterId AND mf.AgentId = $agentId AND COALESCE(mf.IsActive, 1) = 1
 JOIN Fighters f ON f.Id = co.FighterId
 LEFT JOIN Promotions p ON p.Id = co.PromotionId
 ORDER BY CASE WHEN co.Status = 'Pending' THEN 0 ELSE 1 END,

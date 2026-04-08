@@ -63,9 +63,10 @@ LEFT JOIN PromotionRankings pr
    AND pr.PromotionId = f.PromotionId
    AND pr.WeightClass = f.WeightClass
 LEFT JOIN Titles t
-    ON t.PromotionId = f.PromotionId
+   ON t.PromotionId = f.PromotionId
    AND t.WeightClass = f.WeightClass
 WHERE {string.Join(" AND ", filters)}
+  AND COALESCE(mf.IsActive, 1) = 1
 ORDER BY f.Popularity DESC, f.Skill DESC, f.Wins DESC;";
 
         var list = new List<ManagedFighterVm>();
@@ -104,6 +105,7 @@ FROM ManagedFighters mf
 JOIN Fighters f ON f.Id = mf.FighterId
 LEFT JOIN Promotions p ON p.Id = f.PromotionId
 WHERE mf.AgentId = (SELECT Id FROM AgentProfile ORDER BY Id LIMIT 1)
+  AND COALESCE(mf.IsActive, 1) = 1
 ORDER BY PromotionName;";
             using var r = await cmd.ExecuteReaderAsync();
             while (await r.ReadAsync())
@@ -118,6 +120,7 @@ SELECT DISTINCT f.WeightClass
 FROM ManagedFighters mf
 JOIN Fighters f ON f.Id = mf.FighterId
 WHERE mf.AgentId = (SELECT Id FROM AgentProfile ORDER BY Id LIMIT 1)
+  AND COALESCE(mf.IsActive, 1) = 1
 ORDER BY f.WeightClass;";
             using var r = await cmd.ExecuteReaderAsync();
             while (await r.ReadAsync())

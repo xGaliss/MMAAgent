@@ -72,7 +72,19 @@ else
             <div class="profile-meta-grid">
                 <div class="meta-box">
                     <div class="meta-label">Promotion</div>
-                    <div class="meta-value">@(_fighter.PromotionName ?? "Free Agent")</div>
+                    <div class="meta-value">
+                        @if (_fighter.PromotionId is int promotionId && !string.IsNullOrWhiteSpace(_fighter.PromotionName))
+                        {
+                            <a class="fighter-link profile-promotion-link"
+                               href="@($"/promotions/{promotionId}")">
+                                @_fighter.PromotionName
+                            </a>
+                        }
+                        else
+                        {
+                            @(_fighter.PromotionName ?? "Free Agent")
+                        }
+                    </div>
                 </div>
                 <div class="meta-box">
                     <div class="meta-label">Rank</div>

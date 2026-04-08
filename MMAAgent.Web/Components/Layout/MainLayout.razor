@@ -1,9 +1,12 @@
-﻿@inherits LayoutComponentBase
+@inherits LayoutComponentBase
+@implements IDisposable
 @using MMAAgent.Application.Abstractions
 @using MMAAgent.Domain.Common
+@using MMAAgent.Web.Services
 
 @inject IGameStateRepository GameStateRepository
 @inject IWeeklyWorldUpdateService WeeklyWorldUpdateService
+@inject InboxStatusService InboxStatusService
 @inject NavigationManager Navigation
 
 <div class="app-shell">
@@ -29,12 +32,19 @@
             <NavLink href="/roster" class="nav-item"><span class="nav-icon">🥊</span><span>Roster</span></NavLink>
             <NavLink href="/promotions" class="nav-item"><span class="nav-icon">🏆</span><span>Promotions</span></NavLink>
             <NavLink href="/events" class="nav-item"><span class="nav-icon">📅</span><span>Events</span></NavLink>
-            <NavLink href="/inbox" class="nav-item"><span class="nav-icon">📨</span><span>Inbox</span></NavLink>
+            <NavLink href="/inbox" class="nav-item nav-item-with-badge">
+                <span class="nav-icon">📨</span>
+                <div class="nav-copy">
+                    <span>Inbox</span>
+                    @if (InboxStatusService.HasAttention)
+                    {
+                        <span class="nav-item-badge" title="New inbox activity">@FormatAttentionCount(InboxStatusService.AttentionCount)</span>
+                    }
+                </div>
+            </NavLink>
             <NavLink href="/agent" class="nav-item"><span class="nav-icon">🕴️</span><span>Agent</span></NavLink>
             <NavLink href="/" class="nav-item"><span class="nav-icon">🎮</span><span>Main Menu</span></NavLink>
         </nav>
-
-        
     </aside>
 
     <div class="main-area">
@@ -92,6 +102,8 @@
 
     protected override async Task OnInitializedAsync()
     {
+        InboxStatusService.Changed += HandleInboxStatusChanged;
+        await InboxStatusService.EnsureStartedAsync();
         await LoadGameStateAsync();
     }
 
@@ -121,6 +133,7 @@
 
             var summary = await WeeklyWorldUpdateService.AdvanceWeekAsync();
             await LoadGameStateAsync();
+            await InboxStatusService.RefreshAsync();
 
             _layoutStatus = $"Week advanced. New fight offers: {summary.NewFightOffers}. New messages: {summary.NewInboxMessages}.";
 
@@ -140,5 +153,18 @@
     private void OpenInbox()
     {
         Navigation.NavigateTo("/inbox");
+    }
+
+    private void HandleInboxStatusChanged()
+    {
+        _ = InvokeAsync(StateHasChanged);
+    }
+
+    private static string FormatAttentionCount(int count)
+        => count > 99 ? "99+" : count.ToString();
+
+    public void Dispose()
+    {
+        InboxStatusService.Changed -= HandleInboxStatusChanged;
     }
 }

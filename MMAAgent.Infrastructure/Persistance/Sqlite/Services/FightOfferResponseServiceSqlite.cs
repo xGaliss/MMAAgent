@@ -245,10 +245,11 @@ LIMIT 1;";
     {
         var promotion = await LoadPromotionSnapshotAsync(conn, tx, promotionId, cancellationToken);
         var currentAbsoluteWeek = ToAbsoluteWeek(currentYear, currentWeek);
-
-        var targetAbsoluteWeek = promotion?.NextEventWeek > currentAbsoluteWeek
-            ? promotion.NextEventWeek
-            : currentAbsoluteWeek + Math.Max(1, weeksUntilFight);
+        var targetAbsoluteWeek = ResolveScheduledEventWeek(
+            currentAbsoluteWeek,
+            weeksUntilFight,
+            promotion?.NextEventWeek ?? 0,
+            promotion?.EventIntervalWeeks ?? 1);
 
         var promoName = promotion?.Name ?? $"Promotion {promotionId}";
         var targetEventName = BuildEventName(promoName, targetAbsoluteWeek);
@@ -297,6 +298,7 @@ VALUES ($p, $d, $n, $l);";
         cmd.Transaction = tx;
         cmd.CommandText = @"
 SELECT Name, COALESCE(NextEventWeek, 0) AS NextEventWeek
+     , COALESCE(EventIntervalWeeks, 1) AS EventIntervalWeeks
 FROM Promotions
 WHERE Id = $id
 LIMIT 1;";
@@ -308,7 +310,8 @@ LIMIT 1;";
 
         return new PromotionSnapshot(
             r["Name"]?.ToString() ?? $"Promotion {promotionId}",
-            Convert.ToInt32(r["NextEventWeek"]));
+            Convert.ToInt32(r["NextEventWeek"]),
+            Convert.ToInt32(r["EventIntervalWeeks"]));
     }
 
     private static string ResolveEventDate(string currentDate, int currentAbsoluteWeek, int targetAbsoluteWeek)
@@ -325,6 +328,24 @@ LIMIT 1;";
     private static string BuildEventName(string promotionName, int absoluteWeek)
         => $"{promotionName} Week {absoluteWeek}";
 
+    private static int ResolveScheduledEventWeek(
+        int currentAbsoluteWeek,
+        int weeksUntilFight,
+        int nextEventWeek,
+        int eventIntervalWeeks)
+    {
+        var desiredWeek = currentAbsoluteWeek + Math.Max(1, weeksUntilFight);
+        var intervalWeeks = Math.Max(1, eventIntervalWeeks);
+        var resolvedWeek = nextEventWeek > currentAbsoluteWeek
+            ? nextEventWeek
+            : currentAbsoluteWeek + intervalWeeks;
+
+        while (resolvedWeek < desiredWeek)
+            resolvedWeek += intervalWeeks;
+
+        return resolvedWeek;
+    }
+
     private static int ToAbsoluteWeek(int year, int week)
         => Math.Max(0, (year - 1) * 52 + (week - 1));
 
@@ -340,5 +361,6 @@ LIMIT 1;";
 
     private sealed record PromotionSnapshot(
         string Name,
-        int NextEventWeek);
+        int NextEventWeek,
+        int EventIntervalWeeks);
 }

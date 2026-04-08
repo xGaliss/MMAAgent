@@ -1,5 +1,6 @@
 ﻿@page "/inbox"
 @rendermode InteractiveServer
+@implements IDisposable
 @using MMAAgent.Web.Models
 @using MMAAgent.Web.Services
 @using MMAAgent.Application.Abstractions
@@ -7,6 +8,7 @@
 @inject IFightOfferResponseService FightOfferResponseService
 @inject IContractOfferResponseService ContractOfferResponseService
 @inject WebInboxService InboxService
+@inject InboxStatusService InboxStatusService
 
 <PageTitle>Inbox - MMA Agent</PageTitle>
 
@@ -149,8 +151,18 @@ else
 
         <section class="panel-card">
             <div class="table-toolbar">
-                <div class="toolbar-title">Fight Offers</div>
-                <div class="toolbar-subtitle">@_fightOffers.Count loaded</div>
+                <div>
+                    <div class="toolbar-title">Fight Offers</div>
+                    <div class="toolbar-subtitle">@_fightOffers.Count loaded</div>
+                </div>
+
+                <div class="button-row">
+                    <button class="btn-secondary"
+                            disabled="@(_busy || _fightOffers.All(x => IsPending(x.Status)))"
+                            @onclick="DeleteProcessedFightOffersAsync">
+                        Delete processed
+                    </button>
+                </div>
             </div>
 
             @if (_fightOffers.Count == 0)
@@ -183,6 +195,12 @@ else
                                 </button>
 
                                 <a class="btn-secondary" href="@($"/fighters/{offer.FighterId}")">Open fighter</a>
+
+                                <button class="btn-secondary"
+                                        disabled="@_busy"
+                                        @onclick="() => DeleteFightOfferAsync(offer.OfferId)">
+                                    Delete
+                                </button>
                             </div>
                         </div>
                     }
@@ -194,8 +212,18 @@ else
     <div class="inbox-layout" style="margin-top:20px;">
         <section class="panel-card">
             <div class="table-toolbar">
-                <div class="toolbar-title">Contract Offers</div>
-                <div class="toolbar-subtitle">@_contractOffers.Count loaded</div>
+                <div>
+                    <div class="toolbar-title">Contract Offers</div>
+                    <div class="toolbar-subtitle">@_contractOffers.Count loaded</div>
+                </div>
+
+                <div class="button-row">
+                    <button class="btn-secondary"
+                            disabled="@(_busy || _contractOffers.All(x => IsPending(x.Status)))"
+                            @onclick="DeleteProcessedContractOffersAsync">
+                        Delete processed
+                    </button>
+                </div>
             </div>
 
             @if (_contractOffers.Count == 0)
@@ -233,6 +261,12 @@ else
                                 </button>
 
                                 <a class="btn-secondary" href="@($"/fighters/{offer.FighterId}")">Open fighter</a>
+
+                                <button class="btn-secondary"
+                                        disabled="@_busy"
+                                        @onclick="() => DeleteContractOfferAsync(offer.Id)">
+                                    Delete
+                                </button>
                             </div>
                         </div>
                     }
@@ -310,6 +344,8 @@ else
 
     protected override async Task OnInitializedAsync()
     {
+        InboxStatusService.Changed += HandleInboxStatusChanged;
+        await InboxStatusService.EnsureStartedAsync();
         await ReloadAsync();
     }
 
@@ -347,6 +383,8 @@ else
             {
                 SelectedMessage = _messages.FirstOrDefault();
             }
+
+            await InboxStatusService.RefreshAsync();
         }
         catch (Exception ex)
         {
@@ -595,6 +633,48 @@ else
         }
     }
 
+    private async Task DeleteFightOfferAsync(int offerId)
+    {
+        try
+        {
+            _busy = true;
+            _error = null;
+
+            await InboxService.DeleteFightOfferAsync(offerId);
+            _status = "Fight offer deleted.";
+            await ReloadAsync();
+        }
+        catch (Exception ex)
+        {
+            _error = ex.ToString();
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task DeleteProcessedFightOffersAsync()
+    {
+        try
+        {
+            _busy = true;
+            _error = null;
+
+            await InboxService.DeleteProcessedFightOffersAsync();
+            _status = "Processed fight offers deleted.";
+            await ReloadAsync();
+        }
+        catch (Exception ex)
+        {
+            _error = ex.ToString();
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
     private async Task AcceptContractOfferAsync(int contractOfferId)
     {
         try
@@ -649,6 +729,61 @@ else
         }
     }
 
+    private async Task DeleteContractOfferAsync(int contractOfferId)
+    {
+        try
+        {
+            _busy = true;
+            _error = null;
+
+            await InboxService.DeleteContractOfferAsync(contractOfferId);
+            _status = "Contract offer deleted.";
+            await ReloadAsync();
+        }
+        catch (Exception ex)
+        {
+            _error = ex.ToString();
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task DeleteProcessedContractOffersAsync()
+    {
+        try
+        {
+            _busy = true;
+            _error = null;
+
+            await InboxService.DeleteProcessedContractOffersAsync();
+            _status = "Processed contract offers deleted.";
+            await ReloadAsync();
+        }
+        catch (Exception ex)
+        {
+            _error = ex.ToString();
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
     private static bool IsPending(string? status)
         => string.Equals(status, "Pending", StringComparison.OrdinalIgnoreCase);
+
+    private void HandleInboxStatusChanged()
+    {
+        if (_busy || _loading)
+            return;
+
+        _ = InvokeAsync(ReloadAsync);
+    }
+
+    public void Dispose()
+    {
+        InboxStatusService.Changed -= HandleInboxStatusChanged;
+    }
 }

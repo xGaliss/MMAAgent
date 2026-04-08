@@ -92,6 +92,7 @@ FROM FightOffers fo
 INNER JOIN ManagedFighters mf
     ON mf.FighterId = fo.FighterId
 WHERE mf.AgentId = $agentId
+  AND COALESCE(mf.IsActive, 1) = 1
 ORDER BY fo.Id DESC;
 ";
 

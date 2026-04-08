@@ -52,7 +52,7 @@ public sealed class WebDashboardStatsService
             cmd.CommandText = @"
 SELECT COUNT(*)
 FROM FightOffers fo
-JOIN ManagedFighters mf ON mf.FighterId = fo.FighterId AND mf.AgentId = $agentId
+JOIN ManagedFighters mf ON mf.FighterId = fo.FighterId AND mf.AgentId = $agentId AND COALESCE(mf.IsActive, 1) = 1
 WHERE fo.Status = 'Pending';";
             cmd.Parameters.AddWithValue("$agentId", agent.Id);
             vm.PendingFightOffers = Convert.ToInt32(await cmd.ExecuteScalarAsync());

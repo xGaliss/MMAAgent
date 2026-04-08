@@ -86,12 +86,13 @@ else
                 <div class="button-row" style="margin-top:14px;">
                     <a class="btn-secondary" href="@($"/fighters/{item.FighterId}")">View profile</a>
                     <button class="btn-secondary" @onclick="() => ReleaseAsync(item.FighterId)">Release</button>
-                    <button class="btn-secondary" @onclick="() => NegotiateAsync(item.FighterId)">Negotiate contract</button>
-                    <button class="btn-secondary" @onclick="() => SetAvailabilityAsync(item.FighterId)">Set availability</button>
-                    <button class="btn-secondary" @onclick="() => SeekFightAsync(item.FighterId)">Seek fight</button>
+                    <a class="btn-secondary" href="/inbox">Open inbox</a>
                 </div>
                 <div class="muted-text" style="margin-top:10px;">
                     Fights remaining: @item.ContractFightsRemaining / @item.TotalFightsInContract
+                </div>
+                <div class="muted-text" style="margin-top:6px;">
+                    Fight offers and contract decisions are handled through the weekly inbox flow.
                 </div>
             </article>
         }
@@ -145,24 +146,6 @@ else
     private async Task ReleaseAsync(int fighterId)
     {
         await FighterActionService.ReleaseFighterAsync(fighterId);
-        await LoadAsync();
-    }
-
-    private async Task NegotiateAsync(int fighterId)
-    {
-        await FighterActionService.NegotiateContractAsync(fighterId);
-        await LoadAsync();
-    }
-
-    private async Task SetAvailabilityAsync(int fighterId)
-    {
-        await FighterActionService.SetAvailabilityAsync(fighterId, 0);
-        await LoadAsync();
-    }
-
-    private async Task SeekFightAsync(int fighterId)
-    {
-        await FighterActionService.SeekFightAsync(fighterId);
         await LoadAsync();
     }
 

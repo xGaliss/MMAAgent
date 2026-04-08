@@ -1,5 +1,6 @@
 ﻿@page "/dashboard"
 @rendermode InteractiveServer
+@implements IDisposable
 @using MMAAgent.Application
 @using MMAAgent.Application.Abstractions
 @using MMAAgent.Domain.Common
@@ -11,6 +12,7 @@
 @inject WebDashboardStatsService DashboardStatsService
 @inject WebDashboardFeedService DashboardFeedService
 @inject WebWeeklySummaryService WeeklySummaryService
+@inject InboxStatusService InboxStatusService
 
 <PageTitle>Dashboard - MMA Agent</PageTitle>
 
@@ -198,15 +200,13 @@ else
     <div class="panel-card" style="margin-top:20px;">
         <div class="table-toolbar">
             <div class="toolbar-title">Last Week Summary</div>
-            <div class="toolbar-subtitle">Week @_summary.CurrentWeek · @_summary.CurrentDate</div>
+            <div class="toolbar-subtitle">Week @_summary.NewWeek · @_summary.NewDate</div>
         </div>
 
         <div class="summary-grid">
-            <div class="summary-row"><strong>Year:</strong> @_summary.CurrentYear</div>
-            <div class="summary-row"><strong>Simulated events:</strong> @_summary.SimulatedEvents</div>
-            <div class="summary-row"><strong>New fight offers:</strong> @_summary.NewFightOffers</div>
-            <div class="summary-row"><strong>New inbox messages:</strong> @_summary.NewInboxMessages</div>
-            <div class="summary-row"><strong>Ranking changes:</strong> @_summary.RankingChanges</div>
+            <div class="summary-row"><strong>Year:</strong> @_summary.NewYear</div>
+            <div class="summary-row"><strong>Recent events loaded:</strong> @_summary.RecentEventsLoaded</div>
+            <div class="summary-row"><strong>New inbox messages:</strong> @_summary.NewMessages</div>
             <div class="summary-row"><strong>Headline:</strong> @(_summary.Headline ?? "-")</div>
         </div>
     </div>
@@ -229,7 +229,7 @@ else
     private string? _error;
     private string? _status;
 
-    private WeeklyWorldUpdateSummary? _summary;
+    private WeeklyAdvanceSummaryVm? _summary;
 
     private List<string> _latestEvents = new();
     private List<string> _recentMessages = new();
@@ -240,6 +240,8 @@ else
 
     protected override async Task OnInitializedAsync()
     {
+        InboxStatusService.Changed += HandleInboxStatusChanged;
+        await InboxStatusService.EnsureStartedAsync();
         await ReloadAsync();
     }
 
@@ -266,6 +268,7 @@ else
             _managedChampions = feed.Champions.ToList();
             _pendingFightOfferItems = feed.PendingFightOfferItems?.ToList() ?? new();
             _pendingContractOfferItems = feed.PendingContractOfferItems?.ToList() ?? new();
+            _summary = await WeeklySummaryService.BuildAsync();
         }
         catch (Exception ex)
         {
@@ -276,5 +279,18 @@ else
             _loading = false;
             await InvokeAsync(StateHasChanged);
         }
+    }
+
+    private void HandleInboxStatusChanged()
+    {
+        if (_loading)
+            return;
+
+        _ = InvokeAsync(ReloadAsync);
+    }
+
+    public void Dispose()
+    {
+        InboxStatusService.Changed -= HandleInboxStatusChanged;
     }
 }

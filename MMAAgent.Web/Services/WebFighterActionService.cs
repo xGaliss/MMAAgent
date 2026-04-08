@@ -20,13 +20,4 @@ public sealed class WebFighterActionService
 
     public Task ReleaseFighterAsync(int fighterId, CancellationToken cancellationToken = default)
         => _bridge.ReleaseFighterAsync(fighterId, cancellationToken);
-
-    public Task SetAvailabilityAsync(int fighterId, int availableFromWeek, CancellationToken cancellationToken = default)
-        => _bridge.SetAvailabilityAsync(fighterId, availableFromWeek, cancellationToken);
-
-    public Task SeekFightAsync(int fighterId, CancellationToken cancellationToken = default)
-        => _bridge.ClearBookedStateAsync(fighterId, cancellationToken);
-
-    public Task NegotiateContractAsync(int fighterId, CancellationToken cancellationToken = default)
-        => _bridge.ExtendContractAsync(fighterId, cancellationToken);
 }

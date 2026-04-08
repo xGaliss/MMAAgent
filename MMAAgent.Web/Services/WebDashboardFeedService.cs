@@ -47,6 +47,7 @@ SELECT (f.FirstName || ' ' || f.LastName || ' · ' || f.WeightClass)
 FROM ManagedFighters mf
 JOIN Fighters f ON f.Id = mf.FighterId
 WHERE mf.AgentId = $agentId
+  AND COALESCE(mf.IsActive, 1) = 1
 ORDER BY COALESCE(f.Popularity, 0) DESC, COALESCE(f.Skill, 0) DESC
 LIMIT 5;", agent.Id);
 
@@ -56,6 +57,7 @@ FROM ManagedFighters mf
 JOIN Fighters f ON f.Id = mf.FighterId
 LEFT JOIN Promotions p ON p.Id = f.PromotionId
 WHERE mf.AgentId = $agentId
+  AND COALESCE(mf.IsActive, 1) = 1
   AND COALESCE(f.IsChampion, 0) = 1
 ORDER BY COALESCE(f.Popularity, 0) DESC
 LIMIT 5;", agent.Id);
@@ -63,7 +65,7 @@ LIMIT 5;", agent.Id);
         var pendingFightOffers = await LoadSimpleListAsync(conn, @"
 SELECT ((f.FirstName || ' ' || f.LastName) || ' vs ' || (o.FirstName || ' ' || o.LastName))
 FROM FightOffers fo
-JOIN ManagedFighters mf ON mf.FighterId = fo.FighterId AND mf.AgentId = $agentId
+JOIN ManagedFighters mf ON mf.FighterId = fo.FighterId AND mf.AgentId = $agentId AND COALESCE(mf.IsActive, 1) = 1
 JOIN Fighters f ON f.Id = fo.FighterId
 JOIN Fighters o ON o.Id = fo.OpponentFighterId
 WHERE fo.Status = 'Pending'
@@ -73,7 +75,7 @@ LIMIT 5;", agent.Id);
         var pendingContractOffers = await LoadSimpleListAsync(conn, @"
 SELECT ((f.FirstName || ' ' || f.LastName) || ' · ' || COALESCE(p.Name, 'Promotion'))
 FROM ContractOffers co
-JOIN ManagedFighters mf ON mf.FighterId = co.FighterId AND mf.AgentId = $agentId
+JOIN ManagedFighters mf ON mf.FighterId = co.FighterId AND mf.AgentId = $agentId AND COALESCE(mf.IsActive, 1) = 1
 JOIN Fighters f ON f.Id = co.FighterId
 LEFT JOIN Promotions p ON p.Id = co.PromotionId
 WHERE co.Status = 'Pending'

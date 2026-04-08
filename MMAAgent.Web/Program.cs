@@ -71,6 +71,7 @@ builder.Services.AddScoped<WebMyFightersService>();
 builder.Services.AddScoped<WebMainMenuService>();
 builder.Services.AddScoped<WebDashboardFeedService>();
 builder.Services.AddScoped<WebWeeklySummaryService>();
+builder.Services.AddScoped<InboxStatusService>();
 builder.Services.AddScoped<FightProfileReadService>();
 builder.Services.AddScoped<IFighterSigningService, FighterSigningServiceSqlite>();
 builder.Services.AddScoped<IFightOfferGenerationService, FightOfferGenerationServiceSqlite>();

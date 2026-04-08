@@ -109,7 +109,11 @@ VALUES
     {
         using var cmd = conn.CreateCommand();
         cmd.Transaction = tx;
-        cmd.CommandText = "SELECT COUNT(*) FROM ManagedFighters WHERE FighterId = $fighterId;";
+        cmd.CommandText = @"
+SELECT COUNT(*)
+FROM ManagedFighters
+WHERE FighterId = $fighterId
+  AND COALESCE(IsActive, 1) = 1;";
         cmd.Parameters.AddWithValue("$fighterId", fighterId);
         return Convert.ToInt32(await cmd.ExecuteScalarAsync(cancellationToken)) > 0;
     }

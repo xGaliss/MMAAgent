@@ -145,6 +145,7 @@ SELECT
 FROM ContractOffers co
 INNER JOIN ManagedFighters mf ON mf.FighterId = co.FighterId
 WHERE mf.AgentId = $agentId
+  AND COALESCE(mf.IsActive, 1) = 1
   AND ($pendingOnly = 0 OR co.Status = 'Pending')
 ORDER BY co.Id DESC;";
             cmd.Parameters.AddWithValue("$agentId", agentId);
@@ -221,6 +222,7 @@ SELECT COUNT(*)
 FROM ContractOffers co
 INNER JOIN ManagedFighters mf ON mf.FighterId = co.FighterId
 WHERE mf.AgentId = $agentId
+  AND COALESCE(mf.IsActive, 1) = 1
   AND co.Status = 'Pending';";
             cmd.Parameters.AddWithValue("$agentId", agentId);
 
