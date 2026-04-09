@@ -56,6 +56,9 @@ builder.Services.AddScoped<IWeeklySimulationService, WeeklySimulationService>();
 builder.Services.AddScoped<GameTimeService>();
 
 builder.Services.AddScoped<DbBootstrap>();
+builder.Services.AddScoped<CareerSchemaPreparationService>();
+builder.Services.AddScoped<IFighterWorldService, FighterWorldServiceSqlite>();
+builder.Services.AddScoped<IWorldAgendaService, WorldAgendaServiceSqlite>();
 builder.Services.AddScoped<WorldFighterGeneratorSqlite>();
 builder.Services.AddScoped<InitialSigningPassSqlite>();
 builder.Services.AddScoped<BuildInitialRankingsSqlite>();
@@ -64,6 +67,7 @@ builder.Services.AddScoped<PromotionScheduleSeeder>();
 builder.Services.AddScoped<WebGameSessionService>();
 builder.Services.AddScoped<WebInboxService>();
 builder.Services.AddScoped<WebAgentProfileService>();
+builder.Services.AddScoped<WebTimeAdvanceService>();
 builder.Services.AddScoped<WebDashboardStatsService>();
 builder.Services.AddScoped<WebRosterService>();
 builder.Services.AddScoped<WebPromotionProfileService>();

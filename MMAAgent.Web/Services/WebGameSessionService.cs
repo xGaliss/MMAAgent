@@ -15,6 +15,9 @@ public sealed class WebGameSessionService
     private readonly IGameStateRepository _gameStateRepo;
     private readonly IAgentProfileRepository _agentProfileRepository;
     private readonly DbBootstrap _bootstrap;
+    private readonly CareerSchemaPreparationService _careerSchemaPreparation;
+    private readonly IFighterWorldService _fighterWorldService;
+    private readonly IWorldAgendaService _worldAgendaService;
     private readonly WorldFighterGeneratorSqlite _worldGen;
     private readonly InitialSigningPassSqlite _initialSigning;
     private readonly BuildInitialRankingsSqlite _rankings;
@@ -26,6 +29,9 @@ public sealed class WebGameSessionService
         IGameStateRepository gameStateRepo,
         IAgentProfileRepository agentProfileRepository,
         DbBootstrap bootstrap,
+        CareerSchemaPreparationService careerSchemaPreparation,
+        IFighterWorldService fighterWorldService,
+        IWorldAgendaService worldAgendaService,
         WorldFighterGeneratorSqlite worldGen,
         InitialSigningPassSqlite initialSigning,
         BuildInitialRankingsSqlite rankings,
@@ -36,6 +42,9 @@ public sealed class WebGameSessionService
         _gameStateRepo = gameStateRepo;
         _agentProfileRepository = agentProfileRepository;
         _bootstrap = bootstrap;
+        _careerSchemaPreparation = careerSchemaPreparation;
+        _fighterWorldService = fighterWorldService;
+        _worldAgendaService = worldAgendaService;
         _worldGen = worldGen;
         _initialSigning = initialSigning;
         _rankings = rankings;
@@ -63,7 +72,7 @@ public sealed class WebGameSessionService
         return true;
     }
 
-    public Task LoadByPathAsync(string path)
+    public async Task LoadByPathAsync(string path)
     {
         if (string.IsNullOrWhiteSpace(path))
             throw new InvalidOperationException("Debes indicar una ruta de save.");
@@ -72,8 +81,10 @@ public sealed class WebGameSessionService
             throw new FileNotFoundException("No se encontró la save DB.", path);
 
         _savePathProvider.Set(path);
+        await _careerSchemaPreparation.PrepareAsync();
+        await _fighterWorldService.SynchronizeAsync();
+        await _worldAgendaService.SynchronizeAsync();
         SaveLastPath(path);
-        return Task.CompletedTask;
     }
 
     public async Task<string> CreateNewGameAsync(string? saveName, string agentName, string agencyName, int fighterCount)
@@ -95,6 +106,7 @@ public sealed class WebGameSessionService
 
         var savePath = _bootstrap.CreateNewSaveFromTemplate(templateDbPath, saveName);
         _savePathProvider.Set(savePath);
+        await _careerSchemaPreparation.PrepareAsync();
 
         var seed = Random.Shared.Next(1, int.MaxValue);
         var startDate = new DateTime(2026, 1, 1);
@@ -116,6 +128,8 @@ public sealed class WebGameSessionService
 
         _rankings.SetSeed(realSeed);
         await _rankings.RunAsync();
+        await _fighterWorldService.SynchronizeAsync();
+        await _worldAgendaService.SynchronizeAsync();
 
         await _agentProfileRepository.CreateAsync(new AgentProfile
         {

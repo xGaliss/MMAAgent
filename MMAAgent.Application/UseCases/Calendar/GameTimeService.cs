@@ -1,5 +1,4 @@
 ﻿using MMAAgent.Application.Abstractions;
-using MMAAgent.Application.Simulation;
 using MMAAgent.Domain.Common;
 using System.Globalization;
 
@@ -8,12 +7,10 @@ namespace MMAAgent.Application
     public sealed class GameTimeService
     {
         private readonly IGameStateRepository _repo;
-        private readonly IWeeklySimulationService _weekly;
 
-        public GameTimeService(IGameStateRepository repo, IWeeklySimulationService weekly)
+        public GameTimeService(IGameStateRepository repo)
         {
             _repo = repo;
-            _weekly = weekly;
         }
 
         public Task<GameState?> GetAsync() => _repo.GetAsync();
@@ -23,34 +20,42 @@ namespace MMAAgent.Application
             if (weeks <= 0)
                 throw new ArgumentOutOfRangeException(nameof(weeks));
 
+            return await AdvanceDaysAsync(weeks * 7);
+        }
+
+        public async Task<GameState> AdvanceDaysAsync(int days)
+        {
+            if (days <= 0)
+                throw new ArgumentOutOfRangeException(nameof(days));
+
             var state = await _repo.GetAsync()
                         ?? throw new InvalidOperationException("GameState no existe (Id=1).");
 
-            // Parse CurrentDate (TEXT "yyyy-MM-dd")
-            var date = DateTime.ParseExact(state.CurrentDate, "yyyy-MM-dd", CultureInfo.InvariantCulture);
+            var currentDate = ParseDate(state.CurrentDate);
+            var startDate = ParseDate(string.IsNullOrWhiteSpace(state.StartDate) ? state.CurrentDate : state.StartDate);
+            var newDate = currentDate.AddDays(days);
 
-            for (int i = 0; i < weeks; i++)
-            {
-                // Avanzar 7 días
-                date = date.AddDays(7);
-                state.CurrentDate = date.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+            state.CurrentDate = newDate.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
 
-                // Semana / año
-                state.CurrentWeek += 1;
-                if (state.CurrentWeek > 52)
-                {
-                    state.CurrentWeek = 1;
-                    state.CurrentYear += 1;
-                    // aquí luego: AgeUpFighters(), seasonal reset...
-                }
+            var totalDaysSinceStart = Math.Max(0, (int)(newDate.Date - startDate.Date).TotalDays);
+            var zeroBasedWeekIndex = totalDaysSinceStart / 7;
 
-                // ✅ Hook semanal (aquí pasa “el juego”)
-                await _weekly.RunWeekAsync(state);
-            }
+            state.CurrentYear = (zeroBasedWeekIndex / 52) + 1;
+            state.CurrentWeek = (zeroBasedWeekIndex % 52) + 1;
 
-            // Persistir estado final
             await _repo.UpdateAsync(state);
             return state;
+        }
+
+        private static DateTime ParseDate(string value)
+        {
+            if (DateTime.TryParseExact(value, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var parsed))
+                return parsed.Date;
+
+            if (DateTime.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.None, out parsed))
+                return parsed.Date;
+
+            return DateTime.UtcNow.Date;
         }
     }
 }

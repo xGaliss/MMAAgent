@@ -2,6 +2,7 @@
 using MMAAgent.Application.Abstractions;
 using MMAAgent.Infrastructure.Persistence.Sqlite;
 using MMAAgent.Web.Models;
+using System.Linq;
 
 namespace MMAAgent.Web.Services;
 
@@ -45,9 +46,14 @@ SELECT
     f.Wins,
     f.Losses,
     f.Draws,
+    f.KOWins,
+    f.SubWins,
+    f.DecWins,
     f.Skill,
     f.Potential,
     f.Popularity,
+    COALESCE(f.Marketability, 50) AS Marketability,
+    COALESCE(f.Momentum, 50) AS Momentum,
     f.Striking,
     f.Grappling,
     f.Wrestling,
@@ -60,11 +66,97 @@ SELECT
     f.Salary,
     f.ContractFightsRemaining,
     f.TotalFightsInContract,
+    COALESCE(f.IsBooked, 0) AS IsBooked,
+    COALESCE(f.WeeksUntilAvailable, 0) AS WeeksUntilAvailable,
+    COALESCE(f.InjuryWeeksRemaining, 0) AS InjuryWeeksRemaining,
+    COALESCE(f.MedicalSuspensionWeeksRemaining, 0) AS MedicalSuspensionWeeksRemaining,
     COALESCE(pr.RankPosition, 0) AS RankPosition,
-    CASE WHEN t.ChampionFighterId = f.Id THEN 1 ELSE 0 END AS IsChampion
+    CASE WHEN t.ChampionFighterId = f.Id THEN 1 ELSE 0 END AS IsChampion,
+    (
+        SELECT op.FirstName || ' ' || op.LastName
+        FROM Fights sf
+        JOIN Fighters op ON op.Id = CASE WHEN sf.FighterAId = f.Id THEN sf.FighterBId ELSE sf.FighterAId END
+        WHERE sf.Method = 'Scheduled'
+          AND (sf.FighterAId = f.Id OR sf.FighterBId = f.Id)
+          AND COALESCE(sf.EventDate, '9999-12-31') > COALESCE((SELECT CurrentDate FROM GameState LIMIT 1), '0001-01-01')
+        ORDER BY sf.EventDate, sf.Id
+        LIMIT 1
+    ) AS ScheduledOpponentName,
+    (
+        SELECT e.Name
+        FROM Fights sf
+        LEFT JOIN Events e ON e.Id = sf.EventId
+        WHERE sf.Method = 'Scheduled'
+          AND (sf.FighterAId = f.Id OR sf.FighterBId = f.Id)
+          AND COALESCE(sf.EventDate, '9999-12-31') > COALESCE((SELECT CurrentDate FROM GameState LIMIT 1), '0001-01-01')
+        ORDER BY sf.EventDate, sf.Id
+        LIMIT 1
+    ) AS ScheduledEventName,
+    (
+        SELECT sf.EventDate
+        FROM Fights sf
+        WHERE sf.Method = 'Scheduled'
+          AND (sf.FighterAId = f.Id OR sf.FighterBId = f.Id)
+          AND COALESCE(sf.EventDate, '9999-12-31') > COALESCE((SELECT CurrentDate FROM GameState LIMIT 1), '0001-01-01')
+        ORDER BY sf.EventDate, sf.Id
+        LIMIT 1
+    ) AS ScheduledEventDate,
+    (
+        SELECT COUNT(*)
+        FROM FightHistory fh
+        WHERE (fh.FighterAId = f.Id OR fh.FighterBId = f.Id)
+          AND COALESCE(fh.IsTitle, 0) = 1
+    ) AS TitleFightAppearances,
+    (
+        SELECT COUNT(*)
+        FROM FightHistory fh
+        WHERE (fh.FighterAId = f.Id OR fh.FighterBId = f.Id)
+          AND (
+              COALESCE(fh.CardSegment, '') = 'MainCard'
+              OR COALESCE(fh.IsMainEvent, 0) = 1
+              OR COALESCE(fh.IsCoMainEvent, 0) = 1
+          )
+    ) AS MainCardAppearances,
+    (
+        SELECT COUNT(*)
+        FROM FightHistory fh
+        WHERE (fh.FighterAId = f.Id OR fh.FighterBId = f.Id)
+          AND COALESCE(fh.IsMainEvent, 0) = 1
+    ) AS MainEventAppearances,
+    (
+        SELECT COUNT(*)
+        FROM FightHistory fh
+        WHERE (fh.FighterAId = f.Id OR fh.FighterBId = f.Id)
+          AND COALESCE(fh.IsCoMainEvent, 0) = 1
+    ) AS CoMainEventAppearances,
+    COALESCE(fs.BaseStyle, 'All-Rounder') AS BaseStyle,
+    COALESCE(fs.TacticalStyle, 'Measured') AS TacticalStyle,
+    COALESCE(fs.StyleSummary, '') AS StyleSummary,
+    COALESCE(st.Form, 50) AS Form,
+    COALESCE(st.Energy, 70) AS Energy,
+    COALESCE(st.Sharpness, 50) AS Sharpness,
+    COALESCE(st.Morale, 50) AS Morale,
+    COALESCE(st.CampQuality, 50) AS CampQuality,
+    COALESCE(st.WeightCutReadiness, 55) AS WeightCutReadiness,
+    COALESCE(st.InjuryRisk, 20) AS InjuryRisk,
+    COALESCE(st.CurrentPhase, 'Idle') AS CurrentPhase,
+    st.NextMilestoneType,
+    st.NextMilestoneDate,
+    (
+        SELECT group_concat(TraitCode, '|')
+        FROM (
+            SELECT ft.TraitCode
+            FROM FighterTraits ft
+            WHERE ft.FighterId = f.Id
+            ORDER BY ft.Intensity DESC, ft.TraitCode
+            LIMIT 4
+        )
+    ) AS TraitCodes
 FROM Fighters f
 LEFT JOIN Countries c ON c.Id = f.CountryId
 LEFT JOIN Promotions p ON p.Id = f.PromotionId
+LEFT JOIN FighterStyles fs ON fs.FighterId = f.Id
+LEFT JOIN FighterStates st ON st.FighterId = f.Id
 LEFT JOIN PromotionRankings pr
     ON pr.FighterId = f.Id
    AND pr.PromotionId = f.PromotionId
@@ -81,6 +173,13 @@ LIMIT 1;";
             return null;
 
         int rank = Convert.ToInt32(r["RankPosition"]);
+        int wins = Convert.ToInt32(r["Wins"]);
+        int koWins = Convert.ToInt32(r["KOWins"]);
+        int subWins = Convert.ToInt32(r["SubWins"]);
+        int decWins = Convert.ToInt32(r["DecWins"]);
+        double finishRate = wins > 0
+            ? Math.Round(((double)(koWins + subWins) / wins) * 100.0, 1)
+            : 0;
 
         return new FighterProfile(
             Id: Convert.ToInt32(r["Id"]),
@@ -88,12 +187,17 @@ LIMIT 1;";
             CountryName: r["CountryName"]?.ToString() ?? "",
             WeightClass: r["WeightClass"]?.ToString() ?? "",
             Age: Convert.ToInt32(r["Age"]),
-            Wins: Convert.ToInt32(r["Wins"]),
+            Wins: wins,
             Losses: Convert.ToInt32(r["Losses"]),
             Draws: Convert.ToInt32(r["Draws"]),
+            KOWins: koWins,
+            SubWins: subWins,
+            DecWins: decWins,
             Skill: Convert.ToInt32(r["Skill"]),
             Potential: Convert.ToInt32(r["Potential"]),
             Popularity: Convert.ToInt32(r["Popularity"]),
+            Marketability: Convert.ToInt32(r["Marketability"]),
+            Momentum: Convert.ToInt32(r["Momentum"]),
             Striking: Convert.ToInt32(r["Striking"]),
             Grappling: Convert.ToInt32(r["Grappling"]),
             Wrestling: Convert.ToInt32(r["Wrestling"]),
@@ -107,8 +211,45 @@ LIMIT 1;";
             ContractFightsRemaining: Convert.ToInt32(r["ContractFightsRemaining"]),
             TotalFightsInContract: Convert.ToInt32(r["TotalFightsInContract"]),
             RankPosition: rank > 0 ? rank : null,
-            IsChampion: Convert.ToInt32(r["IsChampion"]) == 1
+            IsChampion: Convert.ToInt32(r["IsChampion"]) == 1,
+            TitleFightAppearances: Convert.ToInt32(r["TitleFightAppearances"]),
+            MainCardAppearances: Convert.ToInt32(r["MainCardAppearances"]),
+            MainEventAppearances: Convert.ToInt32(r["MainEventAppearances"]),
+            CoMainEventAppearances: Convert.ToInt32(r["CoMainEventAppearances"]),
+            FinishRate: finishRate,
+            BaseStyle: r["BaseStyle"]?.ToString() ?? "All-Rounder",
+            TacticalStyle: r["TacticalStyle"]?.ToString() ?? "Measured",
+            StyleSummary: r["StyleSummary"]?.ToString() ?? "",
+            Traits: ParseTraits(r["TraitCodes"]?.ToString()),
+            Form: Convert.ToInt32(r["Form"]),
+            Energy: Convert.ToInt32(r["Energy"]),
+            Sharpness: Convert.ToInt32(r["Sharpness"]),
+            Morale: Convert.ToInt32(r["Morale"]),
+            CampQuality: Convert.ToInt32(r["CampQuality"]),
+            WeightCutReadiness: Convert.ToInt32(r["WeightCutReadiness"]),
+            InjuryRisk: Convert.ToInt32(r["InjuryRisk"]),
+            CurrentPhase: r["CurrentPhase"]?.ToString() ?? "Idle",
+            NextMilestoneType: r["NextMilestoneType"]?.ToString(),
+            NextMilestoneDate: r["NextMilestoneDate"]?.ToString(),
+            IsBooked: Convert.ToInt32(r["IsBooked"]) == 1,
+            WeeksUntilAvailable: Convert.ToInt32(r["WeeksUntilAvailable"]),
+            InjuryWeeksRemaining: Convert.ToInt32(r["InjuryWeeksRemaining"]),
+            MedicalSuspensionWeeksRemaining: Convert.ToInt32(r["MedicalSuspensionWeeksRemaining"]),
+            ScheduledOpponentName: r["ScheduledOpponentName"]?.ToString(),
+            ScheduledEventName: r["ScheduledEventName"]?.ToString(),
+            ScheduledEventDate: r["ScheduledEventDate"]?.ToString()
         );
+    }
+
+    private static IReadOnlyList<string> ParseTraits(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw))
+            return Array.Empty<string>();
+
+        return raw
+            .Split('|', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
     }
 
     private static async Task<IReadOnlyList<FightHistoryItem>> LoadHistoryAsync(SqliteConnection conn, SqliteTransaction tx, int id, int take)

@@ -188,7 +188,9 @@ SELECT fo.Id,
        fo.Purse,
        fo.WinBonus,
        fo.WeeksUntilFight,
+       COALESCE(fo.CampWeeksOffered, 0) AS CampWeeksOffered,
        COALESCE(fo.IsTitleFight, 0) AS IsTitleFight,
+       COALESCE(fo.IsShortNotice, 0) AS IsShortNotice,
        fo.Status
 FROM FightOffers fo
 JOIN ManagedFighters mf ON mf.FighterId = fo.FighterId AND mf.AgentId = $agentId AND COALESCE(mf.IsActive, 1) = 1
@@ -214,7 +216,9 @@ ORDER BY CASE WHEN fo.Status = 'Pending' THEN 0 ELSE 1 END,
                 Purse = Convert.ToInt32(reader["Purse"]),
                 WinBonus = Convert.ToInt32(reader["WinBonus"]),
                 WeeksUntilFight = Convert.ToInt32(reader["WeeksUntilFight"]),
+                CampWeeksOffered = Convert.ToInt32(reader["CampWeeksOffered"]),
                 IsTitleFight = Convert.ToInt32(reader["IsTitleFight"]) == 1,
+                IsShortNotice = Convert.ToInt32(reader["IsShortNotice"]) == 1,
                 Status = reader["Status"]?.ToString() ?? ""
             });
         }

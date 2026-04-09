@@ -10,6 +10,8 @@
         public int WinBonus { get; set; }
         public int WeeksUntilFight { get; set; }
         public bool IsTitleFight { get; set; }
+        public bool IsShortNotice { get; set; }
+        public int CampWeeksOffered { get; set; }
         public string Status { get; set; } = "";
     }
 }

@@ -36,6 +36,7 @@ else
                             @onclick="() => SelectEventAsync(ev)">
                         <div class="event-date">@ev.EventDate</div>
                         <div class="event-name">@ev.Name</div>
+                        <div class="muted-text">@ev.EventTier · @ev.CompletedFightCount/@ev.PlannedFightCount fights</div>
                     </button>
                 }
             </div>
@@ -60,6 +61,7 @@ else
                 <table class="fighters-table">
                     <thead>
                         <tr>
+                            <th>Slot</th>
                             <th>Weight Class</th>
                             <th>Matchup</th>
                             <th>Winner</th>
@@ -71,6 +73,7 @@ else
                         @foreach (var fight in _selectedFights)
                         {
                             <tr>
+                                <td>@fight.SlotLabel</td>
                                 <td>@fight.WeightClass</td>
                                 <td>@fight.Matchup</td>
                                 <td>@fight.Winner</td>
@@ -86,8 +89,8 @@ else
 }
 
 @code {
-    private sealed record EventVm(int Id, string EventDate, string Name);
-    private sealed record FightVm(string WeightClass, string Matchup, string Winner, string Method, bool IsTitle);
+    private sealed record EventVm(int Id, string EventDate, string Name, string EventTier, int PlannedFightCount, int CompletedFightCount);
+    private sealed record FightVm(string SlotLabel, string WeightClass, string Matchup, string Winner, string Method, bool IsTitle);
 
     private List<EventVm> _events = new();
     private List<FightVm> _selectedFights = new();
@@ -99,8 +102,8 @@ else
     {
         try
         {
-            var rows = await EventRepository.GetLastEventsAsync(20);
-            _events = rows.Select(x => new EventVm(x.Id, x.EventDate, x.Name)).ToList();
+            var rows = await EventRepository.GetLastEventsDetailedAsync(20);
+            _events = rows.Select(x => new EventVm(x.Id, x.EventDate, x.Name, x.EventTier, x.PlannedFightCount, x.CompletedFightCount)).ToList();
 
             if (_events.Count > 0)
             {
@@ -121,9 +124,17 @@ else
     {
         SelectedEvent = ev;
 
-        var fights = await EventRepository.GetFightsByEventAsync(ev.Id);
+        var fights = await EventRepository.GetFightsByEventDetailedAsync(ev.Id);
         _selectedFights = fights
-            .Select(x => new FightVm(x.WeightClass, x.Matchup, x.Winner, x.Method, x.IsTitle))
+            .Select(x => new FightVm(BuildSlotLabel(x.CardSegment, x.CardOrder, x.IsMainEvent, x.IsCoMainEvent), x.WeightClass, x.Matchup, x.Winner, x.Method, x.IsTitle))
             .ToList();
+    }
+
+    private static string BuildSlotLabel(string segment, int order, bool isMainEvent, bool isCoMainEvent)
+    {
+        if (isMainEvent) return "Main Event";
+        if (isCoMainEvent) return "Co-Main";
+        if (string.IsNullOrWhiteSpace(segment)) return $"Bout {order}";
+        return $"{segment} #{order}";
     }
 }

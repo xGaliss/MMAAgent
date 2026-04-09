@@ -17,6 +17,8 @@ public sealed class WeeklyWorldUpdateService : IWeeklyWorldUpdateService
     private readonly IContractLifecycleService _contractLifecycleService;
     private readonly InitialSigningPassSqlite _initialSigningPass;
     private readonly WorldFighterGeneratorSqlite _worldFighterGenerator;
+    private readonly IFighterWorldService _fighterWorldService;
+    private readonly IWorldAgendaService _worldAgendaService;
     private readonly IPromotionEventScheduleRepository _scheduleRepository;
     private readonly IEventSimulator _eventSimulator;
     private readonly SqliteConnectionFactory _factory;
@@ -27,6 +29,8 @@ public sealed class WeeklyWorldUpdateService : IWeeklyWorldUpdateService
         IContractLifecycleService contractLifecycleService,
         InitialSigningPassSqlite initialSigningPass,
         WorldFighterGeneratorSqlite worldFighterGenerator,
+        IFighterWorldService fighterWorldService,
+        IWorldAgendaService worldAgendaService,
         IPromotionEventScheduleRepository scheduleRepository,
         IEventSimulator eventSimulator,
         SqliteConnectionFactory factory)
@@ -36,6 +40,8 @@ public sealed class WeeklyWorldUpdateService : IWeeklyWorldUpdateService
         _contractLifecycleService = contractLifecycleService;
         _initialSigningPass = initialSigningPass;
         _worldFighterGenerator = worldFighterGenerator;
+        _fighterWorldService = fighterWorldService;
+        _worldAgendaService = worldAgendaService;
         _scheduleRepository = scheduleRepository;
         _eventSimulator = eventSimulator;
         _factory = factory;
@@ -51,93 +57,116 @@ public sealed class WeeklyWorldUpdateService : IWeeklyWorldUpdateService
             var previousYear = previousState?.CurrentYear ?? 0;
             var worldSeed = previousState?.WorldSeed ?? 0;
 
-            var state = await _gameTimeService.AdvanceWeeksAsync(1);
-
-            using (var conn = _factory.CreateConnection())
-            using (var cmd = conn.CreateCommand())
-            {
-                cmd.CommandText = "UPDATE GameState SET AbsoluteWeek = COALESCE(AbsoluteWeek, 0) + 1;";
-                await cmd.ExecuteNonQueryAsync(cancellationToken);
-            }
-
-            await TickRecoveryAsync(cancellationToken);
-
-            using var readConn = _factory.CreateConnection();
-
-            int absoluteWeek;
-            using (var cmd = readConn.CreateCommand())
-            {
-                cmd.CommandText = "SELECT COALESCE(AbsoluteWeek, 1) FROM GameState LIMIT 1;";
-                absoluteWeek = Convert.ToInt32(await cmd.ExecuteScalarAsync(cancellationToken));
-            }
-
-            var duePromotions = await _scheduleRepository.GetDueAsync(absoluteWeek);
-            var simulatedEvents = 0;
-
-            foreach (var promo in duePromotions)
-            {
-                await EnsurePromotionEventExistsAsync(
-    promo.PromotionId,
-    state.CurrentDate,
-    absoluteWeek,
-    cancellationToken);
-
-                await _eventSimulator.SimulatePromotionEventAsync(promo.PromotionId, state);
-                simulatedEvents++;
-
-                var nextAbsoluteWeek = absoluteWeek + Math.Max(1, promo.IntervalWeeks);
-                await _scheduleRepository.SetNextEventWeekAsync(promo.PromotionId, nextAbsoluteWeek);
-            }
-
-            if (state.CurrentYear > previousYear)
-            {
-                _worldFighterGenerator.SetSeed(ComputeAnnualIntakeSeed(worldSeed, state.CurrentYear));
-                _worldFighterGenerator.GenerateAnnualNewcomers();
-            }
-
-            // ✅ nuevo paso: contratos / renovaciones / mercado
-            var contractOffers = await _contractLifecycleService.ProcessWeeklyAsync(cancellationToken);
-
-            // ✅ la CPU rellena huecos con agentes libres para que las divisiones no se vacíen
-            await _initialSigningPass.RunWeeklyTopUpAsync(cancellationToken);
-
-            // ✅ luego se generan solo fight offers para fighters con contrato válido
-            var newFightOffers = await _fightOfferGenerationService.GenerateWeeklyOffersAsync(cancellationToken);
-
-            int newMessages;
-            using (var cmd = readConn.CreateCommand())
-            {
-                cmd.CommandText = @"
-SELECT COUNT(*)
-FROM InboxMessages
-WHERE CreatedDate = $date
-  AND AgentId = (SELECT Id FROM AgentProfile ORDER BY Id LIMIT 1)
-  AND COALESCE(IsDeleted, 0) = 0;";
-                cmd.Parameters.AddWithValue("$date", DateTime.UtcNow.ToString("yyyy-MM-dd"));
-                newMessages = Convert.ToInt32(await cmd.ExecuteScalarAsync(cancellationToken));
-            }
-
-            string? headline;
-            using (var cmd = readConn.CreateCommand())
-            {
-                cmd.CommandText = "SELECT Name FROM Events ORDER BY Id DESC LIMIT 1;";
-                headline = (await cmd.ExecuteScalarAsync(cancellationToken))?.ToString();
-            }
-
-            return new WeeklyWorldUpdateSummary(
-                state.CurrentDate,
-                state.CurrentWeek,
-                state.CurrentYear,
-                simulatedEvents,
-                newFightOffers,
-                newMessages,
-                contractOffers,
-                headline);
+            await _gameTimeService.AdvanceDaysAsync(7);
+            return await ProcessCurrentWeekCoreAsync(previousYear, worldSeed, cancellationToken);
         }
         finally
         {
             _advanceLock.Release();
         }
+    }
+
+    public async Task<WeeklyWorldUpdateSummary> ProcessCurrentWeekAsync(CancellationToken cancellationToken = default)
+    {
+        await _advanceLock.WaitAsync(cancellationToken);
+
+        try
+        {
+            var state = await _gameTimeService.GetAsync();
+            var previousYear = state?.CurrentWeek == 1
+                ? Math.Max(0, (state?.CurrentYear ?? 1) - 1)
+                : state?.CurrentYear ?? 0;
+            var worldSeed = state?.WorldSeed ?? 0;
+
+            return await ProcessCurrentWeekCoreAsync(previousYear, worldSeed, cancellationToken);
+        }
+        finally
+        {
+            _advanceLock.Release();
+        }
+    }
+
+    private async Task<WeeklyWorldUpdateSummary> ProcessCurrentWeekCoreAsync(
+        int previousYear,
+        int worldSeed,
+        CancellationToken cancellationToken)
+    {
+        var state = await _gameTimeService.GetAsync()
+            ?? throw new InvalidOperationException("Game state not found.");
+
+        using (var conn = _factory.CreateConnection())
+        using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText = "UPDATE GameState SET AbsoluteWeek = COALESCE(AbsoluteWeek, 0) + 1;";
+            await cmd.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        await TickRecoveryAsync(cancellationToken);
+
+        using var readConn = _factory.CreateConnection();
+
+        int absoluteWeek;
+        using (var cmd = readConn.CreateCommand())
+        {
+            cmd.CommandText = "SELECT COALESCE(AbsoluteWeek, 1) FROM GameState LIMIT 1;";
+            absoluteWeek = Convert.ToInt32(await cmd.ExecuteScalarAsync(cancellationToken));
+        }
+
+        var duePromotions = await _scheduleRepository.GetDueAsync(absoluteWeek);
+        var simulatedEvents = 0;
+
+        foreach (var promo in duePromotions)
+        {
+            await _eventSimulator.SimulatePromotionEventAsync(promo.PromotionId, state);
+            simulatedEvents++;
+
+            var nextAbsoluteWeek = absoluteWeek + Math.Max(1, promo.IntervalWeeks);
+            await _scheduleRepository.SetNextEventWeekAsync(promo.PromotionId, nextAbsoluteWeek);
+        }
+
+        await CleanupStaleScheduledFightsAsync(state.CurrentDate, cancellationToken);
+        await _fighterWorldService.AdvanceWeekAsync(absoluteWeek, state.CurrentDate, cancellationToken);
+        await _worldAgendaService.SynchronizeAsync(cancellationToken);
+
+        if (state.CurrentYear > previousYear)
+        {
+            _worldFighterGenerator.SetSeed(ComputeAnnualIntakeSeed(worldSeed, state.CurrentYear));
+            _worldFighterGenerator.GenerateAnnualNewcomers();
+        }
+
+        var contractOffers = await _contractLifecycleService.ProcessWeeklyAsync(cancellationToken);
+        await _initialSigningPass.RunWeeklyTopUpAsync(cancellationToken);
+        var newFightOffers = await _fightOfferGenerationService.GenerateWeeklyOffersAsync(cancellationToken);
+
+        int newMessages;
+        using (var cmd = readConn.CreateCommand())
+        {
+            cmd.CommandText = @"
+SELECT COUNT(*)
+FROM InboxMessages
+WHERE CreatedDate = $date
+  AND AgentId = (SELECT Id FROM AgentProfile ORDER BY Id LIMIT 1)
+  AND COALESCE(IsDeleted, 0) = 0;";
+            cmd.Parameters.AddWithValue("$date", DateTime.UtcNow.ToString("yyyy-MM-dd"));
+            newMessages = Convert.ToInt32(await cmd.ExecuteScalarAsync(cancellationToken));
+        }
+
+        string? headline;
+        using (var cmd = readConn.CreateCommand())
+        {
+            cmd.CommandText = "SELECT Name FROM Events ORDER BY Id DESC LIMIT 1;";
+            headline = (await cmd.ExecuteScalarAsync(cancellationToken))?.ToString();
+        }
+
+        return new WeeklyWorldUpdateSummary(
+            state.CurrentDate,
+            state.CurrentWeek,
+            state.CurrentYear,
+            simulatedEvents,
+            newFightOffers,
+            newMessages,
+            contractOffers,
+            headline);
     }
 
     private async Task TickRecoveryAsync(CancellationToken cancellationToken)
@@ -147,8 +176,23 @@ WHERE CreatedDate = $date
         cmd.CommandText = @"
 UPDATE Fighters
 SET WeeksUntilAvailable = CASE WHEN COALESCE(WeeksUntilAvailable, 0) > 0 THEN WeeksUntilAvailable - 1 ELSE 0 END,
+    MedicalSuspensionWeeksRemaining = CASE WHEN COALESCE(MedicalSuspensionWeeksRemaining, 0) > 0 THEN MedicalSuspensionWeeksRemaining - 1 ELSE 0 END,
     InjuryWeeksRemaining = CASE WHEN COALESCE(InjuryWeeksRemaining, 0) > 0 THEN InjuryWeeksRemaining - 1 ELSE 0 END,
-    IsInjured = CASE WHEN COALESCE(InjuryWeeksRemaining, 0) > 1 THEN 1 ELSE 0 END;";
+    IsInjured = CASE WHEN COALESCE(InjuryWeeksRemaining, 0) > 1 THEN 1 ELSE 0 END,
+    AvailableFromWeek = CASE
+        WHEN MAX(
+            CASE WHEN COALESCE(WeeksUntilAvailable, 0) > 0 THEN WeeksUntilAvailable - 1 ELSE 0 END,
+            CASE WHEN COALESCE(MedicalSuspensionWeeksRemaining, 0) > 0 THEN MedicalSuspensionWeeksRemaining - 1 ELSE 0 END,
+            CASE WHEN COALESCE(InjuryWeeksRemaining, 0) > 0 THEN InjuryWeeksRemaining - 1 ELSE 0 END
+        ) > 0
+        THEN COALESCE((SELECT AbsoluteWeek FROM GameState LIMIT 1), 0)
+             + MAX(
+                 CASE WHEN COALESCE(WeeksUntilAvailable, 0) > 0 THEN WeeksUntilAvailable - 1 ELSE 0 END,
+                 CASE WHEN COALESCE(MedicalSuspensionWeeksRemaining, 0) > 0 THEN MedicalSuspensionWeeksRemaining - 1 ELSE 0 END,
+                 CASE WHEN COALESCE(InjuryWeeksRemaining, 0) > 0 THEN InjuryWeeksRemaining - 1 ELSE 0 END
+             )
+        ELSE COALESCE((SELECT AbsoluteWeek FROM GameState LIMIT 1), 0)
+    END;";
         await cmd.ExecuteNonQueryAsync(cancellationToken);
     }
 
@@ -157,70 +201,39 @@ SET WeeksUntilAvailable = CASE WHEN COALESCE(WeeksUntilAvailable, 0) > 0 THEN We
             ? currentYear
             : unchecked((worldSeed * 397) ^ currentYear);
 
-    private async Task EnsurePromotionEventExistsAsync(
-    int promotionId,
-    string currentDate,
-    int absoluteWeek,
-    CancellationToken cancellationToken)
+    private async Task CleanupStaleScheduledFightsAsync(string currentDate, CancellationToken cancellationToken)
     {
         using var conn = _factory.CreateConnection();
 
-        string promotionName;
         using (var cmd = conn.CreateCommand())
         {
             cmd.CommandText = @"
-SELECT Name
-FROM Promotions
-WHERE Id = $id
-LIMIT 1;";
-            cmd.Parameters.AddWithValue("$id", promotionId);
-
-            promotionName = (await cmd.ExecuteScalarAsync(cancellationToken))?.ToString()
-                            ?? $"Promotion {promotionId}";
-        }
-
-        var eventName = $"{promotionName} Week {absoluteWeek}";
-
-        using (var cmd = conn.CreateCommand())
-        {
-            cmd.CommandText = @"
-SELECT Id
-FROM Events
-WHERE PromotionId = $promotionId
-  AND Name = $name
-LIMIT 1;";
-            cmd.Parameters.AddWithValue("$promotionId", promotionId);
-            cmd.Parameters.AddWithValue("$name", eventName);
-
-            var existing = await cmd.ExecuteScalarAsync(cancellationToken);
-            if (existing != null && existing != DBNull.Value)
-                return;
+UPDATE Fights
+SET Method = 'Cancelled'
+WHERE Method = 'Scheduled'
+  AND COALESCE(EventDate, '') <> ''
+  AND EventDate <= $currentDate;";
+            cmd.Parameters.AddWithValue("$currentDate", currentDate);
+            await cmd.ExecuteNonQueryAsync(cancellationToken);
         }
 
         using (var cmd = conn.CreateCommand())
         {
             cmd.CommandText = @"
-INSERT INTO Events
-(
-    PromotionId,
-    EventDate,
-    Name,
-    Location
-)
-VALUES
-(
-    $promotionId,
-    $eventDate,
-    $name,
-    $location
-);";
-            cmd.Parameters.AddWithValue("$promotionId", promotionId);
-            cmd.Parameters.AddWithValue("$eventDate", currentDate);
-            cmd.Parameters.AddWithValue("$name", eventName);
-            cmd.Parameters.AddWithValue("$location", "TBD");
-
+UPDATE Fighters
+SET IsBooked = CASE
+    WHEN EXISTS (
+        SELECT 1
+        FROM Fights sf
+        WHERE sf.Method = 'Scheduled'
+          AND (sf.FighterAId = Fighters.Id OR sf.FighterBId = Fighters.Id)
+          AND COALESCE(sf.EventDate, '9999-12-31') > $currentDate
+    ) THEN 1
+    ELSE 0
+END;";
+            cmd.Parameters.AddWithValue("$currentDate", currentDate);
             await cmd.ExecuteNonQueryAsync(cancellationToken);
         }
     }
-   
+
 }

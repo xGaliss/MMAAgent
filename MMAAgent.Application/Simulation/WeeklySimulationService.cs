@@ -30,6 +30,6 @@ namespace MMAAgent.Application.Simulation
         }
 
         private static int ToAbsoluteWeek(int year, int week)
-            => Math.Max(0, (year - 1) * 52 + (week - 1));
+            => Math.Max(1, (year - 1) * 52 + week);
     }
 }

@@ -8,6 +8,7 @@
 @inject IWeeklyWorldUpdateService WeeklyWorldUpdateService
 @inject InboxStatusService InboxStatusService
 @inject NavigationManager Navigation
+@inject WebTimeAdvanceService TimeAdvanceService
 
 <div class="app-shell">
     <aside class="sidebar">
@@ -77,6 +78,34 @@
 
                 <button type="button"
                         class="btn-secondary"
+                        @onclick="@(() => AdvanceDaysAsync(1))"
+                        disabled="@(_advancing || _loadingState)">
+                    +1 Day
+                </button>
+
+                <button type="button"
+                        class="btn-secondary"
+                        @onclick="@(() => AdvanceDaysAsync(3))"
+                        disabled="@(_advancing || _loadingState)">
+                    +3 Days
+                </button>
+
+                <button type="button"
+                        class="btn-secondary"
+                        @onclick="@(() => AdvanceDaysAsync(15))"
+                        disabled="@(_advancing || _loadingState)">
+                    +15 Days
+                </button>
+
+                <button type="button"
+                        class="btn-secondary"
+                        @onclick="AdvanceToNextMilestoneAsync"
+                        disabled="@(_advancing || _loadingState)">
+                    Next Milestone
+                </button>
+
+                <button type="button"
+                        class="btn-secondary"
                         @onclick="OpenInbox">
                     Open Inbox
                 </button>
@@ -137,6 +166,62 @@
 
             _layoutStatus = $"Week advanced. New fight offers: {summary.NewFightOffers}. New messages: {summary.NewInboxMessages}.";
 
+            Navigation.NavigateTo(Navigation.Uri, forceLoad: false);
+        }
+        catch (Exception ex)
+        {
+            _layoutStatus = ex.Message;
+        }
+        finally
+        {
+            _advancing = false;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private async Task AdvanceDaysAsync(int days)
+    {
+        if (_advancing)
+            return;
+
+        try
+        {
+            _advancing = true;
+            _layoutStatus = null;
+
+            var result = await TimeAdvanceService.AdvanceDaysAsync(days);
+            await LoadGameStateAsync();
+            await InboxStatusService.RefreshAsync();
+
+            _layoutStatus = result.Message;
+            Navigation.NavigateTo(Navigation.Uri, forceLoad: false);
+        }
+        catch (Exception ex)
+        {
+            _layoutStatus = ex.Message;
+        }
+        finally
+        {
+            _advancing = false;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private async Task AdvanceToNextMilestoneAsync()
+    {
+        if (_advancing)
+            return;
+
+        try
+        {
+            _advancing = true;
+            _layoutStatus = null;
+
+            var result = await TimeAdvanceService.AdvanceToNextMilestoneAsync();
+            await LoadGameStateAsync();
+            await InboxStatusService.RefreshAsync();
+
+            _layoutStatus = result.Message;
             Navigation.NavigateTo(Navigation.Uri, forceLoad: false);
         }
         catch (Exception ex)

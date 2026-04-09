@@ -178,7 +178,11 @@ else
                             <div class="offer-title">@offer.FighterName vs @offer.OpponentName</div>
                             <div class="offer-meta">Promotion: @offer.PromotionName</div>
                             <div class="offer-meta">Purse: @offer.Purse · Bonus: @offer.WinBonus</div>
-                            <div class="offer-meta">Weeks until fight: @offer.WeeksUntilFight · Title: @(offer.IsTitleFight ? "Yes" : "No")</div>
+                            <div class="offer-meta">Weeks until fight: @offer.WeeksUntilFight · Camp: @offer.CampWeeksOffered week(s) · Title: @(offer.IsTitleFight ? "Yes" : "No")</div>
+                            @if (offer.IsShortNotice)
+                            {
+                                <div class="offer-meta">Short notice: Yes</div>
+                            }
                             <div class="offer-meta">Status: @offer.Status</div>
 
                             <div class="button-row" style="margin-top:12px;">

@@ -63,6 +63,37 @@ else
     <div class="dashboard-live-grid">
         <section class="panel-card">
             <div class="table-toolbar">
+                <div class="toolbar-title">World Agenda</div>
+                <div class="toolbar-subtitle">@_agenda.Count items</div>
+            </div>
+
+            <div class="dashboard-list">
+                @if (_agenda.Count == 0)
+                {
+                    <div class="dashboard-list-item">No urgent milestones.</div>
+                }
+                else
+                {
+                    @foreach (var item in _agenda)
+                    {
+                        <div class="dashboard-agenda-item">
+                            <div class="dashboard-agenda-top">
+                                <span class="message-badge">@FormatAgendaType(item.EventType)</span>
+                                <span class="message-date">@item.ScheduledDate</span>
+                            </div>
+                            <div class="dashboard-agenda-headline">@item.Headline</div>
+                            @if (!string.IsNullOrWhiteSpace(item.Subtitle))
+                            {
+                                <div class="muted-text">@item.Subtitle</div>
+                            }
+                        </div>
+                    }
+                }
+            </div>
+        </section>
+
+        <section class="panel-card">
+            <div class="table-toolbar">
                 <div class="toolbar-title">Latest Events</div>
                 <div class="toolbar-subtitle">@_latestEvents.Count items</div>
             </div>
@@ -237,6 +268,7 @@ else
     private List<string> _managedChampions = new();
     private List<string> _pendingFightOfferItems = new();
     private List<string> _pendingContractOfferItems = new();
+    private List<AgendaItemVm> _agenda = new();
 
     protected override async Task OnInitializedAsync()
     {
@@ -262,6 +294,7 @@ else
             _pendingContractOffers = stats.PendingContractOffers;
 
             var feed = await DashboardFeedService.LoadAsync();
+            _agenda = feed.Agenda.ToList();
             _latestEvents = feed.Events.ToList();
             _recentMessages = feed.Messages.ToList();
             _topManaged = feed.Managed.ToList();
@@ -293,4 +326,16 @@ else
     {
         InboxStatusService.Changed -= HandleInboxStatusChanged;
     }
+
+    private static string FormatAgendaType(string eventType)
+        => eventType switch
+        {
+            "Decision" => "Decision",
+            "CampStart" => "Camp",
+            "FightWeek" => "Fight Week",
+            "WeighIn" => "Weigh-In",
+            "FightNight" => "Fight Night",
+            "Recovery" => "Recovery",
+            _ => eventType
+        };
 }

@@ -36,6 +36,8 @@ INSERT INTO FightOffers
     WinBonus,
     WeeksUntilFight,
     IsTitleFight,
+    IsShortNotice,
+    CampWeeksOffered,
     Status
 )
 VALUES
@@ -47,6 +49,8 @@ VALUES
     $winBonus,
     $weeksUntilFight,
     $isTitleFight,
+    $isShortNotice,
+    $campWeeksOffered,
     $status
 );
 
@@ -60,6 +64,8 @@ SELECT last_insert_rowid();
             cmd.Parameters.AddWithValue("$winBonus", offer.WinBonus);
             cmd.Parameters.AddWithValue("$weeksUntilFight", offer.WeeksUntilFight);
             cmd.Parameters.AddWithValue("$isTitleFight", offer.IsTitleFight ? 1 : 0);
+            cmd.Parameters.AddWithValue("$isShortNotice", offer.IsShortNotice ? 1 : 0);
+            cmd.Parameters.AddWithValue("$campWeeksOffered", offer.CampWeeksOffered);
             cmd.Parameters.AddWithValue("$status", offer.Status);
 
             var result = await cmd.ExecuteScalarAsync();
@@ -87,6 +93,8 @@ SELECT fo.Id,
        fo.WinBonus,
        fo.WeeksUntilFight,
        fo.IsTitleFight,
+       COALESCE(fo.IsShortNotice, 0) AS IsShortNotice,
+       COALESCE(fo.CampWeeksOffered, 0) AS CampWeeksOffered,
        fo.Status
 FROM FightOffers fo
 INNER JOIN ManagedFighters mf
@@ -111,7 +119,9 @@ ORDER BY fo.Id DESC;
                     WinBonus = reader.GetInt32(5),
                     WeeksUntilFight = reader.GetInt32(6),
                     IsTitleFight = reader.GetInt32(7) == 1,
-                    Status = reader.GetString(8)
+                    IsShortNotice = reader.GetInt32(8) == 1,
+                    CampWeeksOffered = reader.GetInt32(9),
+                    Status = reader.GetString(10)
                 });
             }
 

@@ -1,7 +1,8 @@
-﻿using Microsoft.Data.Sqlite;
+using Microsoft.Data.Sqlite;
 using MMAAgent.Application.Simulation;
 using MMAAgent.Domain.Common;
 using MMAAgent.Infrastructure.Persistence.Sqlite;
+using System.Linq;
 using System.Text;
 
 namespace MMAAgent.Infrastructure.Persistence.Sqlite.Services
@@ -11,7 +12,6 @@ namespace MMAAgent.Infrastructure.Persistence.Sqlite.Services
         private readonly SqliteConnectionFactory _factory;
         private readonly IContractServiceSqlite _contracts;
 
-        public int FightsPerWeightClass { get; set; } = 2;
         public double TitleFightChance { get; set; } = 0.20;
         public double Randomness { get; set; } = 0.18;
 
@@ -24,158 +24,148 @@ namespace MMAAgent.Infrastructure.Persistence.Sqlite.Services
         public async Task SimulatePromotionEventAsync(int promotionId, GameState state)
         {
             var eventDate = state.CurrentDate;
-            var seed = DeriveEventSeed(state.WorldSeed, state.CurrentYear, state.CurrentWeek, promotionId);
-            var rng = new Random(seed);
-            var absoluteWeek = ToAbsoluteWeek(state.CurrentYear, state.CurrentWeek);
+            var derivedAbsoluteWeek = ToAbsoluteWeek(state.CurrentYear, state.CurrentWeek);
 
             using var conn = _factory.CreateConnection();
             using var tx = conn.BeginTransaction();
 
-            var promoName = await ScalarStringAsync(conn, tx,
-                "SELECT Name FROM Promotions WHERE Id = $id;",
-                ("$id", promotionId)) ?? $"Promotion {promotionId}";
-
-            var eventName = BuildEventName(promoName, absoluteWeek);
-            var location = "TBD";
-
-            int eventId = await EnsureWeeklyEventAsync(conn, tx, promotionId, eventDate, eventName, location);
-
-            var divs = await QueryAsync(conn, tx, @"
-SELECT WeightClass, HasRanking, RankingSize
-FROM PromotionWeightClasses
-WHERE PromotionId = $p;",
-                ("$p", promotionId));
-
-            if (divs.Count == 0)
+            var promotion = await LoadPromotionPlanAsync(conn, tx, promotionId);
+            if (promotion is null)
             {
                 tx.Commit();
                 return;
             }
 
-            var sb = new StringBuilder();
-            sb.AppendLine($"===== SIM EVENT: {promoName} (EventId={eventId}, Date={eventDate}, seed={seed}) =====");
+            var absoluteWeek = ResolveEventWeek(derivedAbsoluteWeek, promotion.NextEventWeek);
+            var seed = DeriveEventSeed(state.WorldSeed, state.CurrentYear, absoluteWeek, promotionId);
+            var rng = new Random(seed);
+            var isTitleWindow = IsIntervalWeek(absoluteWeek, promotion.TitleFightIntervalWeeks);
+            var isMajorEvent = isTitleWindow || IsIntervalWeek(absoluteWeek, promotion.MajorEventIntervalWeeks);
+            var eventTier = isMajorEvent ? "Major" : "Standard";
+            var configuredFightCount = ComputePlannedFightCount(promotion, isMajorEvent);
 
-            var scheduledFights = await QueryAsync(conn, tx, @"
-SELECT Id, FighterAId, FighterBId, WeightClass, IsTitleFight
-FROM Fights
-WHERE EventId = $eventId
-  AND Method = 'Scheduled';",
-                ("$eventId", eventId));
-
+            var currentEventName = BuildEventName(promotion.Name, absoluteWeek);
+            var runnableEvent = await FindRunnableEventAsync(conn, tx, promotionId, currentEventName, eventDate);
+            var scheduledBouts = runnableEvent is null
+                ? new List<PlannedBout>()
+                : await LoadScheduledBoutsAsync(conn, tx, runnableEvent.Id);
             var fightersUsedThisEvent = new HashSet<int>();
+            var lineup = new List<PlannedBout>();
 
-            foreach (var sf in scheduledFights)
+            foreach (var bout in scheduledBouts)
             {
-                int fightId = sf.GetInt("Id");
-                int aId = sf.GetInt("FighterAId");
-                int bId = sf.GetInt("FighterBId");
-                string wc = sf.GetString("WeightClass");
-                bool isTitle = sf.GetInt("IsTitleFight") == 1;
-
-                if (fightersUsedThisEvent.Contains(aId) || fightersUsedThisEvent.Contains(bId))
+                if (!fightersUsedThisEvent.Add(bout.FighterAId))
                     continue;
 
-                var res = await SimFightAsync(conn, tx, rng, eventId, promotionId, wc, aId, bId, isTitle, eventDate, state.CurrentWeek);
-
-                await UpdateScheduledFightAsync(conn, tx, fightId, res.WinnerId, res.Method, null, eventDate);
-
-                sb.AppendLine($"[SCHEDULED {wc}] {res.Summary}");
-
-                fightersUsedThisEvent.Add(aId);
-                fightersUsedThisEvent.Add(bId);
-            }
-
-            foreach (var d in divs)
-            {
-                var wc = d.GetString("WeightClass");
-                var hasRanking = d.GetInt("HasRanking");
-                var rankingSize = d.GetInt("RankingSize");
-
-                if (hasRanking != 1 || rankingSize <= 0)
-                    continue;
-
-                var ranked = await QueryAsync(conn, tx, @"
-SELECT RankPosition, FighterId
-FROM PromotionRankings
-WHERE PromotionId = $p
-  AND WeightClass = $wc
-  AND FighterId NOT IN (
-      SELECT FighterId
-      FROM ManagedFighters
-      WHERE IsActive = 1
-  )
-ORDER BY RankPosition;",
-                    ("$p", promotionId),
-                    ("$wc", wc));
-
-                if (ranked.Count < 2)
+                if (!fightersUsedThisEvent.Add(bout.FighterBId))
                 {
-                    sb.AppendLine($"[{wc}] (skip) ranking insuficiente: {ranked.Count}");
+                    fightersUsedThisEvent.Remove(bout.FighterAId);
                     continue;
                 }
 
-                int champId = await ScalarIntAsync(conn, tx, @"
-SELECT COALESCE(ChampionFighterId, 0)
-FROM Titles
+                lineup.Add(bout);
+            }
+
+            var autoCandidates = await BuildAutoBoutCandidatesAsync(
+                conn,
+                tx,
+                promotionId,
+                fightersUsedThisEvent,
+                isTitleWindow,
+                isMajorEvent);
+
+            var remainingSlots = Math.Max(0, configuredFightCount - lineup.Count);
+            foreach (var candidate in autoCandidates
+                         .OrderByDescending(x => x.Score)
+                         .ThenByDescending(x => x.IsTitleFight)
+                         .ThenBy(x => x.WeightClass, StringComparer.OrdinalIgnoreCase))
+            {
+                if (remainingSlots <= 0)
+                    break;
+
+                if (fightersUsedThisEvent.Contains(candidate.FighterAId) ||
+                    fightersUsedThisEvent.Contains(candidate.FighterBId))
+                    continue;
+
+                lineup.Add(candidate);
+                fightersUsedThisEvent.Add(candidate.FighterAId);
+                fightersUsedThisEvent.Add(candidate.FighterBId);
+                remainingSlots--;
+            }
+
+            if (lineup.Count == 0)
+            {
+                tx.Commit();
+                return;
+            }
+
+            var eventId = runnableEvent?.Id ?? await EnsureWeeklyEventAsync(conn, tx, promotionId, eventDate, currentEventName, "TBD");
+            var eventName = runnableEvent?.Name ?? currentEventName;
+            var eventDateToUse = string.IsNullOrWhiteSpace(runnableEvent?.EventDate)
+                ? eventDate
+                : runnableEvent!.EventDate;
+            var actualPlannedFightCount = Math.Max(configuredFightCount, lineup.Count);
+            var cardAssignments = AssignCardSlots(lineup, promotion);
+
+            await UpdateEventMetadataAsync(conn, tx, eventId, eventDateToUse, eventName, eventTier, actualPlannedFightCount, cardAssignments.Count);
+
+            var touchedWeightClasses = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var sb = new StringBuilder();
+            sb.AppendLine($"===== SIM EVENT: {promotion.Name} (EventId={eventId}, Tier={eventTier}, Date={eventDateToUse}, seed={seed}) =====");
+
+            foreach (var card in cardAssignments.OrderBy(x => x.CardOrder))
+            {
+                var result = await SimFightAsync(conn, tx, rng, eventId, promotionId, card, eventDateToUse, eventTier, absoluteWeek);
+
+                if (card.Bout.ExistingFightId.HasValue)
+                {
+                    await UpdateScheduledFightAsync(
+                        conn,
+                        tx,
+                        card.Bout.ExistingFightId.Value,
+                        result.WinnerId,
+                        result.Method,
+                        null,
+                        eventDateToUse,
+                        card.CardSegment,
+                        card.CardOrder,
+                        card.IsMainEvent,
+                        card.IsCoMainEvent);
+                }
+                else
+                {
+                    await InsertCompletedFightAsync(
+                        conn,
+                        tx,
+                        card.Bout.FighterAId,
+                        card.Bout.FighterBId,
+                        result.WinnerId,
+                        result.Method,
+                        eventDateToUse,
+                        eventId,
+                        card.Bout.WeightClass,
+                        card.Bout.IsTitleFight,
+                        card.CardSegment,
+                        card.CardOrder,
+                        card.IsMainEvent,
+                        card.IsCoMainEvent);
+                }
+
+                touchedWeightClasses.Add(card.Bout.WeightClass);
+                sb.AppendLine($"[{card.CardSegment} #{card.CardOrder}] {result.Summary}");
+            }
+
+            foreach (var weightClass in touchedWeightClasses)
+            {
+                var rankingSize = await ScalarIntAsync(conn, tx, @"
+SELECT COALESCE(RankingSize, 10)
+FROM PromotionWeightClasses
 WHERE PromotionId = $p AND WeightClass = $wc
 LIMIT 1;",
                     ("$p", promotionId),
-                    ("$wc", wc));
+                    ("$wc", weightClass));
 
-                bool champIsManaged = false;
-                if (champId > 0)
-                {
-                    champIsManaged = await ScalarIntAsync(conn, tx, @"
-SELECT COUNT(*)
-FROM ManagedFighters
-WHERE FighterId = $fid
-  AND IsActive = 1;",
-                        ("$fid", champId)) > 0;
-                }
-
-                bool doTitle = champId > 0 && !champIsManaged;
-
-                if (doTitle)
-                {
-                    int rank1Id = ranked[0].GetInt("FighterId");
-
-                    if (rank1Id > 0 &&
-                        champId != rank1Id &&
-                        !fightersUsedThisEvent.Contains(champId) &&
-                        !fightersUsedThisEvent.Contains(rank1Id))
-                    {
-                        var res = await SimFightAsync(conn, tx, rng, eventId, promotionId, wc, champId, rank1Id, true, eventDate, state.CurrentWeek);
-
-                        sb.AppendLine($"[{wc}] TITLE: {res.Summary}");
-                        fightersUsedThisEvent.Add(champId);
-                        fightersUsedThisEvent.Add(rank1Id);
-                    }
-                }
-
-                int made = 0;
-                int startIndex = 1;
-
-                while (made < FightsPerWeightClass && startIndex + 1 < ranked.Count)
-                {
-                    int aId = ranked[startIndex].GetInt("FighterId");
-                    int bId = ranked[startIndex + 1].GetInt("FighterId");
-                    startIndex += 2;
-
-                    if (aId <= 0 || bId <= 0 || aId == bId) continue;
-                    if (fightersUsedThisEvent.Contains(aId) || fightersUsedThisEvent.Contains(bId)) continue;
-
-                    bool isTitleFight = champId > 0 && (aId == champId || bId == champId);
-
-                    var res = await SimFightAsync(conn, tx, rng, eventId, promotionId, wc, aId, bId, isTitleFight, eventDate, state.CurrentWeek);
-
-                    sb.AppendLine($"[{wc}] {res.Summary}" + (isTitleFight ? " (TITLE AUTO)" : ""));
-
-                    fightersUsedThisEvent.Add(aId);
-                    fightersUsedThisEvent.Add(bId);
-                    made++;
-                }
-
-                await RebuildDivisionRankingsAndEnsureTitleAsync(conn, tx, promotionId, wc, rankingSize);
+                await RebuildDivisionRankingsAndEnsureTitleAsync(conn, tx, promotionId, weightClass, Math.Max(2, rankingSize));
             }
 
             sb.AppendLine("===== END EVENT =====");
@@ -184,144 +174,436 @@ WHERE FighterId = $fid
             tx.Commit();
         }
 
-        private async Task<SimFightResult> SimFightAsync(
-            SqliteConnection conn, SqliteTransaction tx, Random rng,
-            int eventId, int promotionId, string weightClass,
-            int aId, int bId, bool isTitle, string eventDate, int currentWeek)
+        private static async Task<EventRuntimeSnapshot?> FindRunnableEventAsync(
+            SqliteConnection conn,
+            SqliteTransaction tx,
+            int promotionId,
+            string currentEventName,
+            string currentDate)
         {
-            var a = await GetFighterAsync(conn, tx, aId);
-            var b = await GetFighterAsync(conn, tx, bId);
+            using var currentCmd = conn.CreateCommand();
+            currentCmd.Transaction = tx;
+            currentCmd.CommandText = @"
+SELECT Id, COALESCE(Name, '') AS Name, COALESCE(EventDate, '') AS EventDate
+FROM Events
+WHERE PromotionId = $promotionId
+  AND Name = $eventName
+LIMIT 1;";
+            currentCmd.Parameters.AddWithValue("$promotionId", promotionId);
+            currentCmd.Parameters.AddWithValue("$eventName", currentEventName);
 
-            if (a is null || b is null)
-                return new SimFightResult(0, 0, "ERROR", isTitle, "ERROR: fighter missing");
-
-            if (a.Retired != 0 || b.Retired != 0)
-                return new SimFightResult(0, 0, "SKIP", isTitle, "SKIP: retired fighter");
-
-            double aPower = CombatPower(a, rng);
-            double bPower = CombatPower(b, rng);
-
-            double diff = aPower - bPower;
-            double pA = 1.0 / (1.0 + Math.Exp(-diff / 12.0));
-            pA = Clamp01(pA * (1.0 - Randomness) + rng.NextDouble() * Randomness);
-
-            bool aWins = rng.NextDouble() < pA;
-            int winnerId = aWins ? aId : bId;
-            int loserId = aWins ? bId : aId;
-
-            var winner = aWins ? a : b;
-            var loser = aWins ? b : a;
-
-            string method = DecideMethod(winner, loser, rng);
-
-            await ApplyResultAsync(conn, tx, rng, winnerId, loserId, method, isTitle);
-
-            await InsertFightHistoryAsync(conn, tx,
-                eventDate, promotionId, weightClass,
-                aId, bId, winnerId, loserId, method, isTitle,
-                eventId, notes: null);
-
-            await _contracts.PostFightContractTickAsync(conn, tx, winnerId);
-            await _contracts.PostFightContractTickAsync(conn, tx, loserId);
-
-            await ApplyRecoveryAsync(conn, tx, aId, bId, method, currentWeek, rng);
-
-            if (isTitle)
+            using (var reader = await currentCmd.ExecuteReaderAsync())
             {
-                int champId = await ScalarIntAsync(conn, tx, @"
+                if (await reader.ReadAsync())
+                {
+                    return new EventRuntimeSnapshot(
+                        Convert.ToInt32(reader["Id"]),
+                        reader["Name"]?.ToString() ?? currentEventName,
+                        reader["EventDate"]?.ToString() ?? currentDate);
+                }
+            }
+
+            using var overdueCmd = conn.CreateCommand();
+            overdueCmd.Transaction = tx;
+            overdueCmd.CommandText = @"
+SELECT e.Id, COALESCE(e.Name, '') AS Name, COALESCE(e.EventDate, '') AS EventDate
+FROM Events e
+WHERE e.PromotionId = $promotionId
+  AND COALESCE(e.EventDate, '') <> ''
+  AND e.EventDate <= $currentDate
+  AND EXISTS
+  (
+      SELECT 1
+      FROM Fights f
+      WHERE f.EventId = e.Id
+        AND f.Method = 'Scheduled'
+  )
+ORDER BY e.EventDate, e.Id
+LIMIT 1;";
+            overdueCmd.Parameters.AddWithValue("$promotionId", promotionId);
+            overdueCmd.Parameters.AddWithValue("$currentDate", currentDate);
+
+            using var overdueReader = await overdueCmd.ExecuteReaderAsync();
+            if (!await overdueReader.ReadAsync())
+                return null;
+
+            return new EventRuntimeSnapshot(
+                Convert.ToInt32(overdueReader["Id"]),
+                overdueReader["Name"]?.ToString() ?? currentEventName,
+                overdueReader["EventDate"]?.ToString() ?? currentDate);
+        }
+
+        private async Task<SimFightResult> SimFightAsync(
+            SqliteConnection conn,
+            SqliteTransaction tx,
+            Random rng,
+            int eventId,
+            int promotionId,
+            CardAssignment card,
+            string eventDate,
+            string eventTier,
+            int currentAbsoluteWeek)
+        {
+            var fighterA = await GetFighterAsync(conn, tx, card.Bout.FighterAId);
+            var fighterB = await GetFighterAsync(conn, tx, card.Bout.FighterBId);
+
+            if (fighterA is null || fighterB is null)
+                return new SimFightResult(0, 0, "ERROR", card.Bout.IsTitleFight, "ERROR: fighter missing");
+
+            if (fighterA.Retired != 0 || fighterB.Retired != 0)
+                return new SimFightResult(0, 0, "SKIP", card.Bout.IsTitleFight, "SKIP: retired fighter");
+
+            var aPower = CombatPower(fighterA, rng);
+            var bPower = CombatPower(fighterB, rng);
+            var probabilityA = 1.0 / (1.0 + Math.Exp(-(aPower - bPower) / 12.0));
+            probabilityA = Clamp01(probabilityA * (1.0 - Randomness) + rng.NextDouble() * Randomness);
+
+            var aWins = rng.NextDouble() < probabilityA;
+            var winner = aWins ? fighterA : fighterB;
+            var loser = aWins ? fighterB : fighterA;
+            var method = DecideMethod(winner, loser, rng);
+
+            await ApplyResultAsync(conn, tx, rng, winner.Id, loser.Id, method, card.Bout.IsTitleFight);
+            await InsertFightHistoryAsync(
+                conn,
+                tx,
+                eventDate,
+                promotionId,
+                card.Bout.WeightClass,
+                fighterA.Id,
+                fighterB.Id,
+                winner.Id,
+                loser.Id,
+                method,
+                card.Bout.IsTitleFight,
+                eventId,
+                card.CardSegment,
+                card.CardOrder,
+                card.IsMainEvent,
+                card.IsCoMainEvent,
+                eventTier);
+
+            await _contracts.PostFightContractTickAsync(conn, tx, winner.Id);
+            await _contracts.PostFightContractTickAsync(conn, tx, loser.Id);
+            await ApplyRecoveryAsync(conn, tx, winner.Id, loser.Id, method, currentAbsoluteWeek, rng);
+
+            if (card.Bout.IsTitleFight)
+            {
+                var championId = await ScalarIntAsync(conn, tx, @"
 SELECT COALESCE(ChampionFighterId, 0)
 FROM Titles
 WHERE PromotionId = $p AND WeightClass = $wc
 LIMIT 1;",
-                    ("$p", promotionId), ("$wc", weightClass));
+                    ("$p", promotionId),
+                    ("$wc", card.Bout.WeightClass));
 
-                if (champId == loserId)
+                if (championId == loser.Id)
                 {
                     await ExecAsync(conn, tx, @"
 UPDATE Titles
-SET ChampionFighterId = $w
+SET ChampionFighterId = $winnerId
 WHERE PromotionId = $p AND WeightClass = $wc;",
-                        ("$w", winnerId),
+                        ("$winnerId", winner.Id),
                         ("$p", promotionId),
-                        ("$wc", weightClass));
+                        ("$wc", card.Bout.WeightClass));
                 }
             }
 
-            string aName = $"{a.FirstName} {a.LastName}";
-            string bName = $"{b.FirstName} {b.LastName}";
-            string wName = aWins ? aName : bName;
-            string lName = aWins ? bName : aName;
-
-            var summary = $"{wName} def. {lName} via {method}" + (isTitle ? " (TITLE)" : "");
-            return new SimFightResult(winnerId, loserId, method, isTitle, summary);
+            var summary = $"{winner.FullName} def. {loser.FullName} via {method}" + (card.Bout.IsTitleFight ? " (TITLE)" : "");
+            return new SimFightResult(winner.Id, loser.Id, method, card.Bout.IsTitleFight, summary);
         }
 
-        private static async Task ApplyRecoveryAsync(SqliteConnection conn, SqliteTransaction tx, int aId, int bId, string method, int currentWeek, Random rng)
+        private async Task<List<PlannedBout>> BuildAutoBoutCandidatesAsync(
+            SqliteConnection conn,
+            SqliteTransaction tx,
+            int promotionId,
+            HashSet<int> fightersAlreadyUsed,
+            bool isTitleWindow,
+            bool isMajorEvent)
         {
-            var baseWeeks = method switch
+            var divisions = await QueryAsync(conn, tx, @"
+SELECT WeightClass, HasRanking
+FROM PromotionWeightClasses
+WHERE PromotionId = $p;",
+                ("$p", promotionId));
+
+            var candidates = new List<PlannedBout>();
+
+            foreach (var division in divisions)
             {
-                "DEC" => 4,
-                "SUB" => 5,
-                "KO/TKO" => 8,
-                _ => 4
-            };
+                if (division.GetInt("HasRanking") != 1)
+                    continue;
 
-            var injuryWeeks = 0;
-            if (method == "KO/TKO" && rng.NextDouble() < 0.55)
-                injuryWeeks = rng.Next(6, 11);
-            else if (method == "SUB" && rng.NextDouble() < 0.20)
-                injuryWeeks = rng.Next(3, 6);
-            else if (method == "DEC" && rng.NextDouble() < 0.08)
-                injuryWeeks = rng.Next(2, 4);
+                var weightClass = division.GetString("WeightClass");
+                var ranked = await LoadEligibleRankedDivisionAsync(conn, tx, promotionId, weightClass);
+                if (ranked.Count < 2)
+                    continue;
 
-            await ExecAsync(conn, tx, @"
+                var localReserved = new HashSet<int>();
+                var championId = await ScalarIntAsync(conn, tx, @"
+SELECT COALESCE(ChampionFighterId, 0)
+FROM Titles
+WHERE PromotionId = $p AND WeightClass = $wc
+LIMIT 1;",
+                    ("$p", promotionId),
+                    ("$wc", weightClass));
+
+                if (isTitleWindow && championId > 0)
+                {
+                    var championIsManaged = await ScalarIntAsync(conn, tx, @"
+SELECT COUNT(*)
+FROM ManagedFighters
+WHERE FighterId = $fid
+  AND IsActive = 1;",
+                        ("$fid", championId)) > 0;
+
+                    if (!championIsManaged && !fightersAlreadyUsed.Contains(championId))
+                    {
+                        var champion = await LoadEligibleFighterAsync(conn, tx, championId);
+                        var challenger = ranked.FirstOrDefault(x => x.FighterId != championId && !fightersAlreadyUsed.Contains(x.FighterId));
+
+                        if (champion is not null && challenger is not null)
+                        {
+                            candidates.Add(CreatePlannedBout(
+                                null,
+                                champion.Id,
+                                challenger.FighterId,
+                                weightClass,
+                                true,
+                                champion.Skill,
+                                champion.Popularity,
+                                challenger.Skill,
+                                challenger.Popularity));
+
+                            localReserved.Add(champion.Id);
+                            localReserved.Add(challenger.FighterId);
+                        }
+                    }
+                }
+
+                var remaining = ranked
+                    .Where(x => !fightersAlreadyUsed.Contains(x.FighterId) && !localReserved.Contains(x.FighterId))
+                    .ToList();
+
+                var maxPairs = isMajorEvent ? 3 : 2;
+                for (var i = 0; i + 1 < remaining.Count && maxPairs > 0; i += 2, maxPairs--)
+                {
+                    var fighterA = remaining[i];
+                    var fighterB = remaining[i + 1];
+                    if (fighterA.FighterId == fighterB.FighterId)
+                        continue;
+
+                    candidates.Add(CreatePlannedBout(
+                        null,
+                        fighterA.FighterId,
+                        fighterB.FighterId,
+                        weightClass,
+                        false,
+                        fighterA.Skill,
+                        fighterA.Popularity,
+                        fighterB.Skill,
+                        fighterB.Popularity));
+                }
+            }
+
+            return candidates;
+        }
+
+        private static async Task<List<PlannedBout>> LoadScheduledBoutsAsync(SqliteConnection conn, SqliteTransaction tx, int eventId)
+        {
+            var rows = await QueryAsync(conn, tx, @"
+SELECT Id, FighterAId, FighterBId, WeightClass, IsTitleFight
+FROM Fights
+WHERE EventId = $eventId
+  AND Method = 'Scheduled';",
+                ("$eventId", eventId));
+
+            var bouts = new List<PlannedBout>();
+            foreach (var row in rows)
+            {
+                var fighterA = await GetFighterAsync(conn, tx, row.GetInt("FighterAId"));
+                var fighterB = await GetFighterAsync(conn, tx, row.GetInt("FighterBId"));
+                if (fighterA is null || fighterB is null)
+                    continue;
+
+                bouts.Add(CreatePlannedBout(
+                    row.GetInt("Id"),
+                    fighterA.Id,
+                    fighterB.Id,
+                    row.GetString("WeightClass"),
+                    row.GetInt("IsTitleFight") == 1,
+                    fighterA.Skill,
+                    fighterA.Popularity,
+                    fighterB.Skill,
+                    fighterB.Popularity));
+            }
+
+            return bouts;
+        }
+
+        private static PlannedBout CreatePlannedBout(
+            int? existingFightId,
+            int fighterAId,
+            int fighterBId,
+            string weightClass,
+            bool isTitleFight,
+            int fighterASkill,
+            int fighterAPopularity,
+            int fighterBSkill,
+            int fighterBPopularity)
+        {
+            var score = (fighterASkill + fighterBSkill) * 1.35
+                        + (fighterAPopularity + fighterBPopularity) * 1.15
+                        + (isTitleFight ? 150 : 0);
+
+            return new PlannedBout(existingFightId, fighterAId, fighterBId, weightClass, isTitleFight, score);
+        }
+
+        private static List<CardAssignment> AssignCardSlots(List<PlannedBout> lineup, PromotionPlan promotion)
+        {
+            if (lineup.Count == 0)
+                return new List<CardAssignment>();
+
+            var ordered = lineup.OrderByDescending(x => x.Score).ThenByDescending(x => x.IsTitleFight).ToList();
+            var mainCardCount = Math.Min(promotion.MainCardFightCount, ordered.Count);
+            var prelimCount = Math.Min(promotion.PrelimFightCount, Math.Max(0, ordered.Count - mainCardCount));
+            var earlyCount = Math.Max(0, ordered.Count - mainCardCount - prelimCount);
+
+            var mainCard = ordered.Take(mainCardCount).OrderBy(x => x.Score).ToList();
+            var prelims = ordered.Skip(mainCardCount).Take(prelimCount).OrderBy(x => x.Score).ToList();
+            var earlyPrelims = ordered.Skip(mainCardCount + prelimCount).Take(earlyCount).OrderBy(x => x.Score).ToList();
+
+            var assignments = new List<CardAssignment>(ordered.Count);
+            var cardOrder = 1;
+
+            foreach (var bout in earlyPrelims)
+                assignments.Add(new CardAssignment(bout, "EarlyPrelims", cardOrder++, false, false));
+
+            foreach (var bout in prelims)
+                assignments.Add(new CardAssignment(bout, "Prelims", cardOrder++, false, false));
+
+            for (var i = 0; i < mainCard.Count; i++)
+            {
+                var isCoMain = i == Math.Max(0, mainCard.Count - 2) && mainCard.Count >= 2;
+                var isMain = i == mainCard.Count - 1;
+                assignments.Add(new CardAssignment(mainCard[i], "MainCard", cardOrder++, isMain, isCoMain));
+            }
+
+            return assignments;
+        }
+
+        private static int ComputePlannedFightCount(PromotionPlan promotion, bool isMajorEvent)
+        {
+            var earlyPrelims = isMajorEvent ? promotion.EarlyPrelimFightCount : Math.Max(0, promotion.EarlyPrelimFightCount - 1);
+            return Math.Max(1, promotion.MainCardFightCount + promotion.PrelimFightCount + earlyPrelims);
+        }
+
+        private static bool IsIntervalWeek(int absoluteWeek, int intervalWeeks)
+            => intervalWeeks <= 1 || absoluteWeek % Math.Max(1, intervalWeeks) == 0;
+
+        private static int ResolveEventWeek(int currentAbsoluteWeek, int nextEventWeek)
+        {
+            if (nextEventWeek > 0 && nextEventWeek <= currentAbsoluteWeek)
+                return nextEventWeek;
+
+            return currentAbsoluteWeek;
+        }
+
+        private static async Task ApplyRecoveryAsync(
+            SqliteConnection conn,
+            SqliteTransaction tx,
+            int winnerId,
+            int loserId,
+            string method,
+            int currentAbsoluteWeek,
+            Random rng)
+        {
+            await UpdateFighterAvailabilityAsync(conn, tx, winnerId, BuildRecoveryPlan(method, true, rng), currentAbsoluteWeek);
+            await UpdateFighterAvailabilityAsync(conn, tx, loserId, BuildRecoveryPlan(method, false, rng), currentAbsoluteWeek);
+        }
+
+        private static RecoveryPlan BuildRecoveryPlan(string method, bool winnerWon, Random rng)
+        {
+            if (method == "KO/TKO")
+            {
+                var medical = winnerWon ? rng.Next(4, 7) : rng.Next(10, 17);
+                var injury = winnerWon ? RollInjuryWeeks(rng, 0.14, 2, 5) : RollInjuryWeeks(rng, 0.45, 8, 18);
+                return new RecoveryPlan(medical, injury);
+            }
+
+            if (method == "SUB")
+            {
+                var medical = winnerWon ? rng.Next(3, 6) : rng.Next(6, 10);
+                var injury = winnerWon ? RollInjuryWeeks(rng, 0.08, 2, 4) : RollInjuryWeeks(rng, 0.20, 4, 8);
+                return new RecoveryPlan(medical, injury);
+            }
+
+            var decisionMedical = winnerWon ? rng.Next(2, 5) : rng.Next(3, 6);
+            var decisionInjury = winnerWon ? RollInjuryWeeks(rng, 0.03, 1, 3) : RollInjuryWeeks(rng, 0.08, 2, 4);
+            return new RecoveryPlan(decisionMedical, decisionInjury);
+        }
+
+        private static int RollInjuryWeeks(Random rng, double chance, int minWeeks, int maxWeeks)
+            => rng.NextDouble() < chance ? rng.Next(minWeeks, maxWeeks + 1) : 0;
+
+        private static Task UpdateFighterAvailabilityAsync(
+            SqliteConnection conn,
+            SqliteTransaction tx,
+            int fighterId,
+            RecoveryPlan plan,
+            int currentAbsoluteWeek)
+        {
+            var unavailableWeeks = Math.Max(plan.MedicalSuspensionWeeks, plan.InjuryWeeks);
+
+            return ExecAsync(conn, tx, @"
 UPDATE Fighters
 SET
     IsBooked = 0,
-    WeeksUntilAvailable = $weeks,
-    InjuryWeeksRemaining = CASE WHEN $injuryWeeks > InjuryWeeksRemaining THEN $injuryWeeks ELSE InjuryWeeksRemaining END,
-    IsInjured = CASE WHEN $injuryWeeks > 0 THEN 1 ELSE 0 END
-WHERE Id IN ($a, $b);",
-                ("$weeks", baseWeeks),
-                ("$injuryWeeks", injuryWeeks),
-                ("$a", aId),
-                ("$b", bId));
+    WeeksUntilAvailable = $weeksUntilAvailable,
+    MedicalSuspensionWeeksRemaining = $medicalWeeks,
+    InjuryWeeksRemaining = $injuryWeeks,
+    IsInjured = CASE WHEN $injuryWeeks > 0 THEN 1 ELSE 0 END,
+    AvailableFromWeek = $availableFromWeek
+WHERE Id = $id;",
+                ("$weeksUntilAvailable", unavailableWeeks),
+                ("$medicalWeeks", plan.MedicalSuspensionWeeks),
+                ("$injuryWeeks", plan.InjuryWeeks),
+                ("$availableFromWeek", currentAbsoluteWeek + unavailableWeeks),
+                ("$id", fighterId));
         }
 
-        private static double CombatPower(FighterRow f, Random rng)
+        private static double CombatPower(FighterRow fighter, Random rng)
         {
-            double core = 0.35 * f.Skill
-                        + 0.14 * f.Striking
-                        + 0.14 * f.Wrestling
-                        + 0.14 * f.Grappling
-                        + 0.10 * f.Cardio
-                        + 0.07 * f.Chin
-                        + 0.06 * f.FightIQ;
+            var basePower = 0.35 * fighter.Skill
+                            + 0.14 * fighter.Striking
+                            + 0.14 * fighter.Wrestling
+                            + 0.14 * fighter.Grappling
+                            + 0.10 * fighter.Cardio
+                            + 0.07 * fighter.Chin
+                            + 0.06 * fighter.FightIQ;
 
-            core += NextGaussian(rng, 0, 4.5);
-            return core;
+            return basePower + NextGaussian(rng, 0, 4.5);
         }
 
         private static string DecideMethod(FighterRow winner, FighterRow loser, Random rng)
         {
-            double koP = 0.33;
-            double subP = 0.22;
+            var koProbability = 0.33;
+            var subProbability = 0.22;
+            koProbability += Clamp01((winner.Striking - loser.Chin) / 60.0) * 0.25;
 
-            koP += Clamp01((winner.Striking - loser.Chin) / 60.0) * 0.25;
-            double groundEdge = (winner.Grappling + winner.Wrestling) - (loser.Grappling + loser.Wrestling);
-            subP += Clamp01(groundEdge / 80.0) * 0.25;
+            var groundEdge = (winner.Grappling + winner.Wrestling) - (loser.Grappling + loser.Wrestling);
+            subProbability += Clamp01(groundEdge / 80.0) * 0.25;
 
-            koP = Clamp(koP, 0.15, 0.70);
-            subP = Clamp(subP, 0.10, 0.60);
+            koProbability = Clamp(koProbability, 0.15, 0.70);
+            subProbability = Clamp(subProbability, 0.10, 0.60);
 
-            double r = rng.NextDouble();
-            if (r < koP) return "KO/TKO";
-            if (r < koP + subP) return "SUB";
+            var roll = rng.NextDouble();
+            if (roll < koProbability) return "KO/TKO";
+            if (roll < koProbability + subProbability) return "SUB";
             return "DEC";
         }
 
-        private static async Task ApplyResultAsync(SqliteConnection conn, SqliteTransaction tx, Random rng,
-            int winnerId, int loserId, string method, bool isTitle)
+        private static async Task ApplyResultAsync(SqliteConnection conn, SqliteTransaction tx, Random rng, int winnerId, int loserId, string method, bool isTitle)
         {
             if (method == "KO/TKO")
                 await ExecAsync(conn, tx, "UPDATE Fighters SET Wins = Wins + 1, KOWins = KOWins + 1 WHERE Id = $id;", ("$id", winnerId));
@@ -332,66 +614,73 @@ WHERE Id IN ($a, $b);",
 
             await ExecAsync(conn, tx, "UPDATE Fighters SET Losses = Losses + 1 WHERE Id = $id;", ("$id", loserId));
 
-            int wDelta = isTitle ? rng.Next(3, 8) : rng.Next(1, 5);
-            int lDelta = isTitle ? rng.Next(2, 6) : rng.Next(1, 4);
+            var winnerDelta = isTitle ? rng.Next(3, 8) : rng.Next(1, 5);
+            var loserDelta = isTitle ? rng.Next(2, 6) : rng.Next(1, 4);
 
-            await ExecAsync(conn, tx, "UPDATE Fighters SET Popularity = MIN(100, Popularity + $d) WHERE Id = $id;", ("$d", wDelta), ("$id", winnerId));
-            await ExecAsync(conn, tx, "UPDATE Fighters SET Popularity = MAX(0, Popularity - $d) WHERE Id = $id;", ("$d", lDelta), ("$id", loserId));
+            await ExecAsync(conn, tx, "UPDATE Fighters SET Popularity = MIN(100, Popularity + $delta) WHERE Id = $id;", ("$delta", winnerDelta), ("$id", winnerId));
+            await ExecAsync(conn, tx, "UPDATE Fighters SET Popularity = MAX(0, Popularity - $delta) WHERE Id = $id;", ("$delta", loserDelta), ("$id", loserId));
         }
 
-        private static async Task RebuildDivisionRankingsAndEnsureTitleAsync(
-            SqliteConnection conn, SqliteTransaction tx,
-            int promotionId, string weightClass, int rankingSize)
+        private static async Task RebuildDivisionRankingsAndEnsureTitleAsync(SqliteConnection conn, SqliteTransaction tx, int promotionId, string weightClass, int rankingSize)
         {
-            await ExecAsync(conn, tx,
-                "DELETE FROM PromotionRankings WHERE PromotionId = $p AND WeightClass = $wc;",
-                ("$p", promotionId), ("$wc", weightClass));
+            await ExecAsync(conn, tx, "DELETE FROM PromotionRankings WHERE PromotionId = $p AND WeightClass = $wc;", ("$p", promotionId), ("$wc", weightClass));
 
-            var top = await QueryAsync(conn, tx, @"
+            var topFighters = await QueryAsync(conn, tx, @"
 SELECT Id
 FROM Fighters
-WHERE PromotionId = $p AND WeightClass = $wc AND Retired = 0
-ORDER BY (Skill*0.75 + Popularity*0.25) DESC
+WHERE PromotionId = $p
+  AND WeightClass = $wc
+  AND Retired = 0
+ORDER BY (Skill * 0.75 + Popularity * 0.25) DESC
 LIMIT $take;",
-                ("$p", promotionId), ("$wc", weightClass), ("$take", rankingSize));
+                ("$p", promotionId),
+                ("$wc", weightClass),
+                ("$take", rankingSize));
 
-            for (int i = 0; i < top.Count; i++)
+            for (var i = 0; i < topFighters.Count; i++)
             {
-                int fid = top[i].GetInt("Id");
                 await ExecAsync(conn, tx, @"
 INSERT INTO PromotionRankings (PromotionId, WeightClass, RankPosition, FighterId)
-VALUES ($p, $wc, $pos, $fid);",
-                    ("$p", promotionId), ("$wc", weightClass), ("$pos", i + 1), ("$fid", fid));
+VALUES ($p, $wc, $rank, $fighterId);",
+                    ("$p", promotionId),
+                    ("$wc", weightClass),
+                    ("$rank", i + 1),
+                    ("$fighterId", topFighters[i].GetInt("Id")));
             }
 
-            int titleRowCount = await ScalarIntAsync(conn, tx, @"
+            var titleRowCount = await ScalarIntAsync(conn, tx, @"
 SELECT COUNT(*)
 FROM Titles
 WHERE PromotionId = $p AND WeightClass = $wc;",
-                ("$p", promotionId), ("$wc", weightClass));
+                ("$p", promotionId),
+                ("$wc", weightClass));
 
             if (titleRowCount == 0)
             {
                 await ExecAsync(conn, tx, @"
 INSERT INTO Titles (PromotionId, WeightClass, ChampionFighterId, InterimChampionFighterId)
 VALUES ($p, $wc, NULL, NULL);",
-                    ("$p", promotionId), ("$wc", weightClass));
+                    ("$p", promotionId),
+                    ("$wc", weightClass));
             }
 
-            int champ = await ScalarIntAsync(conn, tx, @"
+            var championId = await ScalarIntAsync(conn, tx, @"
 SELECT COALESCE(ChampionFighterId, 0)
 FROM Titles
 WHERE PromotionId = $p AND WeightClass = $wc
 LIMIT 1;",
-                ("$p", promotionId), ("$wc", weightClass));
+                ("$p", promotionId),
+                ("$wc", weightClass));
 
-            if (champ <= 0 && top.Count > 0)
+            if (championId <= 0 && topFighters.Count > 0)
             {
                 await ExecAsync(conn, tx, @"
 UPDATE Titles
-SET ChampionFighterId = $c
+SET ChampionFighterId = $championId
 WHERE PromotionId = $p AND WeightClass = $wc;",
-                    ("$c", top[0].GetInt("Id")), ("$p", promotionId), ("$wc", weightClass));
+                    ("$championId", topFighters[0].GetInt("Id")),
+                    ("$p", promotionId),
+                    ("$wc", weightClass));
             }
         }
 
@@ -402,7 +691,11 @@ WHERE PromotionId = $p AND WeightClass = $wc;",
             int winnerId,
             string method,
             int? round,
-            string eventDate)
+            string eventDate,
+            string cardSegment,
+            int cardOrder,
+            bool isMainEvent,
+            bool isCoMainEvent)
         {
             using var cmd = conn.CreateCommand();
             cmd.Transaction = tx;
@@ -411,14 +704,85 @@ UPDATE Fights
 SET WinnerId = $winnerId,
     Method = $method,
     Round = $round,
-    EventDate = $eventDate
+    EventDate = $eventDate,
+    CardSegment = $cardSegment,
+    CardOrder = $cardOrder,
+    IsMainEvent = $isMainEvent,
+    IsCoMainEvent = $isCoMainEvent
 WHERE Id = $fightId;";
             cmd.Parameters.AddWithValue("$winnerId", winnerId);
             cmd.Parameters.AddWithValue("$method", method);
-            cmd.Parameters.AddWithValue("$round", round.HasValue ? round.Value : (object)DBNull.Value);
+            cmd.Parameters.AddWithValue("$round", round.HasValue ? round.Value : DBNull.Value);
             cmd.Parameters.AddWithValue("$eventDate", eventDate);
+            cmd.Parameters.AddWithValue("$cardSegment", cardSegment);
+            cmd.Parameters.AddWithValue("$cardOrder", cardOrder);
+            cmd.Parameters.AddWithValue("$isMainEvent", isMainEvent ? 1 : 0);
+            cmd.Parameters.AddWithValue("$isCoMainEvent", isCoMainEvent ? 1 : 0);
             cmd.Parameters.AddWithValue("$fightId", fightId);
             await cmd.ExecuteNonQueryAsync();
+        }
+
+        private static Task InsertCompletedFightAsync(
+            SqliteConnection conn,
+            SqliteTransaction tx,
+            int fighterAId,
+            int fighterBId,
+            int winnerId,
+            string method,
+            string eventDate,
+            int eventId,
+            string weightClass,
+            bool isTitleFight,
+            string cardSegment,
+            int cardOrder,
+            bool isMainEvent,
+            bool isCoMainEvent)
+        {
+            return ExecAsync(conn, tx, @"
+INSERT INTO Fights
+(
+    FighterAId,
+    FighterBId,
+    WinnerId,
+    Method,
+    Round,
+    EventDate,
+    EventId,
+    WeightClass,
+    IsTitleFight,
+    CardSegment,
+    CardOrder,
+    IsMainEvent,
+    IsCoMainEvent
+)
+VALUES
+(
+    $fighterAId,
+    $fighterBId,
+    $winnerId,
+    $method,
+    NULL,
+    $eventDate,
+    $eventId,
+    $weightClass,
+    $isTitleFight,
+    $cardSegment,
+    $cardOrder,
+    $isMainEvent,
+    $isCoMainEvent
+);",
+                ("$fighterAId", fighterAId),
+                ("$fighterBId", fighterBId),
+                ("$winnerId", winnerId),
+                ("$method", method),
+                ("$eventDate", eventDate),
+                ("$eventId", eventId),
+                ("$weightClass", weightClass),
+                ("$isTitleFight", isTitleFight ? 1 : 0),
+                ("$cardSegment", cardSegment),
+                ("$cardOrder", cardOrder),
+                ("$isMainEvent", isMainEvent ? 1 : 0),
+                ("$isCoMainEvent", isCoMainEvent ? 1 : 0));
         }
 
         private static async Task<int> EnsureWeeklyEventAsync(
@@ -434,101 +798,232 @@ WHERE Id = $fightId;";
             findCmd.CommandText = @"
 SELECT Id
 FROM Events
-WHERE PromotionId = $p
-  AND Name = $n
+WHERE PromotionId = $promotionId
+  AND Name = $eventName
 LIMIT 1;";
-            findCmd.Parameters.AddWithValue("$p", promotionId);
-            findCmd.Parameters.AddWithValue("$n", eventName);
+            findCmd.Parameters.AddWithValue("$promotionId", promotionId);
+            findCmd.Parameters.AddWithValue("$eventName", eventName);
 
             var existing = await findCmd.ExecuteScalarAsync();
             if (existing != null && existing != DBNull.Value)
                 return Convert.ToInt32(existing);
 
-            using var scheduledCmd = conn.CreateCommand();
-            scheduledCmd.Transaction = tx;
-            scheduledCmd.CommandText = @"
-SELECT e.Id
-FROM Events e
-WHERE e.PromotionId = $p
-  AND EXISTS
-  (
-      SELECT 1
-      FROM Fights f
-      WHERE f.EventId = e.Id
-        AND f.Method = 'Scheduled'
-  )
-ORDER BY
-    CASE WHEN COALESCE(e.EventDate, '') = '' THEN 1 ELSE 0 END,
-    e.EventDate,
-    e.Id
-LIMIT 1;";
-            scheduledCmd.Parameters.AddWithValue("$p", promotionId);
-
-            var scheduledEvent = await scheduledCmd.ExecuteScalarAsync();
-            if (scheduledEvent != null && scheduledEvent != DBNull.Value)
-            {
-                var scheduledEventId = Convert.ToInt32(scheduledEvent);
-
-                using var updateCmd = conn.CreateCommand();
-                updateCmd.Transaction = tx;
-                updateCmd.CommandText = @"
-UPDATE Events
-SET EventDate = $d,
-    Name = $n,
-    Location = $l
-WHERE Id = $id;";
-                updateCmd.Parameters.AddWithValue("$d", eventDate);
-                updateCmd.Parameters.AddWithValue("$n", eventName);
-                updateCmd.Parameters.AddWithValue("$l", location);
-                updateCmd.Parameters.AddWithValue("$id", scheduledEventId);
-                await updateCmd.ExecuteNonQueryAsync();
-
-                return scheduledEventId;
-            }
-
             using var insertCmd = conn.CreateCommand();
             insertCmd.Transaction = tx;
             insertCmd.CommandText = @"
 INSERT INTO Events (PromotionId, EventDate, Name, Location)
-VALUES ($p, $d, $n, $l);";
-            insertCmd.Parameters.AddWithValue("$p", promotionId);
-            insertCmd.Parameters.AddWithValue("$d", eventDate);
-            insertCmd.Parameters.AddWithValue("$n", eventName);
-            insertCmd.Parameters.AddWithValue("$l", location);
+VALUES ($promotionId, $eventDate, $eventName, $location);";
+            insertCmd.Parameters.AddWithValue("$promotionId", promotionId);
+            insertCmd.Parameters.AddWithValue("$eventDate", eventDate);
+            insertCmd.Parameters.AddWithValue("$eventName", eventName);
+            insertCmd.Parameters.AddWithValue("$location", location);
             await insertCmd.ExecuteNonQueryAsync();
 
             insertCmd.CommandText = "SELECT last_insert_rowid();";
             return Convert.ToInt32(await insertCmd.ExecuteScalarAsync());
         }
 
+        private static Task UpdateEventMetadataAsync(
+            SqliteConnection conn,
+            SqliteTransaction tx,
+            int eventId,
+            string eventDate,
+            string eventName,
+            string eventTier,
+            int plannedFightCount,
+            int completedFightCount)
+        {
+            return ExecAsync(conn, tx, @"
+UPDATE Events
+SET EventDate = $eventDate,
+    Name = $eventName,
+    EventTier = $eventTier,
+    PlannedFightCount = $plannedFightCount,
+    CompletedFightCount = $completedFightCount
+WHERE Id = $eventId;",
+                ("$eventDate", eventDate),
+                ("$eventName", eventName),
+                ("$eventTier", eventTier),
+                ("$plannedFightCount", plannedFightCount),
+                ("$completedFightCount", completedFightCount),
+                ("$eventId", eventId));
+        }
+
         private static Task InsertFightHistoryAsync(
-            SqliteConnection conn, SqliteTransaction tx,
-            string date, int promotionId, string weightClass,
-            int fighterAId, int fighterBId,
-            int winnerId, int loserId,
-            string method, bool isTitle,
-            int eventId, string? notes = null)
+            SqliteConnection conn,
+            SqliteTransaction tx,
+            string date,
+            int promotionId,
+            string weightClass,
+            int fighterAId,
+            int fighterBId,
+            int winnerId,
+            int loserId,
+            string method,
+            bool isTitle,
+            int eventId,
+            string cardSegment,
+            int cardOrder,
+            bool isMainEvent,
+            bool isCoMainEvent,
+            string eventTier)
         {
             return ExecAsync(conn, tx, @"
 INSERT INTO FightHistory
-(FightDate, PromotionId, WeightClass, FighterAId, FighterBId, WinnerId, LoserId, Method, IsTitle, Notes, EventId)
+(
+    FightDate,
+    PromotionId,
+    WeightClass,
+    FighterAId,
+    FighterBId,
+    WinnerId,
+    LoserId,
+    Method,
+    IsTitle,
+    Notes,
+    EventId,
+    CardSegment,
+    CardOrder,
+    IsMainEvent,
+    IsCoMainEvent,
+    EventTier
+)
 VALUES
-($d, $pid, $wc, $a, $b, $w, $l, $m, $t, $n, $eid);",
-                ("$d", date),
-                ("$pid", promotionId),
-                ("$wc", weightClass),
-                ("$a", fighterAId),
-                ("$b", fighterBId),
-                ("$w", winnerId),
-                ("$l", loserId),
-                ("$m", method),
-                ("$t", isTitle ? 1 : 0),
-                ("$n", notes ?? (object)DBNull.Value),
-                ("$eid", eventId)
-            );
+(
+    $date,
+    $promotionId,
+    $weightClass,
+    $fighterAId,
+    $fighterBId,
+    $winnerId,
+    $loserId,
+    $method,
+    $isTitle,
+    NULL,
+    $eventId,
+    $cardSegment,
+    $cardOrder,
+    $isMainEvent,
+    $isCoMainEvent,
+    $eventTier
+);",
+                ("$date", date),
+                ("$promotionId", promotionId),
+                ("$weightClass", weightClass),
+                ("$fighterAId", fighterAId),
+                ("$fighterBId", fighterBId),
+                ("$winnerId", winnerId),
+                ("$loserId", loserId),
+                ("$method", method),
+                ("$isTitle", isTitle ? 1 : 0),
+                ("$eventId", eventId),
+                ("$cardSegment", cardSegment),
+                ("$cardOrder", cardOrder),
+                ("$isMainEvent", isMainEvent ? 1 : 0),
+                ("$isCoMainEvent", isCoMainEvent ? 1 : 0),
+                ("$eventTier", eventTier));
         }
 
-        private static async Task<FighterRow?> GetFighterAsync(SqliteConnection conn, SqliteTransaction tx, int id)
+        private static async Task<PromotionPlan?> LoadPromotionPlanAsync(SqliteConnection conn, SqliteTransaction tx, int promotionId)
+        {
+            using var cmd = conn.CreateCommand();
+            cmd.Transaction = tx;
+            cmd.CommandText = @"
+SELECT
+    Name,
+    COALESCE(NextEventWeek, 0) AS NextEventWeek,
+    COALESCE(TitleFightIntervalWeeks, 6) AS TitleFightIntervalWeeks,
+    COALESCE(MajorEventIntervalWeeks, 6) AS MajorEventIntervalWeeks,
+    COALESCE(EarlyPrelimFightCount, 0) AS EarlyPrelimFightCount,
+    COALESCE(PrelimFightCount, 3) AS PrelimFightCount,
+    COALESCE(MainCardFightCount, 3) AS MainCardFightCount
+FROM Promotions
+WHERE Id = $id
+LIMIT 1;";
+            cmd.Parameters.AddWithValue("$id", promotionId);
+
+            using var reader = await cmd.ExecuteReaderAsync();
+            if (!await reader.ReadAsync())
+                return null;
+
+        return new PromotionPlan(
+            reader["Name"]?.ToString() ?? $"Promotion {promotionId}",
+            Math.Max(0, Convert.ToInt32(reader["NextEventWeek"])),
+            Math.Max(1, Convert.ToInt32(reader["TitleFightIntervalWeeks"])),
+            Math.Max(1, Convert.ToInt32(reader["MajorEventIntervalWeeks"])),
+            Math.Max(0, Convert.ToInt32(reader["EarlyPrelimFightCount"])),
+            Math.Max(1, Convert.ToInt32(reader["PrelimFightCount"])),
+            Math.Max(1, Convert.ToInt32(reader["MainCardFightCount"])));
+        }
+
+        private static async Task<List<RankedFighter>> LoadEligibleRankedDivisionAsync(SqliteConnection conn, SqliteTransaction tx, int promotionId, string weightClass)
+        {
+            using var cmd = conn.CreateCommand();
+            cmd.Transaction = tx;
+            cmd.CommandText = @"
+SELECT
+    pr.RankPosition,
+    f.Id AS FighterId,
+    f.Skill,
+    f.Popularity
+FROM PromotionRankings pr
+JOIN Fighters f ON f.Id = pr.FighterId
+WHERE pr.PromotionId = $promotionId
+  AND pr.WeightClass = $weightClass
+  AND f.Retired = 0
+  AND COALESCE(f.IsBooked, 0) = 0
+  AND COALESCE(f.WeeksUntilAvailable, 0) <= 0
+  AND COALESCE(f.InjuryWeeksRemaining, 0) <= 0
+  AND COALESCE(f.MedicalSuspensionWeeksRemaining, 0) <= 0
+  AND f.Id NOT IN (
+      SELECT FighterId
+      FROM ManagedFighters
+      WHERE IsActive = 1
+  )
+ORDER BY pr.RankPosition;";
+            cmd.Parameters.AddWithValue("$promotionId", promotionId);
+            cmd.Parameters.AddWithValue("$weightClass", weightClass);
+
+            var list = new List<RankedFighter>();
+            using var reader = await cmd.ExecuteReaderAsync();
+            while (await reader.ReadAsync())
+            {
+                list.Add(new RankedFighter(
+                    Convert.ToInt32(reader["FighterId"]),
+                    Convert.ToInt32(reader["RankPosition"]),
+                    Convert.ToInt32(reader["Skill"]),
+                    Convert.ToInt32(reader["Popularity"])));
+            }
+
+            return list;
+        }
+
+        private static async Task<FighterRow?> LoadEligibleFighterAsync(SqliteConnection conn, SqliteTransaction tx, int fighterId)
+        {
+            using var cmd = conn.CreateCommand();
+            cmd.Transaction = tx;
+            cmd.CommandText = @"
+SELECT Id, FirstName, LastName, Retired,
+       Skill, Popularity,
+       Striking, Grappling, Wrestling, Cardio, Chin, FightIQ
+FROM Fighters
+WHERE Id = $id
+  AND Retired = 0
+  AND COALESCE(IsBooked, 0) = 0
+  AND COALESCE(WeeksUntilAvailable, 0) <= 0
+  AND COALESCE(InjuryWeeksRemaining, 0) <= 0
+  AND COALESCE(MedicalSuspensionWeeksRemaining, 0) <= 0
+LIMIT 1;";
+            cmd.Parameters.AddWithValue("$id", fighterId);
+
+            using var reader = await cmd.ExecuteReaderAsync();
+            if (!await reader.ReadAsync())
+                return null;
+
+            return MapFighter(reader);
+        }
+
+        private static async Task<FighterRow?> GetFighterAsync(SqliteConnection conn, SqliteTransaction tx, int fighterId)
         {
             using var cmd = conn.CreateCommand();
             cmd.Transaction = tx;
@@ -539,95 +1034,101 @@ SELECT Id, FirstName, LastName, Retired,
 FROM Fighters
 WHERE Id = $id
 LIMIT 1;";
-            cmd.Parameters.AddWithValue("$id", id);
+            cmd.Parameters.AddWithValue("$id", fighterId);
 
-            using var r = await cmd.ExecuteReaderAsync();
-            if (!await r.ReadAsync()) return null;
+            using var reader = await cmd.ExecuteReaderAsync();
+            if (!await reader.ReadAsync())
+                return null;
 
-            return new FighterRow
-            {
-                Id = Convert.ToInt32(r["Id"]),
-                FirstName = r["FirstName"]?.ToString() ?? "",
-                LastName = r["LastName"]?.ToString() ?? "",
-                Retired = Convert.ToInt32(r["Retired"]),
-                Skill = Convert.ToInt32(r["Skill"]),
-                Popularity = Convert.ToInt32(r["Popularity"]),
-                Striking = Convert.ToInt32(r["Striking"]),
-                Grappling = Convert.ToInt32(r["Grappling"]),
-                Wrestling = Convert.ToInt32(r["Wrestling"]),
-                Cardio = Convert.ToInt32(r["Cardio"]),
-                Chin = Convert.ToInt32(r["Chin"]),
-                FightIQ = Convert.ToInt32(r["FightIQ"]),
-            };
+            return MapFighter(reader);
         }
+
+        private static FighterRow MapFighter(SqliteDataReader reader)
+            => new()
+            {
+                Id = Convert.ToInt32(reader["Id"]),
+                FirstName = reader["FirstName"]?.ToString() ?? "",
+                LastName = reader["LastName"]?.ToString() ?? "",
+                Retired = Convert.ToInt32(reader["Retired"]),
+                Skill = Convert.ToInt32(reader["Skill"]),
+                Popularity = Convert.ToInt32(reader["Popularity"]),
+                Striking = Convert.ToInt32(reader["Striking"]),
+                Grappling = Convert.ToInt32(reader["Grappling"]),
+                Wrestling = Convert.ToInt32(reader["Wrestling"]),
+                Cardio = Convert.ToInt32(reader["Cardio"]),
+                Chin = Convert.ToInt32(reader["Chin"]),
+                FightIQ = Convert.ToInt32(reader["FightIQ"])
+            };
 
         private sealed class Row
         {
-            private readonly Dictionary<string, object?> _d;
-            public Row(Dictionary<string, object?> d) { _d = d; }
-            public string GetString(string k) => _d[k]?.ToString() ?? "";
-            public int GetInt(string k) => Convert.ToInt32(_d[k]);
-        }
+            private readonly Dictionary<string, object?> _data;
 
-        private static async Task<List<Row>> QueryAsync(SqliteConnection conn, SqliteTransaction tx, string sql, params (string, object)[] p)
-        {
-            using var cmd = conn.CreateCommand();
-            cmd.Transaction = tx;
-            cmd.CommandText = sql;
-            foreach (var (k, v) in p) cmd.Parameters.AddWithValue(k, v);
-
-            var list = new List<Row>();
-            using var r = await cmd.ExecuteReaderAsync();
-            while (await r.ReadAsync())
+            public Row(Dictionary<string, object?> data)
             {
-                var d = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
-                for (int i = 0; i < r.FieldCount; i++)
-                    d[r.GetName(i)] = r.GetValue(i);
-                list.Add(new Row(d));
+                _data = data;
             }
-            return list;
+
+            public string GetString(string key) => _data[key]?.ToString() ?? "";
+            public int GetInt(string key) => Convert.ToInt32(_data[key]);
         }
 
-        private static async Task ExecAsync(SqliteConnection conn, SqliteTransaction tx, string sql, params (string, object)[] p)
+        private static async Task<List<Row>> QueryAsync(SqliteConnection conn, SqliteTransaction tx, string sql, params (string, object)[] parameters)
         {
             using var cmd = conn.CreateCommand();
             cmd.Transaction = tx;
             cmd.CommandText = sql;
-            foreach (var (k, v) in p) cmd.Parameters.AddWithValue(k, v);
+            foreach (var (name, value) in parameters)
+                cmd.Parameters.AddWithValue(name, value);
+
+            var rows = new List<Row>();
+            using var reader = await cmd.ExecuteReaderAsync();
+            while (await reader.ReadAsync())
+            {
+                var dict = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
+                for (var i = 0; i < reader.FieldCount; i++)
+                    dict[reader.GetName(i)] = reader.GetValue(i);
+
+                rows.Add(new Row(dict));
+            }
+
+            return rows;
+        }
+
+        private static async Task ExecAsync(SqliteConnection conn, SqliteTransaction tx, string sql, params (string, object)[] parameters)
+        {
+            using var cmd = conn.CreateCommand();
+            cmd.Transaction = tx;
+            cmd.CommandText = sql;
+            foreach (var (name, value) in parameters)
+                cmd.Parameters.AddWithValue(name, value);
+
             await cmd.ExecuteNonQueryAsync();
         }
 
-        private static async Task<int> ScalarIntAsync(SqliteConnection conn, SqliteTransaction tx, string sql, params (string, object)[] p)
+        private static async Task<int> ScalarIntAsync(SqliteConnection conn, SqliteTransaction tx, string sql, params (string, object)[] parameters)
         {
             using var cmd = conn.CreateCommand();
             cmd.Transaction = tx;
             cmd.CommandText = sql;
-            foreach (var (k, v) in p) cmd.Parameters.AddWithValue(k, v);
-            var o = await cmd.ExecuteScalarAsync();
-            return Convert.ToInt32(o);
+            foreach (var (name, value) in parameters)
+                cmd.Parameters.AddWithValue(name, value);
+
+            var result = await cmd.ExecuteScalarAsync();
+            return result is null || result == DBNull.Value ? 0 : Convert.ToInt32(result);
         }
 
-        private static async Task<string?> ScalarStringAsync(SqliteConnection conn, SqliteTransaction tx, string sql, params (string, object)[] p)
-        {
-            using var cmd = conn.CreateCommand();
-            cmd.Transaction = tx;
-            cmd.CommandText = sql;
-            foreach (var (k, v) in p) cmd.Parameters.AddWithValue(k, v);
-            var o = await cmd.ExecuteScalarAsync();
-            return o?.ToString();
-        }
-
-        private static int DeriveEventSeed(int worldSeed, int year, int week, int promoId)
+        private static int DeriveEventSeed(int worldSeed, int year, int week, int promotionId)
         {
             unchecked
             {
-                int h = 17;
-                h = h * 31 + worldSeed;
-                h = h * 31 + year;
-                h = h * 31 + week;
-                h = h * 31 + promoId;
-                if (h == 0) h = 1;
-                return Math.Abs(h);
+                var hash = 17;
+                hash = hash * 31 + worldSeed;
+                hash = hash * 31 + year;
+                hash = hash * 31 + week;
+                hash = hash * 31 + promotionId;
+                if (hash == 0) hash = 1;
+                return Math.Abs(hash);
             }
         }
 
@@ -635,18 +1136,18 @@ LIMIT 1;";
             => $"{promotionName} Week {absoluteWeek}";
 
         private static int ToAbsoluteWeek(int year, int week)
-            => Math.Max(0, (year - 1) * 52 + (week - 1));
+            => Math.Max(1, (year - 1) * 52 + week);
 
         private static double NextGaussian(Random rng, double mean, double stdDev)
         {
-            double u1 = 1.0 - rng.NextDouble();
-            double u2 = 1.0 - rng.NextDouble();
-            double randStdNormal = Math.Sqrt(-2.0 * Math.Log(u1)) * Math.Sin(2.0 * Math.PI * u2);
+            var u1 = 1.0 - rng.NextDouble();
+            var u2 = 1.0 - rng.NextDouble();
+            var randStdNormal = Math.Sqrt(-2.0 * Math.Log(u1)) * Math.Sin(2.0 * Math.PI * u2);
             return mean + stdDev * randStdNormal;
         }
 
-        private static double Clamp01(double v) => v < 0 ? 0 : (v > 1 ? 1 : v);
-        private static double Clamp(double v, double min, double max) => Math.Min(max, Math.Max(min, v));
+        private static double Clamp01(double value) => value < 0 ? 0 : (value > 1 ? 1 : value);
+        private static double Clamp(double value, double min, double max) => Math.Min(max, Math.Max(min, value));
 
         private sealed class FighterRow
         {
@@ -662,8 +1163,23 @@ LIMIT 1;";
             public int Cardio { get; set; }
             public int Chin { get; set; }
             public int FightIQ { get; set; }
+            public string FullName => $"{FirstName} {LastName}".Trim();
         }
 
+        private sealed record PromotionPlan(
+            string Name,
+            int NextEventWeek,
+            int TitleFightIntervalWeeks,
+            int MajorEventIntervalWeeks,
+            int EarlyPrelimFightCount,
+            int PrelimFightCount,
+            int MainCardFightCount);
+
+        private sealed record EventRuntimeSnapshot(int Id, string Name, string EventDate);
+        private sealed record RankedFighter(int FighterId, int RankPosition, int Skill, int Popularity);
+        private sealed record RecoveryPlan(int MedicalSuspensionWeeks, int InjuryWeeks);
+        private sealed record PlannedBout(int? ExistingFightId, int FighterAId, int FighterBId, string WeightClass, bool IsTitleFight, double Score);
+        private sealed record CardAssignment(PlannedBout Bout, string CardSegment, int CardOrder, bool IsMainEvent, bool IsCoMainEvent);
         private sealed record SimFightResult(int WinnerId, int LoserId, string Method, bool IsTitle, string Summary);
     }
 }

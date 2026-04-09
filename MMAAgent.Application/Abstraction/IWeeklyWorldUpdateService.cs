@@ -3,6 +3,7 @@ namespace MMAAgent.Application.Abstractions;
 public interface IWeeklyWorldUpdateService
 {
     Task<WeeklyWorldUpdateSummary> AdvanceWeekAsync(CancellationToken cancellationToken = default);
+    Task<WeeklyWorldUpdateSummary> ProcessCurrentWeekAsync(CancellationToken cancellationToken = default);
 }
 
 public sealed record WeeklyWorldUpdateSummary(

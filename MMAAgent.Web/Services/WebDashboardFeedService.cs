@@ -8,29 +8,36 @@ namespace MMAAgent.Web.Services;
 public sealed class WebDashboardFeedService
 {
     private readonly IAgentProfileRepository _agentProfileRepository;
+    private readonly IWorldAgendaService _worldAgendaService;
     private readonly SqliteConnectionFactory _factory;
 
     public WebDashboardFeedService(
         IAgentProfileRepository agentProfileRepository,
+        IWorldAgendaService worldAgendaService,
         SqliteConnectionFactory factory)
     {
         _agentProfileRepository = agentProfileRepository;
+        _worldAgendaService = worldAgendaService;
         _factory = factory;
     }
 
     public async Task<DashboardFeedVm> LoadAsync()
     {
+        await _worldAgendaService.SynchronizeAsync();
+
         var agent = await _agentProfileRepository.GetAsync();
         if (agent is null)
             return new DashboardFeedVm();
 
         using var conn = _factory.CreateConnection();
 
+        var agenda = await LoadAgendaAsync(conn);
+
         var events = await LoadSimpleListAsync(conn, @"
 SELECT COALESCE(Name, 'Event')
-FROM Promotions
-WHERE COALESCE(IsActive, 1) = 1
-ORDER BY COALESCE(NextEventWeek, 999999), Id
+FROM Events
+WHERE COALESCE(EventDate, '') <> ''
+ORDER BY EventDate DESC, Id DESC
 LIMIT 5;");
 
         var messages = await LoadSimpleListAsync(conn, @"
@@ -84,6 +91,7 @@ LIMIT 5;", agent.Id);
 
         return new DashboardFeedVm
         {
+            Agenda = agenda,
             Events = events,
             Messages = messages,
             Managed = managed,
@@ -91,6 +99,31 @@ LIMIT 5;", agent.Id);
             PendingFightOfferItems = pendingFightOffers,
             PendingContractOfferItems = pendingContractOffers
         };
+    }
+
+    private static async Task<IReadOnlyList<AgendaItemVm>> LoadAgendaAsync(SqliteConnection conn)
+    {
+        var list = new List<AgendaItemVm>();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = @"
+SELECT ScheduledDate, EventType, Headline, Subtitle, Priority
+FROM TimeQueue
+WHERE COALESCE(Status, 'Pending') = 'Pending'
+ORDER BY ScheduledDate, Priority DESC, Id
+LIMIT 8;";
+
+        using var reader = await cmd.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+        {
+            list.Add(new AgendaItemVm(
+                ScheduledDate: reader["ScheduledDate"]?.ToString() ?? "",
+                EventType: reader["EventType"]?.ToString() ?? "",
+                Headline: reader["Headline"]?.ToString() ?? "",
+                Subtitle: reader["Subtitle"] == DBNull.Value ? null : reader["Subtitle"]?.ToString(),
+                Priority: Convert.ToInt32(reader["Priority"])));
+        }
+
+        return list;
     }
 
     private static async Task<IReadOnlyList<string>> LoadSimpleListAsync(SqliteConnection conn, string sql, int? agentId = null)

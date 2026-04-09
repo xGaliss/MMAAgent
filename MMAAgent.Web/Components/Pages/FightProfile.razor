@@ -98,6 +98,18 @@ else
                     <div class="meta-label">Salary</div>
                     <div class="meta-value">@_fighter.Salary</div>
                 </div>
+                <div class="meta-box">
+                    <div class="meta-label">Availability</div>
+                    <div class="meta-value">@BuildAvailabilityText()</div>
+                </div>
+                <div class="meta-box">
+                    <div class="meta-label">Current Phase</div>
+                    <div class="meta-value">@FormatPhase(_fighter.CurrentPhase)</div>
+                </div>
+                <div class="meta-box">
+                    <div class="meta-label">Next Fight</div>
+                    <div class="meta-value">@BuildScheduledFightText()</div>
+                </div>
             </div>
         </section>
 
@@ -111,6 +123,8 @@ else
                 <div class="attribute-card"><span>Skill</span><strong>@_fighter.Skill</strong></div>
                 <div class="attribute-card"><span>Potential</span><strong>@_fighter.Potential</strong></div>
                 <div class="attribute-card"><span>Popularity</span><strong>@_fighter.Popularity</strong></div>
+                <div class="attribute-card"><span>Marketability</span><strong>@_fighter.Marketability</strong></div>
+                <div class="attribute-card"><span>Momentum</span><strong>@_fighter.Momentum</strong></div>
                 <div class="attribute-card"><span>Striking</span><strong>@_fighter.Striking</strong></div>
                 <div class="attribute-card"><span>Grappling</span><strong>@_fighter.Grappling</strong></div>
                 <div class="attribute-card"><span>Wrestling</span><strong>@_fighter.Wrestling</strong></div>
@@ -118,6 +132,72 @@ else
                 <div class="attribute-card"><span>Chin</span><strong>@_fighter.Chin</strong></div>
                 <div class="attribute-card"><span>Fight IQ</span><strong>@_fighter.FightIQ</strong></div>
                 <div class="attribute-card"><span>Fights Left</span><strong>@_fighter.ContractFightsRemaining / @_fighter.TotalFightsInContract</strong></div>
+            </div>
+        </section>
+
+        <section class="panel-card">
+            <div class="table-toolbar">
+                <div class="toolbar-title">Fight Identity</div>
+                <div class="toolbar-subtitle">Derived combat profile and natural tendencies</div>
+            </div>
+
+            <div class="profile-meta-grid" style="margin-bottom:16px;">
+                <div class="meta-box">
+                    <div class="meta-label">Base Style</div>
+                    <div class="meta-value">@_fighter.BaseStyle</div>
+                </div>
+                <div class="meta-box">
+                    <div class="meta-label">Tactical Style</div>
+                    <div class="meta-value">@_fighter.TacticalStyle</div>
+                </div>
+                <div class="meta-box" style="grid-column: span 2;">
+                    <div class="meta-label">Style Read</div>
+                    <div class="meta-value">@_fighter.StyleSummary</div>
+                </div>
+            </div>
+
+            <div class="button-row" style="gap:10px; flex-wrap:wrap;">
+                @foreach (var trait in _fighter.Traits)
+                {
+                    <span class="message-badge">@trait</span>
+                }
+            </div>
+        </section>
+
+        <section class="panel-card">
+            <div class="table-toolbar">
+                <div class="toolbar-title">Current State</div>
+                <div class="toolbar-subtitle">Internal condition presented as readable fight-week context</div>
+            </div>
+
+            <div class="attribute-grid">
+                <div class="attribute-card"><span>Phase</span><strong>@FormatPhase(_fighter.CurrentPhase)</strong></div>
+                <div class="attribute-card"><span>Next Milestone</span><strong>@BuildMilestoneText()</strong></div>
+                <div class="attribute-card"><span>Form</span><strong>@DescribeCondition(_fighter.Form)</strong></div>
+                <div class="attribute-card"><span>Energy</span><strong>@DescribeCondition(_fighter.Energy)</strong></div>
+                <div class="attribute-card"><span>Sharpness</span><strong>@DescribeCondition(_fighter.Sharpness)</strong></div>
+                <div class="attribute-card"><span>Morale</span><strong>@DescribeMorale(_fighter.Morale)</strong></div>
+                <div class="attribute-card"><span>Camp Quality</span><strong>@DescribeCamp(_fighter.CampQuality)</strong></div>
+                <div class="attribute-card"><span>Weight Cut</span><strong>@DescribeCut(_fighter.WeightCutReadiness)</strong></div>
+                <div class="attribute-card"><span>Injury Risk</span><strong>@DescribeRisk(_fighter.InjuryRisk)</strong></div>
+            </div>
+        </section>
+
+        <section class="panel-card">
+            <div class="table-toolbar">
+                <div class="toolbar-title">Career Stats</div>
+                <div class="toolbar-subtitle">Finishes and event-stage appearances</div>
+            </div>
+
+            <div class="attribute-grid">
+                <div class="attribute-card"><span>KO Wins</span><strong>@_fighter.KOWins</strong></div>
+                <div class="attribute-card"><span>Sub Wins</span><strong>@_fighter.SubWins</strong></div>
+                <div class="attribute-card"><span>Decision Wins</span><strong>@_fighter.DecWins</strong></div>
+                <div class="attribute-card"><span>Finish Rate</span><strong>@_fighter.FinishRate.ToString("0.0")%</strong></div>
+                <div class="attribute-card"><span>Title Fights</span><strong>@_fighter.TitleFightAppearances</strong></div>
+                <div class="attribute-card"><span>Main Card</span><strong>@_fighter.MainCardAppearances</strong></div>
+                <div class="attribute-card"><span>Main Events</span><strong>@_fighter.MainEventAppearances</strong></div>
+                <div class="attribute-card"><span>Co-Main Events</span><strong>@_fighter.CoMainEventAppearances</strong></div>
             </div>
         </section>
 
@@ -242,4 +322,110 @@ else
 
         return "Approach fighter";
     }
+
+    private string BuildAvailabilityText()
+    {
+        if (_fighter is null)
+            return "-";
+
+        if (_fighter.MedicalSuspensionWeeksRemaining > 0)
+            return $"Medical suspension: {_fighter.MedicalSuspensionWeeksRemaining}w";
+
+        if (_fighter.InjuryWeeksRemaining > 0)
+            return $"Injured: {_fighter.InjuryWeeksRemaining}w";
+
+        if (_fighter.WeeksUntilAvailable > 0)
+            return $"Recovering: {_fighter.WeeksUntilAvailable}w";
+
+        return "Available";
+    }
+
+    private string BuildMilestoneText()
+    {
+        if (_fighter is null || string.IsNullOrWhiteSpace(_fighter.NextMilestoneType))
+            return "None";
+
+        if (string.IsNullOrWhiteSpace(_fighter.NextMilestoneDate))
+            return _fighter.NextMilestoneType;
+
+        return $"{_fighter.NextMilestoneType} · {_fighter.NextMilestoneDate}";
+    }
+
+    private string BuildScheduledFightText()
+    {
+        if (_fighter is null)
+            return "-";
+
+        if (_fighter.IsBooked && !string.IsNullOrWhiteSpace(_fighter.ScheduledEventName))
+        {
+            var opponent = string.IsNullOrWhiteSpace(_fighter.ScheduledOpponentName)
+                ? "TBD"
+                : _fighter.ScheduledOpponentName;
+
+            return $"{_fighter.ScheduledEventName} vs {opponent}";
+        }
+
+        return "None booked";
+    }
+
+    private static string FormatPhase(string? phase)
+        => phase switch
+        {
+            null or "" => "Idle",
+            "Training Camp" => "Training Camp",
+            "Fight Week" => "Fight Week",
+            "Fight Night" => "Fight Night",
+            "Weight Cut" => "Weight Cut",
+            "Medical Suspension" => "Medical Suspension",
+            _ => phase
+        };
+
+    private static string DescribeCondition(int value)
+        => value switch
+        {
+            >= 85 => "Excellent",
+            >= 70 => "Strong",
+            >= 55 => "Steady",
+            >= 40 => "Shaky",
+            _ => "Poor"
+        };
+
+    private static string DescribeMorale(int value)
+        => value switch
+        {
+            >= 85 => "Locked in",
+            >= 70 => "Confident",
+            >= 55 => "Stable",
+            >= 40 => "Uneasy",
+            _ => "Fragile"
+        };
+
+    private static string DescribeCamp(int value)
+        => value switch
+        {
+            >= 85 => "Elite",
+            >= 70 => "Clean",
+            >= 55 => "Functional",
+            >= 40 => "Disrupted",
+            _ => "Chaotic"
+        };
+
+    private static string DescribeCut(int value)
+        => value switch
+        {
+            >= 85 => "On target",
+            >= 70 => "Comfortable",
+            >= 55 => "Manageable",
+            >= 40 => "Tight",
+            _ => "Dangerous"
+        };
+
+    private static string DescribeRisk(int value)
+        => value switch
+        {
+            >= 75 => "High",
+            >= 55 => "Elevated",
+            >= 35 => "Moderate",
+            _ => "Low"
+        };
 }
