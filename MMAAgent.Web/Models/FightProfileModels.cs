@@ -26,6 +26,8 @@ public sealed record FighterProfile(
     int Popularity,
     int Marketability,
     int Momentum,
+    int WeightMissCount,
+    int CampWithdrawalCount,
     int Striking,
     int Grappling,
     int Wrestling,
@@ -63,6 +65,7 @@ public sealed record FighterProfile(
     int WeeksUntilAvailable,
     int InjuryWeeksRemaining,
     int MedicalSuspensionWeeksRemaining,
+    string? LatestPrepNote,
     string? ScheduledOpponentName,
     string? ScheduledEventName,
     string? ScheduledEventDate);

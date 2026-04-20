@@ -54,6 +54,8 @@ SELECT
     f.Popularity,
     COALESCE(f.Marketability, 50) AS Marketability,
     COALESCE(f.Momentum, 50) AS Momentum,
+    COALESCE(f.WeightMissCount, 0) AS WeightMissCount,
+    COALESCE(f.CampWithdrawalCount, 0) AS CampWithdrawalCount,
     f.Striking,
     f.Grappling,
     f.Wrestling,
@@ -143,6 +145,18 @@ SELECT
     st.NextMilestoneType,
     st.NextMilestoneDate,
     (
+        SELECT CASE
+            WHEN COALESCE(fp.WeighInNotes, '') <> '' THEN fp.WeighInNotes
+            WHEN COALESCE(fp.FightWeekNotes, '') <> '' THEN fp.FightWeekNotes
+            WHEN COALESCE(fp.CampNotes, '') <> '' THEN fp.CampNotes
+            ELSE NULL
+        END
+        FROM FightPreparations fp
+        WHERE fp.FighterId = f.Id
+        ORDER BY COALESCE(fp.LastUpdatedDate, '0001-01-01') DESC, fp.FightId DESC
+        LIMIT 1
+    ) AS LatestPrepNote,
+    (
         SELECT group_concat(TraitCode, '|')
         FROM (
             SELECT ft.TraitCode
@@ -198,6 +212,8 @@ LIMIT 1;";
             Popularity: Convert.ToInt32(r["Popularity"]),
             Marketability: Convert.ToInt32(r["Marketability"]),
             Momentum: Convert.ToInt32(r["Momentum"]),
+            WeightMissCount: Convert.ToInt32(r["WeightMissCount"]),
+            CampWithdrawalCount: Convert.ToInt32(r["CampWithdrawalCount"]),
             Striking: Convert.ToInt32(r["Striking"]),
             Grappling: Convert.ToInt32(r["Grappling"]),
             Wrestling: Convert.ToInt32(r["Wrestling"]),
@@ -235,6 +251,7 @@ LIMIT 1;";
             WeeksUntilAvailable: Convert.ToInt32(r["WeeksUntilAvailable"]),
             InjuryWeeksRemaining: Convert.ToInt32(r["InjuryWeeksRemaining"]),
             MedicalSuspensionWeeksRemaining: Convert.ToInt32(r["MedicalSuspensionWeeksRemaining"]),
+            LatestPrepNote: r["LatestPrepNote"]?.ToString(),
             ScheduledOpponentName: r["ScheduledOpponentName"]?.ToString(),
             ScheduledEventName: r["ScheduledEventName"]?.ToString(),
             ScheduledEventDate: r["ScheduledEventDate"]?.ToString()

@@ -23,6 +23,7 @@ public sealed class CareerSchemaPreparationService
         await EnsureFightColumnsAsync(conn, cancellationToken);
         await EnsureFightOfferColumnsAsync(conn, cancellationToken);
         await EnsureFightHistoryColumnsAsync(conn, cancellationToken);
+        await EnsureFightPreparationTablesAsync(conn, cancellationToken);
         await EnsureFighterWorldTablesAsync(conn, cancellationToken);
         await EnsureAgendaTablesAsync(conn, cancellationToken);
     }
@@ -103,6 +104,8 @@ SET TitleFightIntervalWeeks = CASE
     {
         await EnsureColumnAsync(conn, "Fighters", "Marketability", "INTEGER NOT NULL DEFAULT 50", cancellationToken);
         await EnsureColumnAsync(conn, "Fighters", "Momentum", "INTEGER NOT NULL DEFAULT 50", cancellationToken);
+        await EnsureColumnAsync(conn, "Fighters", "WeightMissCount", "INTEGER NOT NULL DEFAULT 0", cancellationToken);
+        await EnsureColumnAsync(conn, "Fighters", "CampWithdrawalCount", "INTEGER NOT NULL DEFAULT 0", cancellationToken);
 
         await ExecAsync(conn, @"
 UPDATE Fighters
@@ -113,6 +116,14 @@ SET Marketability = CASE
     Momentum = CASE
         WHEN COALESCE(Momentum, 0) <= 0 THEN 50
         ELSE Momentum
+    END,
+    WeightMissCount = CASE
+        WHEN COALESCE(WeightMissCount, 0) < 0 THEN 0
+        ELSE COALESCE(WeightMissCount, 0)
+    END,
+    CampWithdrawalCount = CASE
+        WHEN COALESCE(CampWithdrawalCount, 0) < 0 THEN 0
+        ELSE COALESCE(CampWithdrawalCount, 0)
     END;", cancellationToken);
     }
 
@@ -144,6 +155,35 @@ SET Marketability = CASE
         await EnsureColumnAsync(conn, "FightHistory", "IsMainEvent", "INTEGER NOT NULL DEFAULT 0", cancellationToken);
         await EnsureColumnAsync(conn, "FightHistory", "IsCoMainEvent", "INTEGER NOT NULL DEFAULT 0", cancellationToken);
         await EnsureColumnAsync(conn, "FightHistory", "EventTier", "TEXT NOT NULL DEFAULT 'Standard'", cancellationToken);
+    }
+
+    private static async Task EnsureFightPreparationTablesAsync(SqliteConnection conn, CancellationToken cancellationToken)
+    {
+        await ExecAsync(conn, @"
+CREATE TABLE IF NOT EXISTS FightPreparations
+(
+    FightId INTEGER NOT NULL,
+    FighterId INTEGER NOT NULL,
+    CampWeeksPlanned INTEGER NOT NULL DEFAULT 0,
+    CampStartProcessed INTEGER NOT NULL DEFAULT 0,
+    CampOutcome TEXT NULL,
+    CampNotes TEXT NULL,
+    FightWeekProcessed INTEGER NOT NULL DEFAULT 0,
+    FightWeekOutcome TEXT NULL,
+    FightWeekNotes TEXT NULL,
+    WeighInProcessed INTEGER NOT NULL DEFAULT 0,
+    WeighInOutcome TEXT NULL,
+    WeighInNotes TEXT NULL,
+    AftermathProcessed INTEGER NOT NULL DEFAULT 0,
+    LastUpdatedDate TEXT NULL,
+    PRIMARY KEY (FightId, FighterId),
+    FOREIGN KEY(FightId) REFERENCES Fights(Id) ON DELETE CASCADE,
+    FOREIGN KEY(FighterId) REFERENCES Fighters(Id) ON DELETE CASCADE
+);", cancellationToken);
+
+        await EnsureColumnAsync(conn, "FightPreparations", "FightWeekOutcome", "TEXT NULL", cancellationToken);
+        await ExecAsync(conn, "CREATE INDEX IF NOT EXISTS IX_FightPreparations_FighterId ON FightPreparations(FighterId);", cancellationToken);
+        await ExecAsync(conn, "CREATE INDEX IF NOT EXISTS IX_FightPreparations_FightId ON FightPreparations(FightId);", cancellationToken);
     }
 
     private static async Task EnsureFighterWorldTablesAsync(SqliteConnection conn, CancellationToken cancellationToken)

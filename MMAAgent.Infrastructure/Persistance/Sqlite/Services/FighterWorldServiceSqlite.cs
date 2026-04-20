@@ -140,6 +140,8 @@ SELECT
     COALESCE(f.Skill, 50) AS Skill,
     COALESCE(f.Potential, 50) AS Potential,
     COALESCE(f.Popularity, 50) AS Popularity,
+    COALESCE(f.WeightMissCount, 0) AS WeightMissCount,
+    COALESCE(f.CampWithdrawalCount, 0) AS CampWithdrawalCount,
     COALESCE(f.Striking, 50) AS Striking,
     COALESCE(f.Grappling, 50) AS Grappling,
     COALESCE(f.Wrestling, 50) AS Wrestling,
@@ -192,7 +194,43 @@ SELECT
           AND COALESCE(sf.EventDate, '9999-12-31') > $currentDate
         ORDER BY sf.EventDate, sf.Id
         LIMIT 1
-    ) AS NextFightCampWeeks
+    ) AS NextFightCampWeeks,
+    (
+        SELECT COALESCE(fp.CampOutcome, '')
+        FROM Fights sf
+        LEFT JOIN FightPreparations fp
+            ON fp.FightId = sf.Id
+           AND fp.FighterId = f.Id
+        WHERE sf.Method = 'Scheduled'
+          AND (sf.FighterAId = f.Id OR sf.FighterBId = f.Id)
+          AND COALESCE(sf.EventDate, '9999-12-31') > $currentDate
+        ORDER BY sf.EventDate, sf.Id
+        LIMIT 1
+    ) AS NextFightCampOutcome,
+    (
+        SELECT COALESCE(fp.FightWeekOutcome, '')
+        FROM Fights sf
+        LEFT JOIN FightPreparations fp
+            ON fp.FightId = sf.Id
+           AND fp.FighterId = f.Id
+        WHERE sf.Method = 'Scheduled'
+          AND (sf.FighterAId = f.Id OR sf.FighterBId = f.Id)
+          AND COALESCE(sf.EventDate, '9999-12-31') > $currentDate
+        ORDER BY sf.EventDate, sf.Id
+        LIMIT 1
+    ) AS NextFightWeekOutcome,
+    (
+        SELECT COALESCE(fp.WeighInOutcome, '')
+        FROM Fights sf
+        LEFT JOIN FightPreparations fp
+            ON fp.FightId = sf.Id
+           AND fp.FighterId = f.Id
+        WHERE sf.Method = 'Scheduled'
+          AND (sf.FighterAId = f.Id OR sf.FighterBId = f.Id)
+          AND COALESCE(sf.EventDate, '9999-12-31') > $currentDate
+        ORDER BY sf.EventDate, sf.Id
+        LIMIT 1
+    ) AS NextFightWeighInOutcome
 FROM Fighters f
 ORDER BY f.Id;";
         cmd.Parameters.AddWithValue("$currentDate", currentDate);
@@ -213,6 +251,8 @@ ORDER BY f.Id;";
                 Skill: Convert.ToInt32(reader["Skill"]),
                 Potential: Convert.ToInt32(reader["Potential"]),
                 Popularity: Convert.ToInt32(reader["Popularity"]),
+                WeightMissCount: Convert.ToInt32(reader["WeightMissCount"]),
+                CampWithdrawalCount: Convert.ToInt32(reader["CampWithdrawalCount"]),
                 Striking: Convert.ToInt32(reader["Striking"]),
                 Grappling: Convert.ToInt32(reader["Grappling"]),
                 Wrestling: Convert.ToInt32(reader["Wrestling"]),
@@ -227,7 +267,10 @@ ORDER BY f.Id;";
                 LastFightDate: reader["LastFightDate"]?.ToString(),
                 LastFightResult: reader["LastFightResult"]?.ToString(),
                 NextFightDate: reader["NextFightDate"]?.ToString(),
-                NextFightCampWeeks: reader["NextFightCampWeeks"] == DBNull.Value ? null : Convert.ToInt32(reader["NextFightCampWeeks"])));
+                NextFightCampWeeks: reader["NextFightCampWeeks"] == DBNull.Value ? null : Convert.ToInt32(reader["NextFightCampWeeks"]),
+                NextFightCampOutcome: reader["NextFightCampOutcome"]?.ToString(),
+                NextFightWeekOutcome: reader["NextFightWeekOutcome"]?.ToString(),
+                NextFightWeighInOutcome: reader["NextFightWeighInOutcome"]?.ToString()));
         }
 
         return list;
@@ -386,11 +429,19 @@ ON CONFLICT(FighterId) DO UPDATE SET
             15,
             99);
 
+        marketability = Clamp(
+            marketability
+            - (snapshot.WeightMissCount * 2)
+            - (snapshot.CampWithdrawalCount * 3),
+            15,
+            99);
+
         var momentum = Clamp(
             50
             + (state.LastFightResult == "W" ? 12 : state.LastFightResult == "L" ? -10 : 0)
             + (snapshot.IsBooked ? 6 : 0)
-            - Math.Max(snapshot.InjuryWeeksRemaining, snapshot.MedicalSuspensionWeeksRemaining) * 4,
+            - Math.Max(snapshot.InjuryWeeksRemaining, snapshot.MedicalSuspensionWeeksRemaining) * 4
+            - Math.Min(10, (snapshot.WeightMissCount * 2) + (snapshot.CampWithdrawalCount * 2)),
             10,
             99);
 
@@ -419,6 +470,9 @@ WHERE Id = $fighterId;";
         var disciplineProxy = (snapshot.Cardio + snapshot.FightIQ + snapshot.Potential) / 3;
         var inCamp = phase.CurrentPhase is "Training Camp" or "Fight Week" or "Weight Cut";
         var inImmediateFightWindow = phase.CurrentPhase is "Fight Week" or "Weight Cut" or "Fight Night";
+        var campOutcome = snapshot.NextFightCampOutcome ?? string.Empty;
+        var fightWeekOutcome = snapshot.NextFightWeekOutcome ?? string.Empty;
+        var weighInOutcome = snapshot.NextFightWeighInOutcome ?? string.Empty;
 
         var form = Clamp(
             50
@@ -427,6 +481,12 @@ WHERE Id = $fighterId;";
             + (phase.CurrentPhase == "Fight Week" ? 10 : 0)
             + (phase.CurrentPhase == "Weight Cut" ? 6 : 0)
             + (phase.CurrentPhase == "Scheduled" ? 4 : 0)
+            + (campOutcome == "Excellent" ? 6 : 0)
+            - (campOutcome == "Disrupted" ? 6 : 0)
+            - (campOutcome == "MinorInjury" ? 8 : 0)
+            - (campOutcome == "CampInjury" ? 16 : 0)
+            + (fightWeekOutcome == "LockedIn" ? 4 : 0)
+            - (fightWeekOutcome == "Flat" ? 5 : 0)
             - recoveryBurden * 5
             + (snapshot.Potential - snapshot.Skill > 10 ? 4 : 0),
             15,
@@ -437,6 +497,13 @@ WHERE Id = $fighterId;";
             - (phase.CurrentPhase == "Training Camp" && upcomingWeeks.HasValue ? Math.Max(6, 18 - (upcomingWeeks.Value * 2)) : 0)
             - (phase.CurrentPhase == "Fight Week" ? 18 : 0)
             - (phase.CurrentPhase == "Weight Cut" ? 24 : 0)
+            - (campOutcome == "Disrupted" ? 6 : 0)
+            - (campOutcome == "MinorInjury" ? 10 : 0)
+            - (campOutcome == "CampInjury" ? 18 : 0)
+            - (fightWeekOutcome == "MediaSwirl" ? 5 : 0)
+            - (fightWeekOutcome == "Flat" ? 6 : 0)
+            - (weighInOutcome == "ToughCut" ? 10 : 0)
+            - (weighInOutcome == "MissedWeight" ? 14 : 0)
             - recoveryBurden * 6
             + (!snapshot.IsBooked ? 4 : 0),
             10,
@@ -449,6 +516,12 @@ WHERE Id = $fighterId;";
                 : Math.Max(-8, 20 - (inactivityWeeks * 2)))
             + (phase.CurrentPhase == "Fight Week" ? 8 : 0)
             + (phase.CurrentPhase == "Weight Cut" ? 6 : 0)
+            + (campOutcome == "Excellent" ? 6 : 0)
+            - (campOutcome == "Disrupted" ? 4 : 0)
+            - (campOutcome == "CampInjury" ? 10 : 0)
+            + (fightWeekOutcome == "LockedIn" ? 6 : 0)
+            - (fightWeekOutcome == "Flat" ? 8 : 0)
+            - (weighInOutcome == "MissedWeight" ? 4 : 0)
             + (snapshot.FightIQ / 8),
             10,
             95);
@@ -460,6 +533,14 @@ WHERE Id = $fighterId;";
             + (snapshot.IsBooked ? 3 : 0)
             + (inImmediateFightWindow ? 5 : 0)
             + (snapshot.Popularity >= 70 ? 4 : 0)
+            + (campOutcome == "Excellent" ? 5 : 0)
+            - (campOutcome == "Disrupted" ? 8 : 0)
+            - (campOutcome == "MinorInjury" ? 6 : 0)
+            - (campOutcome == "CampInjury" ? 14 : 0)
+            + (fightWeekOutcome == "LockedIn" ? 5 : 0)
+            - (fightWeekOutcome == "MediaSwirl" ? 7 : 0)
+            - (fightWeekOutcome == "Flat" ? 6 : 0)
+            - (weighInOutcome == "MissedWeight" ? 10 : 0)
             - recoveryBurden * 4,
             10,
             95);
@@ -473,6 +554,18 @@ WHERE Id = $fighterId;";
                 15,
                 90)
             : phase.CurrentPhase == "Scheduled" ? 58 : 50;
+        campQuality = Clamp(
+            campQuality
+            + (campOutcome == "Excellent" ? 12 : 0)
+            - (campOutcome == "Disrupted" ? 15 : 0)
+            - (campOutcome == "MinorInjury" ? 12 : 0),
+            10,
+            95);
+        campQuality = Clamp(
+            campQuality
+            - (campOutcome == "CampInjury" ? 22 : 0),
+            10,
+            95);
 
         var weightCutReadiness = snapshot.IsBooked
             ? Clamp(
@@ -480,6 +573,11 @@ WHERE Id = $fighterId;";
                 + (snapshot.Cardio / 3)
                 + (snapshot.FightIQ / 5)
                 - (daysUntilFight.HasValue ? Math.Max(0, 10 - daysUntilFight.Value) * 2 : 0)
+                - (campOutcome == "Disrupted" ? 10 : 0)
+                - (campOutcome == "MinorInjury" ? 8 : 0)
+                - (campOutcome == "CampInjury" ? 18 : 0)
+                - (weighInOutcome == "ToughCut" ? 18 : 0)
+                - (weighInOutcome == "MissedWeight" ? 28 : 0)
                 - recoveryBurden * 4,
                 10,
                 95)
@@ -491,6 +589,10 @@ WHERE Id = $fighterId;";
             + recoveryBurden * 8
             + (inCamp ? 6 : 0)
             + (phase.CurrentPhase == "Weight Cut" ? 6 : 0)
+            + (campOutcome == "Disrupted" ? 8 : 0)
+            + (campOutcome == "MinorInjury" ? 14 : 0)
+            + (campOutcome == "CampInjury" ? 24 : 0)
+            + (weighInOutcome == "MissedWeight" ? 6 : 0)
             - (snapshot.Cardio / 10)
             - (snapshot.Chin / 14),
             5,
@@ -734,6 +836,8 @@ WHERE Id = $fighterId;";
         int Skill,
         int Potential,
         int Popularity,
+        int WeightMissCount,
+        int CampWithdrawalCount,
         int Striking,
         int Grappling,
         int Wrestling,
@@ -748,7 +852,10 @@ WHERE Id = $fighterId;";
         string? LastFightDate,
         string? LastFightResult,
         string? NextFightDate,
-        int? NextFightCampWeeks);
+        int? NextFightCampWeeks,
+        string? NextFightCampOutcome,
+        string? NextFightWeekOutcome,
+        string? NextFightWeighInOutcome);
 
     private sealed record FighterTraitRow(string TraitCode, int Intensity);
 

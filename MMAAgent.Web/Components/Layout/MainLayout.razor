@@ -5,10 +5,128 @@
 @using MMAAgent.Web.Services
 
 @inject IGameStateRepository GameStateRepository
-@inject IWeeklyWorldUpdateService WeeklyWorldUpdateService
 @inject InboxStatusService InboxStatusService
+@inject HighlightNotificationService HighlightNotificationService
 @inject NavigationManager Navigation
 @inject WebTimeAdvanceService TimeAdvanceService
+
+<style>
+    .arena-ticker {
+        display: grid;
+        grid-template-columns: auto 1fr auto;
+        align-items: center;
+        gap: 14px;
+        margin: 0 24px 10px;
+        padding: 10px 14px;
+        border-radius: 18px;
+        border: 1px solid rgba(255,255,255,0.08);
+        background: linear-gradient(90deg, rgba(10, 17, 31, 0.98), rgba(14, 23, 42, 0.96));
+        box-shadow: 0 18px 40px rgba(0,0,0,0.24);
+        overflow: hidden;
+    }
+
+    .arena-ticker-label {
+        display: inline-flex;
+        align-items: center;
+        min-height: 34px;
+        padding: 0 14px;
+        border-radius: 999px;
+        background: linear-gradient(135deg, rgba(212,175,55,0.18), rgba(245,222,124,0.08));
+        border: 1px solid rgba(212,175,55,0.22);
+        color: #f5de7c;
+        font-size: 0.78rem;
+        font-weight: 800;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        white-space: nowrap;
+    }
+
+    .arena-ticker-viewport {
+        position: relative;
+        min-width: 0;
+        overflow: hidden;
+        mask-image: linear-gradient(90deg, transparent 0, black 6%, black 94%, transparent 100%);
+        -webkit-mask-image: linear-gradient(90deg, transparent 0, black 6%, black 94%, transparent 100%);
+    }
+
+    .arena-ticker-track {
+        display: inline-flex;
+        align-items: center;
+        gap: 20px;
+        min-width: max-content;
+        white-space: nowrap;
+        animation: arenaTickerScroll 36s linear infinite;
+        will-change: transform;
+    }
+
+    .arena-ticker-track-single {
+        animation: none;
+    }
+
+    .arena-ticker:hover .arena-ticker-track {
+        animation-play-state: paused;
+    }
+
+    .arena-ticker-item {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        padding: 6px 12px;
+        border-radius: 999px;
+        background: rgba(255,255,255,0.04);
+        border: 1px solid rgba(255,255,255,0.06);
+        color: #eaf0ff;
+        flex-shrink: 0;
+        text-decoration: none;
+    }
+
+    .arena-ticker-positive { border-color: rgba(34,197,94,0.24); }
+    .arena-ticker-warn { border-color: rgba(245,158,11,0.24); }
+    .arena-ticker-danger { border-color: rgba(248,113,113,0.26); }
+
+    .arena-ticker-type {
+        color: #f5de7c;
+        font-size: 0.74rem;
+        font-weight: 800;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+    }
+
+    .arena-ticker-text {
+        color: #d7e0fb;
+        font-size: 0.9rem;
+    }
+
+    .arena-ticker-action {
+        min-height: 34px;
+        padding: 0 14px;
+        border-radius: 999px;
+        border: 1px solid rgba(255,255,255,0.08);
+        background: rgba(255,255,255,0.04);
+        color: #eef3ff;
+        font-size: 0.82rem;
+        font-weight: 800;
+        cursor: pointer;
+        white-space: nowrap;
+    }
+
+    @@keyframes arenaTickerScroll {
+        from { transform: translateX(0); }
+        to { transform: translateX(calc(-50% - 10px)); }
+    }
+
+    @@media (max-width: 780px) {
+        .arena-ticker {
+            grid-template-columns: 1fr;
+            margin-left: 18px;
+            margin-right: 18px;
+        }
+
+        .arena-ticker-action {
+            justify-self: start;
+        }
+    }
+</style>
 
 <div class="app-shell">
     <aside class="sidebar">
@@ -117,6 +235,47 @@
             <div class="layout-status muted-text">@_layoutStatus</div>
         }
 
+        @if (HighlightNotificationService.Items.Count > 0)
+        {
+            <section class="arena-ticker">
+                <div class="arena-ticker-label">Live Wire</div>
+                <div class="arena-ticker-viewport">
+                    <div class="arena-ticker-track @(HighlightNotificationService.Items.Count <= 1 ? "arena-ticker-track-single" : string.Empty)">
+                        @foreach (var item in HighlightNotificationService.Items)
+                        {
+                            <a class="arena-ticker-item arena-ticker-@item.Tone"
+                               href="/inbox"
+                               title="@item.Body">
+                                <span class="arena-ticker-type">@FormatHighlightType(item.MessageType)</span>
+                                <span class="arena-ticker-text">@BuildTickerText(item)</span>
+                            </a>
+                        }
+
+                        @if (HighlightNotificationService.Items.Count > 1)
+                        {
+                            @foreach (var item in HighlightNotificationService.Items)
+                            {
+                                <a class="arena-ticker-item arena-ticker-@item.Tone"
+                                   href="/inbox"
+                                   aria-hidden="true"
+                                   tabindex="-1">
+                                    <span class="arena-ticker-type">@FormatHighlightType(item.MessageType)</span>
+                                    <span class="arena-ticker-text">@BuildTickerText(item)</span>
+                                </a>
+                            }
+                        }
+                    </div>
+                </div>
+
+                <button type="button"
+                        class="arena-ticker-action"
+                        @onclick="DismissAllHighlightsAsync"
+                        disabled="@_advancing">
+                    Clear
+                </button>
+            </section>
+        }
+
         <main class="page-content">
             @Body
         </main>
@@ -132,7 +291,9 @@
     protected override async Task OnInitializedAsync()
     {
         InboxStatusService.Changed += HandleInboxStatusChanged;
+        HighlightNotificationService.Changed += HandleHighlightChanged;
         await InboxStatusService.EnsureStartedAsync();
+        await HighlightNotificationService.EnsureStartedAsync();
         await LoadGameStateAsync();
     }
 
@@ -160,11 +321,12 @@
             _advancing = true;
             _layoutStatus = null;
 
-            var summary = await WeeklyWorldUpdateService.AdvanceWeekAsync();
+            var result = await TimeAdvanceService.AdvanceDaysAsync(7);
             await LoadGameStateAsync();
             await InboxStatusService.RefreshAsync();
+            await HighlightNotificationService.RefreshAsync();
 
-            _layoutStatus = $"Week advanced. New fight offers: {summary.NewFightOffers}. New messages: {summary.NewInboxMessages}.";
+            _layoutStatus = result.Message;
 
             Navigation.NavigateTo(Navigation.Uri, forceLoad: false);
         }
@@ -192,6 +354,7 @@
             var result = await TimeAdvanceService.AdvanceDaysAsync(days);
             await LoadGameStateAsync();
             await InboxStatusService.RefreshAsync();
+            await HighlightNotificationService.RefreshAsync();
 
             _layoutStatus = result.Message;
             Navigation.NavigateTo(Navigation.Uri, forceLoad: false);
@@ -220,6 +383,7 @@
             var result = await TimeAdvanceService.AdvanceToNextMilestoneAsync();
             await LoadGameStateAsync();
             await InboxStatusService.RefreshAsync();
+            await HighlightNotificationService.RefreshAsync();
 
             _layoutStatus = result.Message;
             Navigation.NavigateTo(Navigation.Uri, forceLoad: false);
@@ -245,11 +409,58 @@
         _ = InvokeAsync(StateHasChanged);
     }
 
+    private void HandleHighlightChanged()
+    {
+        _ = InvokeAsync(StateHasChanged);
+    }
+
+    private async Task DismissHighlightAsync(int messageId)
+    {
+        await HighlightNotificationService.DismissAsync(messageId);
+        await InboxStatusService.RefreshAsync();
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task DismissAllHighlightsAsync()
+    {
+        foreach (var item in HighlightNotificationService.Items.ToList())
+            await HighlightNotificationService.DismissAsync(item.Id);
+
+        await InboxStatusService.RefreshAsync();
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private static string BuildTickerText(MMAAgent.Web.Models.HighlightNotificationVm item)
+        => $"{TrimTickerPart(item.Subject)} · {TrimTickerPart(item.Body)}";
+
+    private static string TrimTickerPart(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return string.Empty;
+
+        var normalized = value.Trim();
+        return normalized.Length <= 140
+            ? normalized
+            : normalized[..137] + "...";
+    }
+
+    private static string FormatHighlightType(string messageType)
+        => messageType switch
+        {
+            "CampUpdate" => "Camp",
+            "FightWeekNotice" => "Fight Week",
+            "WeighInAlert" => "Weigh-In",
+            "FightAftermath" => "Aftermath",
+            "FightOfferShortNotice" => "Short Notice",
+            _ => "Update"
+        };
+
     private static string FormatAttentionCount(int count)
         => count > 99 ? "99+" : count.ToString();
 
     public void Dispose()
     {
         InboxStatusService.Changed -= HandleInboxStatusChanged;
+        HighlightNotificationService.Changed -= HandleHighlightChanged;
     }
 }

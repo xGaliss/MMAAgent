@@ -180,7 +180,17 @@ else
                 <div class="attribute-card"><span>Camp Quality</span><strong>@DescribeCamp(_fighter.CampQuality)</strong></div>
                 <div class="attribute-card"><span>Weight Cut</span><strong>@DescribeCut(_fighter.WeightCutReadiness)</strong></div>
                 <div class="attribute-card"><span>Injury Risk</span><strong>@DescribeRisk(_fighter.InjuryRisk)</strong></div>
+                <div class="attribute-card"><span>Weight Misses</span><strong>@_fighter.WeightMissCount</strong></div>
+                <div class="attribute-card"><span>Camp Withdrawals</span><strong>@_fighter.CampWithdrawalCount</strong></div>
             </div>
+
+            @if (!string.IsNullOrWhiteSpace(_fighter.LatestPrepNote))
+            {
+                <div class="meta-box" style="margin-top:16px;">
+                    <div class="meta-label">Latest Prep Note</div>
+                    <div class="meta-value">@_fighter.LatestPrepNote</div>
+                </div>
+            }
         </section>
 
         <section class="panel-card">

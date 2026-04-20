@@ -31,6 +31,16 @@ public sealed class ContractLifecycleServiceSqlite : IContractLifecycleService
 
     public async Task<int> ProcessWeeklyAsync(CancellationToken cancellationToken = default)
     {
+        return await ProcessAsync(processMarketDaily: false, cancellationToken);
+    }
+
+    public async Task<int> ProcessDailyAsync(CancellationToken cancellationToken = default)
+    {
+        return await ProcessAsync(processMarketDaily: true, cancellationToken);
+    }
+
+    private async Task<int> ProcessAsync(bool processMarketDaily, CancellationToken cancellationToken)
+    {
         var agent = await _agentRepository.GetAsync();
         if (agent is null)
             return 0;
@@ -39,11 +49,12 @@ public sealed class ContractLifecycleServiceSqlite : IContractLifecycleService
         using var tx = conn.BeginTransaction();
 
         var absoluteWeek = await LoadAbsoluteWeekAsync(conn, tx, cancellationToken);
-        await ExpireOldPendingOffersAsync(conn, tx, absoluteWeek, cancellationToken);
+        var currentDate = await LoadCurrentDateAsync(conn, tx, cancellationToken);
+        await ExpireOldPendingOffersAsync(conn, tx, absoluteWeek, currentDate, cancellationToken);
 
         var managedFighters = await LoadManagedFightersAsync(conn, tx, agent.Id, cancellationToken);
         var inboxMessages = new List<InboxMessage>();
-        var offersCreated = 0;
+        var updatesCreated = 0;
 
         foreach (var fighter in managedFighters)
         {
@@ -71,10 +82,11 @@ public sealed class ContractLifecycleServiceSqlite : IContractLifecycleService
                         MessageType = "ContractExpired",
                         Subject = $"{fighter.Name} is now a free agent",
                         Body = $"{promotion.Name} decided not to renew {fighter.Name}. {fighter.Name} is now a free agent.",
-                        CreatedDate = DateTime.UtcNow.ToString("yyyy-MM-dd"),
+                        CreatedDate = currentDate,
                         IsRead = false
                     });
 
+                    updatesCreated++;
                     continue;
                 }
 
@@ -89,7 +101,7 @@ public sealed class ContractLifecycleServiceSqlite : IContractLifecycleService
                     SourceType: "Renewal",
                     Notes: decision.Notes,
                     CreatedWeek: absoluteWeek,
-                    CreatedDate: DateTime.UtcNow.ToString("yyyy-MM-dd"),
+                    CreatedDate: currentDate,
                     RespondedDate: null), cancellationToken);
 
                 inboxMessages.Add(new InboxMessage
@@ -98,18 +110,22 @@ public sealed class ContractLifecycleServiceSqlite : IContractLifecycleService
                     MessageType = "ContractOffer",
                     Subject = $"Renewal offer for {fighter.Name}",
                     Body = $"{promotion.Name} offers {fighter.Name} a new {decision.OfferedFights}-fight deal. Base purse: {decision.BasePurse}, win bonus: {decision.WinBonus}.",
-                    CreatedDate = DateTime.UtcNow.ToString("yyyy-MM-dd"),
+                    CreatedDate = currentDate,
                     IsRead = false
                 });
 
-                offersCreated++;
+                updatesCreated++;
             }
             else
             {
-                if (!ShouldMarketProbeThisWeek(fighter, absoluteWeek))
+                var shouldProbe = processMarketDaily
+                    ? ShouldMarketProbeToday(fighter, currentDate)
+                    : ShouldMarketProbeThisWeek(fighter, absoluteWeek);
+
+                if (!shouldProbe)
                     continue;
 
-                var marketOffer = await TryCreateMarketOfferAsync(conn, tx, fighter, absoluteWeek, cancellationToken);
+                var marketOffer = await TryCreateMarketOfferAsync(conn, tx, fighter, absoluteWeek, currentDate, cancellationToken);
                 if (marketOffer is null)
                     continue;
 
@@ -119,11 +135,11 @@ public sealed class ContractLifecycleServiceSqlite : IContractLifecycleService
                     MessageType = "ContractOffer",
                     Subject = $"Market offer for {fighter.Name}",
                     Body = $"{marketOffer.PromotionName} wants to sign {fighter.Name} to a {marketOffer.OfferedFights}-fight deal. Base purse: {marketOffer.BasePurse}, win bonus: {marketOffer.WinBonus}.",
-                    CreatedDate = DateTime.UtcNow.ToString("yyyy-MM-dd"),
+                    CreatedDate = currentDate,
                     IsRead = false
                 });
 
-                offersCreated++;
+                updatesCreated++;
             }
         }
 
@@ -132,7 +148,7 @@ public sealed class ContractLifecycleServiceSqlite : IContractLifecycleService
         foreach (var msg in inboxMessages)
             await _inboxRepository.CreateAsync(msg);
 
-        return offersCreated;
+        return updatesCreated;
     }
 
     public async Task<int> PitchFighterToPromotionAsync(int fighterId, int promotionId, CancellationToken cancellationToken = default)
@@ -267,7 +283,20 @@ public sealed class ContractLifecycleServiceSqlite : IContractLifecycleService
         return Convert.ToInt32(await cmd.ExecuteScalarAsync(cancellationToken));
     }
 
-    private static async Task ExpireOldPendingOffersAsync(SqliteConnection conn, SqliteTransaction tx, int currentAbsoluteWeek, CancellationToken cancellationToken)
+    private static async Task<string> LoadCurrentDateAsync(SqliteConnection conn, SqliteTransaction tx, CancellationToken cancellationToken)
+    {
+        using var cmd = conn.CreateCommand();
+        cmd.Transaction = tx;
+        cmd.CommandText = "SELECT COALESCE(CurrentDate, '2026-01-01') FROM GameState LIMIT 1;";
+        return (await cmd.ExecuteScalarAsync(cancellationToken))?.ToString() ?? "2026-01-01";
+    }
+
+    private static async Task ExpireOldPendingOffersAsync(
+        SqliteConnection conn,
+        SqliteTransaction tx,
+        int currentAbsoluteWeek,
+        string currentDate,
+        CancellationToken cancellationToken)
     {
         using var cmd = conn.CreateCommand();
         cmd.Transaction = tx;
@@ -276,9 +305,14 @@ UPDATE ContractOffers
 SET Status = 'Expired',
     RespondedDate = $respondedDate
 WHERE Status = 'Pending'
-  AND (CreatedWeek + WeeksToRespond) < $currentAbsoluteWeek;";
-        cmd.Parameters.AddWithValue("$respondedDate", DateTime.UtcNow.ToString("yyyy-MM-dd"));
+  AND
+  (
+      (CreatedWeek + WeeksToRespond) < $currentAbsoluteWeek
+      OR date(COALESCE(CreatedDate, '1900-01-01'), '+' || (WeeksToRespond * 7) || ' day') < date($currentDate)
+  );";
+        cmd.Parameters.AddWithValue("$respondedDate", currentDate);
         cmd.Parameters.AddWithValue("$currentAbsoluteWeek", currentAbsoluteWeek);
+        cmd.Parameters.AddWithValue("$currentDate", currentDate);
         await cmd.ExecuteNonQueryAsync(cancellationToken);
     }
 
@@ -291,11 +325,27 @@ WHERE Status = 'Pending'
         return absoluteWeek % 4 == cadenceSeed;
     }
 
+    private static bool ShouldMarketProbeToday(ManagedContractSnapshot fighter, string currentDate)
+    {
+        if (fighter.WeeksUntilAvailable > 0 || fighter.InjuryWeeksRemaining > 0)
+            return false;
+
+        if (!DateTime.TryParse(currentDate, out var parsedDate))
+            return false;
+
+        var cadenceDays = 10 + Math.Abs(fighter.FighterId % 6);
+        var daysSinceEpoch = (int)(parsedDate.Date - new DateTime(2026, 1, 1)).TotalDays;
+        var cadenceSeed = Math.Abs(fighter.FighterId % cadenceDays);
+
+        return daysSinceEpoch >= 0 && daysSinceEpoch % cadenceDays == cadenceSeed;
+    }
+
     private async Task<MarketOfferCreated?> TryCreateMarketOfferAsync(
         SqliteConnection conn,
         SqliteTransaction tx,
         ManagedContractSnapshot fighter,
         int absoluteWeek,
+        string currentDate,
         CancellationToken cancellationToken)
     {
         var promotions = await LoadActivePromotionsAsync(conn, tx, cancellationToken);
@@ -321,7 +371,7 @@ WHERE Status = 'Pending'
                 SourceType: "Market",
                 Notes: decision.Notes,
                 CreatedWeek: absoluteWeek,
-                CreatedDate: DateTime.UtcNow.ToString("yyyy-MM-dd"),
+                CreatedDate: currentDate,
                 RespondedDate: null), cancellationToken);
 
             return new MarketOfferCreated(

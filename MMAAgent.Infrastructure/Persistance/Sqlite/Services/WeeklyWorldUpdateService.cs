@@ -14,7 +14,6 @@ public sealed class WeeklyWorldUpdateService : IWeeklyWorldUpdateService
 
     private readonly GameTimeService _gameTimeService;
     private readonly IFightOfferGenerationService _fightOfferGenerationService;
-    private readonly IContractLifecycleService _contractLifecycleService;
     private readonly InitialSigningPassSqlite _initialSigningPass;
     private readonly WorldFighterGeneratorSqlite _worldFighterGenerator;
     private readonly IFighterWorldService _fighterWorldService;
@@ -26,7 +25,6 @@ public sealed class WeeklyWorldUpdateService : IWeeklyWorldUpdateService
     public WeeklyWorldUpdateService(
         GameTimeService gameTimeService,
         IFightOfferGenerationService fightOfferGenerationService,
-        IContractLifecycleService contractLifecycleService,
         InitialSigningPassSqlite initialSigningPass,
         WorldFighterGeneratorSqlite worldFighterGenerator,
         IFighterWorldService fighterWorldService,
@@ -37,7 +35,6 @@ public sealed class WeeklyWorldUpdateService : IWeeklyWorldUpdateService
     {
         _gameTimeService = gameTimeService;
         _fightOfferGenerationService = fightOfferGenerationService;
-        _contractLifecycleService = contractLifecycleService;
         _initialSigningPass = initialSigningPass;
         _worldFighterGenerator = worldFighterGenerator;
         _fighterWorldService = fighterWorldService;
@@ -134,7 +131,6 @@ public sealed class WeeklyWorldUpdateService : IWeeklyWorldUpdateService
             _worldFighterGenerator.GenerateAnnualNewcomers();
         }
 
-        var contractOffers = await _contractLifecycleService.ProcessWeeklyAsync(cancellationToken);
         await _initialSigningPass.RunWeeklyTopUpAsync(cancellationToken);
         var newFightOffers = await _fightOfferGenerationService.GenerateWeeklyOffersAsync(cancellationToken);
 
@@ -165,7 +161,7 @@ WHERE CreatedDate = $date
             simulatedEvents,
             newFightOffers,
             newMessages,
-            contractOffers,
+            0,
             headline);
     }
 

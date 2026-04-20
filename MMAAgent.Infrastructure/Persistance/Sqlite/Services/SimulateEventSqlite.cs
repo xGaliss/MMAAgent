@@ -253,15 +253,25 @@ LIMIT 1;";
             if (fighterA.Retired != 0 || fighterB.Retired != 0)
                 return new SimFightResult(0, 0, "SKIP", card.Bout.IsTitleFight, "SKIP: retired fighter");
 
-            var aPower = CombatPower(fighterA, rng);
-            var bPower = CombatPower(fighterB, rng);
+            var prepA = card.Bout.ExistingFightId.HasValue
+                ? await LoadPrepEffectAsync(conn, tx, card.Bout.ExistingFightId.Value, fighterA.Id)
+                : PrepEffect.None;
+            var prepB = card.Bout.ExistingFightId.HasValue
+                ? await LoadPrepEffectAsync(conn, tx, card.Bout.ExistingFightId.Value, fighterB.Id)
+                : PrepEffect.None;
+
+            var aPower = CombatPower(fighterA, prepA, rng);
+            var bPower = CombatPower(fighterB, prepB, rng);
             var probabilityA = 1.0 / (1.0 + Math.Exp(-(aPower - bPower) / 12.0));
             probabilityA = Clamp01(probabilityA * (1.0 - Randomness) + rng.NextDouble() * Randomness);
 
             var aWins = rng.NextDouble() < probabilityA;
             var winner = aWins ? fighterA : fighterB;
             var loser = aWins ? fighterB : fighterA;
-            var method = DecideMethod(winner, loser, rng);
+            var winnerPrep = aWins ? prepA : prepB;
+            var loserPrep = aWins ? prepB : prepA;
+            var method = DecideMethod(winner, loser, winnerPrep, loserPrep, rng);
+            var fightNotes = BuildFightNotes(fighterA, fighterB, prepA, prepB);
 
             await ApplyResultAsync(conn, tx, rng, winner.Id, loser.Id, method, card.Bout.IsTitleFight);
             await InsertFightHistoryAsync(
@@ -276,6 +286,7 @@ LIMIT 1;";
                 loser.Id,
                 method,
                 card.Bout.IsTitleFight,
+                fightNotes,
                 eventId,
                 card.CardSegment,
                 card.CardOrder,
@@ -572,7 +583,7 @@ WHERE Id = $id;",
                 ("$id", fighterId));
         }
 
-        private static double CombatPower(FighterRow fighter, Random rng)
+        private static double CombatPower(FighterRow fighter, PrepEffect prep, Random rng)
         {
             var basePower = 0.35 * fighter.Skill
                             + 0.14 * fighter.Striking
@@ -582,10 +593,32 @@ WHERE Id = $id;",
                             + 0.07 * fighter.Chin
                             + 0.06 * fighter.FightIQ;
 
-            return basePower + NextGaussian(rng, 0, 4.5);
+            var prepAdjustment = 0.0;
+            prepAdjustment += prep.CampOutcome switch
+            {
+                "Excellent" => 4.0,
+                "Disrupted" => -3.0,
+                "MinorInjury" => -5.5,
+                _ => 0.0
+            };
+            prepAdjustment += prep.FightWeekOutcome switch
+            {
+                "LockedIn" => 2.5,
+                "MediaSwirl" => -2.0,
+                "Flat" => -3.5,
+                _ => 0.0
+            };
+            prepAdjustment += prep.WeighInOutcome switch
+            {
+                "ToughCut" => -3.0,
+                "MissedWeight" => -5.5,
+                _ => 0.0
+            };
+
+            return basePower + prepAdjustment + NextGaussian(rng, 0, 4.5);
         }
 
-        private static string DecideMethod(FighterRow winner, FighterRow loser, Random rng)
+        private static string DecideMethod(FighterRow winner, FighterRow loser, PrepEffect winnerPrep, PrepEffect loserPrep, Random rng)
         {
             var koProbability = 0.33;
             var subProbability = 0.22;
@@ -593,6 +626,36 @@ WHERE Id = $id;",
 
             var groundEdge = (winner.Grappling + winner.Wrestling) - (loser.Grappling + loser.Wrestling);
             subProbability += Clamp01(groundEdge / 80.0) * 0.25;
+
+            if (string.Equals(loserPrep.CampOutcome, "MinorInjury", StringComparison.OrdinalIgnoreCase))
+                koProbability += 0.05;
+
+            if (string.Equals(loserPrep.FightWeekOutcome, "Flat", StringComparison.OrdinalIgnoreCase))
+                koProbability += 0.04;
+
+            if (string.Equals(loserPrep.WeighInOutcome, "ToughCut", StringComparison.OrdinalIgnoreCase))
+                koProbability += 0.04;
+
+            if (string.Equals(loserPrep.WeighInOutcome, "MissedWeight", StringComparison.OrdinalIgnoreCase))
+                koProbability += 0.08;
+
+            if (string.Equals(winnerPrep.CampOutcome, "Disrupted", StringComparison.OrdinalIgnoreCase))
+            {
+                koProbability -= 0.03;
+                subProbability -= 0.02;
+            }
+
+            if (string.Equals(winnerPrep.FightWeekOutcome, "LockedIn", StringComparison.OrdinalIgnoreCase))
+            {
+                koProbability += 0.03;
+                subProbability += 0.02;
+            }
+
+            if (string.Equals(winnerPrep.WeighInOutcome, "MissedWeight", StringComparison.OrdinalIgnoreCase))
+            {
+                koProbability -= 0.05;
+                subProbability -= 0.03;
+            }
 
             koProbability = Clamp(koProbability, 0.15, 0.70);
             subProbability = Clamp(subProbability, 0.10, 0.60);
@@ -861,6 +924,7 @@ WHERE Id = $eventId;",
             int loserId,
             string method,
             bool isTitle,
+            string? notes,
             int eventId,
             string cardSegment,
             int cardOrder,
@@ -899,7 +963,7 @@ VALUES
     $loserId,
     $method,
     $isTitle,
-    NULL,
+    $notes,
     $eventId,
     $cardSegment,
     $cardOrder,
@@ -916,12 +980,73 @@ VALUES
                 ("$loserId", loserId),
                 ("$method", method),
                 ("$isTitle", isTitle ? 1 : 0),
+                ("$notes", (object?)notes ?? DBNull.Value),
                 ("$eventId", eventId),
                 ("$cardSegment", cardSegment),
                 ("$cardOrder", cardOrder),
                 ("$isMainEvent", isMainEvent ? 1 : 0),
                 ("$isCoMainEvent", isCoMainEvent ? 1 : 0),
                 ("$eventTier", eventTier));
+        }
+
+        private static async Task<PrepEffect> LoadPrepEffectAsync(SqliteConnection conn, SqliteTransaction tx, int fightId, int fighterId)
+        {
+            using var cmd = conn.CreateCommand();
+            cmd.Transaction = tx;
+            cmd.CommandText = @"
+SELECT
+    COALESCE(CampOutcome, '') AS CampOutcome,
+    COALESCE(CampNotes, '') AS CampNotes,
+    COALESCE(FightWeekOutcome, '') AS FightWeekOutcome,
+    COALESCE(FightWeekNotes, '') AS FightWeekNotes,
+    COALESCE(WeighInOutcome, '') AS WeighInOutcome,
+    COALESCE(WeighInNotes, '') AS WeighInNotes
+FROM FightPreparations
+WHERE FightId = $fightId
+  AND FighterId = $fighterId
+LIMIT 1;";
+            cmd.Parameters.AddWithValue("$fightId", fightId);
+            cmd.Parameters.AddWithValue("$fighterId", fighterId);
+
+            using var reader = await cmd.ExecuteReaderAsync();
+            if (!await reader.ReadAsync())
+                return PrepEffect.None;
+
+            return new PrepEffect(
+                reader["CampOutcome"]?.ToString() ?? "",
+                reader["CampNotes"]?.ToString() ?? "",
+                reader["FightWeekOutcome"]?.ToString() ?? "",
+                reader["FightWeekNotes"]?.ToString() ?? "",
+                reader["WeighInOutcome"]?.ToString() ?? "",
+                reader["WeighInNotes"]?.ToString() ?? "");
+        }
+
+        private static string? BuildFightNotes(FighterRow fighterA, FighterRow fighterB, PrepEffect prepA, PrepEffect prepB)
+        {
+            var fragments = new List<string>();
+            AppendPrepNote(fragments, fighterA.FullName, prepA);
+            AppendPrepNote(fragments, fighterB.FullName, prepB);
+            return fragments.Count == 0 ? null : string.Join(" ", fragments);
+        }
+
+        private static void AppendPrepNote(List<string> fragments, string fighterName, PrepEffect prep)
+        {
+            if (string.Equals(prep.CampOutcome, "Disrupted", StringComparison.OrdinalIgnoreCase))
+                fragments.Add($"{fighterName} entered after a disrupted camp.");
+            else if (string.Equals(prep.CampOutcome, "MinorInjury", StringComparison.OrdinalIgnoreCase))
+                fragments.Add($"{fighterName} fought through a minor camp injury.");
+
+            if (string.Equals(prep.FightWeekOutcome, "LockedIn", StringComparison.OrdinalIgnoreCase))
+                fragments.Add($"{fighterName} looked locked in all fight week.");
+            else if (string.Equals(prep.FightWeekOutcome, "MediaSwirl", StringComparison.OrdinalIgnoreCase))
+                fragments.Add($"{fighterName} dealt with a noisy fight week.");
+            else if (string.Equals(prep.FightWeekOutcome, "Flat", StringComparison.OrdinalIgnoreCase))
+                fragments.Add($"{fighterName} never looked fully sharp in fight week.");
+
+            if (string.Equals(prep.WeighInOutcome, "ToughCut", StringComparison.OrdinalIgnoreCase))
+                fragments.Add($"{fighterName} had a draining weight cut.");
+            else if (string.Equals(prep.WeighInOutcome, "MissedWeight", StringComparison.OrdinalIgnoreCase))
+                fragments.Add($"{fighterName} missed weight before fight night.");
         }
 
         private static async Task<PromotionPlan?> LoadPromotionPlanAsync(SqliteConnection conn, SqliteTransaction tx, int promotionId)
@@ -1180,6 +1305,16 @@ LIMIT 1;";
         private sealed record RecoveryPlan(int MedicalSuspensionWeeks, int InjuryWeeks);
         private sealed record PlannedBout(int? ExistingFightId, int FighterAId, int FighterBId, string WeightClass, bool IsTitleFight, double Score);
         private sealed record CardAssignment(PlannedBout Bout, string CardSegment, int CardOrder, bool IsMainEvent, bool IsCoMainEvent);
+        private sealed record PrepEffect(
+            string CampOutcome,
+            string CampNotes,
+            string FightWeekOutcome,
+            string FightWeekNotes,
+            string WeighInOutcome,
+            string WeighInNotes)
+        {
+            public static PrepEffect None { get; } = new("", "", "", "", "", "");
+        }
         private sealed record SimFightResult(int WinnerId, int LoserId, string Method, bool IsTitle, string Summary);
     }
 }

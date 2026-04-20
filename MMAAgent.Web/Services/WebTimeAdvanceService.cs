@@ -10,6 +10,7 @@ namespace MMAAgent.Web.Services;
 public sealed class WebTimeAdvanceService
 {
     private readonly IGameStateRepository _gameStateRepository;
+    private readonly IDailyWorldEventService _dailyWorldEventService;
     private readonly IWeeklyWorldUpdateService _weeklyWorldUpdateService;
     private readonly IFighterWorldService _fighterWorldService;
     private readonly IWorldAgendaService _worldAgendaService;
@@ -18,6 +19,7 @@ public sealed class WebTimeAdvanceService
 
     public WebTimeAdvanceService(
         IGameStateRepository gameStateRepository,
+        IDailyWorldEventService dailyWorldEventService,
         IWeeklyWorldUpdateService weeklyWorldUpdateService,
         IFighterWorldService fighterWorldService,
         IWorldAgendaService worldAgendaService,
@@ -25,6 +27,7 @@ public sealed class WebTimeAdvanceService
         SqliteConnectionFactory factory)
     {
         _gameStateRepository = gameStateRepository;
+        _dailyWorldEventService = dailyWorldEventService;
         _weeklyWorldUpdateService = weeklyWorldUpdateService;
         _fighterWorldService = fighterWorldService;
         _worldAgendaService = worldAgendaService;
@@ -88,16 +91,15 @@ public sealed class WebTimeAdvanceService
 
         var totalDaysAdvanced = 0;
         var totalWeeksProcessed = 0;
+        var totalDailyMessages = 0;
 
         while (currentDate < targetDate)
         {
-            var remainingDays = (int)(targetDate - currentDate).TotalDays;
             var daysIntoWeek = GetDaysIntoWeek(startDate, currentDate);
             var daysToWeekBoundary = 7 - daysIntoWeek;
-            var stepDays = Math.Min(remainingDays, daysToWeekBoundary);
 
-            await _gameTimeService.AdvanceDaysAsync(stepDays);
-            totalDaysAdvanced += stepDays;
+            await _gameTimeService.AdvanceDaysAsync(1);
+            totalDaysAdvanced++;
 
             state = await _gameStateRepository.GetAsync();
             if (state is null)
@@ -105,7 +107,7 @@ public sealed class WebTimeAdvanceService
 
             currentDate = ParseDate(state.CurrentDate, fallback: currentDate.ToString("yyyy-MM-dd"));
 
-            if (stepDays == daysToWeekBoundary)
+            if (daysToWeekBoundary == 1)
             {
                 await _weeklyWorldUpdateService.ProcessCurrentWeekAsync(cancellationToken);
                 totalWeeksProcessed++;
@@ -116,6 +118,9 @@ public sealed class WebTimeAdvanceService
 
                 currentDate = ParseDate(state.CurrentDate, fallback: currentDate.ToString("yyyy-MM-dd"));
             }
+
+            var dailySummary = await _dailyWorldEventService.ProcessCurrentDayAsync(cancellationToken);
+            totalDailyMessages += dailySummary.InboxMessagesCreated;
         }
 
         await _fighterWorldService.SynchronizeAsync(cancellationToken);
@@ -125,6 +130,7 @@ public sealed class WebTimeAdvanceService
         var finalDate = state?.CurrentDate ?? targetDateText;
         var dayLabel = totalDaysAdvanced == 1 ? "day" : "days";
         var weekSuffix = totalWeeksProcessed > 0 ? $" ({totalWeeksProcessed} weekly tick{(totalWeeksProcessed == 1 ? string.Empty : "s")})" : string.Empty;
+        var eventSuffix = totalDailyMessages > 0 ? $" {totalDailyMessages} notable update{(totalDailyMessages == 1 ? string.Empty : "s")} triggered." : string.Empty;
 
         return new TimeAdvanceResultVm(
             true,
@@ -132,7 +138,7 @@ public sealed class WebTimeAdvanceService
             totalWeeksProcessed,
             finalDate,
             headline,
-            $"Advanced {totalDaysAdvanced} {dayLabel} to {headline ?? finalDate}.{weekSuffix}");
+            $"Advanced {totalDaysAdvanced} {dayLabel} to {headline ?? finalDate}.{weekSuffix}{eventSuffix}");
     }
 
     private async Task<AgendaItemVm?> LoadNextMilestoneAsync(string currentDate, CancellationToken cancellationToken)
