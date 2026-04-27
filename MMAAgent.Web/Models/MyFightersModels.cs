@@ -4,6 +4,7 @@ public sealed record ManagedFighterVm(
     int FighterId,
     string Name,
     string WeightClass,
+    int? PromotionId,
     string PromotionName,
     int? RankPosition,
     bool IsChampion,
@@ -14,6 +15,10 @@ public sealed record ManagedFighterVm(
     int ContractFightsRemaining,
     int TotalFightsInContract,
     int Salary);
+
+public sealed record PromotionOptionVm(
+    int PromotionId,
+    string PromotionName);
 
 public sealed record SaveCardVm(
     string Path,

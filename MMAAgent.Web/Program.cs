@@ -9,9 +9,7 @@ using MMAAgent.Infrastructure.Persistence.Sqlite.Services;
 using MMAAgent.Web.Components;
 using MMAAgent.Web.Infrastructure;
 using MMAAgent.Web.Services;
-using MMAAgent.Application.Abstractions;
 using MMAAgent.Infrastructure.Persistance.Sqlite.Services;
-using MMAAgent.Web.Services;
 
 
 var builder = WebApplication.CreateBuilder(args);
@@ -58,6 +56,7 @@ builder.Services.AddScoped<GameTimeService>();
 builder.Services.AddScoped<DbBootstrap>();
 builder.Services.AddScoped<CareerSchemaPreparationService>();
 builder.Services.AddScoped<IFighterWorldService, FighterWorldServiceSqlite>();
+builder.Services.AddScoped<WorldEcosystemServiceSqlite>();
 builder.Services.AddScoped<IWorldAgendaService, WorldAgendaServiceSqlite>();
 builder.Services.AddScoped<IDailyWorldEventService, DailyWorldEventServiceSqlite>();
 builder.Services.AddScoped<WorldFighterGeneratorSqlite>();
@@ -71,6 +70,7 @@ builder.Services.AddScoped<WebAgentProfileService>();
 builder.Services.AddScoped<WebTimeAdvanceService>();
 builder.Services.AddScoped<WebDashboardStatsService>();
 builder.Services.AddScoped<WebRosterService>();
+builder.Services.AddScoped<WebDivisionsService>();
 builder.Services.AddScoped<WebPromotionProfileService>();
 builder.Services.AddScoped<WebMyFightersService>();
 builder.Services.AddScoped<WebMainMenuService>();

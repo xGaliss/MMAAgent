@@ -16,6 +16,8 @@ public sealed class FightOfferVm
     public int WeeksUntilFight { get; set; }
     public int CampWeeksOffered { get; set; }
     public bool IsTitleFight { get; set; }
+    public bool IsTitleEliminator { get; set; }
     public bool IsShortNotice { get; set; }
+    public string? Notes { get; set; }
     public string Status { get; set; } = "";
 }

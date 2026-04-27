@@ -23,6 +23,7 @@ public sealed class WorldAgendaServiceSqlite : IWorldAgendaService
         await InsertPendingFightOffersAsync(conn, tx, currentDate, cancellationToken);
         await InsertPendingContractOffersAsync(conn, tx, currentDate, cancellationToken);
         await InsertManagedFightMilestonesAsync(conn, tx, currentDate, cancellationToken);
+        await InsertTitlePictureMilestonesAsync(conn, tx, currentDate, cancellationToken);
         await InsertRecoveryMilestonesAsync(conn, tx, currentDate, cancellationToken);
 
         tx.Commit();
@@ -49,8 +50,19 @@ SELECT
     'FightOffer',
     fo.Id,
     95,
-    'Fight offer awaiting response',
-    (f.FirstName || ' ' || f.LastName || ' vs ' || o.FirstName || ' ' || o.LastName || ' · ' || COALESCE(p.Name, 'Promotion')),
+    CASE
+        WHEN COALESCE(fo.IsTitleFight, 0) = 1 THEN 'Title fight awaiting response'
+        WHEN COALESCE(fo.IsTitleEliminator, 0) = 1 THEN 'Title eliminator awaiting response'
+        WHEN COALESCE(fo.IsShortNotice, 0) = 1 THEN 'Short-notice fight awaiting response'
+        ELSE 'Fight offer awaiting response'
+    END,
+    ((f.FirstName || ' ' || f.LastName) || ' vs ' || (o.FirstName || ' ' || o.LastName) || ' · ' || COALESCE(p.Name, 'Promotion')
+        || CASE
+            WHEN COALESCE(fo.IsTitleFight, 0) = 1 THEN ' · title stakes'
+            WHEN COALESCE(fo.IsTitleEliminator, 0) = 1 THEN ' · eliminator stakes'
+            WHEN COALESCE(fo.IsShortNotice, 0) = 1 THEN ' · short notice'
+            ELSE ''
+           END),
     NULL,
     'Pending'
 FROM FightOffers fo
@@ -106,6 +118,7 @@ SELECT
     sf.Id AS FightId,
     sf.EventDate,
     COALESCE(sf.IsTitleFight, 0) AS IsTitleFight,
+    COALESCE(sf.IsTitleEliminator, 0) AS IsTitleEliminator,
     (f.FirstName || ' ' || f.LastName) AS FighterName,
     (o.FirstName || ' ' || o.LastName) AS OpponentName,
     COALESCE(e.Name, 'Upcoming Event') AS EventName,
@@ -135,6 +148,7 @@ ORDER BY sf.EventDate, sf.Id;";
                 continue;
 
             var isTitleFight = Convert.ToInt32(reader["IsTitleFight"]) == 1;
+            var isTitleEliminator = Convert.ToInt32(reader["IsTitleEliminator"]) == 1;
             var fighterName = reader["FighterName"]?.ToString() ?? "Managed fighter";
             var opponentName = reader["OpponentName"]?.ToString() ?? "Opponent";
             var eventName = reader["EventName"]?.ToString() ?? "Upcoming Event";
@@ -149,30 +163,49 @@ ORDER BY sf.EventDate, sf.Id;";
 
             await InsertAgendaRowAsync(
                 conn, tx, parsedEventDate.AddDays(-(campWeeks * 7)), currentDate,
-                "CampStart", "Fight", fightId, 70,
-                $"Camp starts for {fighterName}",
-                $"{eventName} vs {opponentName} · {promotionName}",
+                "CampStart", "Fight", fightId, isTitleFight ? 82 : isTitleEliminator ? 77 : 70,
+                isTitleFight
+                    ? $"Title camp starts for {fighterName}"
+                    : isTitleEliminator
+                        ? $"Eliminator camp starts for {fighterName}"
+                        : $"Camp starts for {fighterName}",
+                $"{eventName} vs {opponentName} · {promotionName}"
+                + (isTitleFight ? " · title fight" : isTitleEliminator ? " · title eliminator" : string.Empty),
                 cancellationToken);
 
             await InsertAgendaRowAsync(
                 conn, tx, parsedEventDate.AddDays(-7), currentDate,
-                "FightWeek", "Fight", fightId, 82,
-                $"Fight week for {fighterName}",
-                $"{eventName} vs {opponentName}",
+                "FightWeek", "Fight", fightId, isTitleFight ? 90 : isTitleEliminator ? 86 : 82,
+                isTitleFight
+                    ? $"Title fight week for {fighterName}"
+                    : isTitleEliminator
+                        ? $"Eliminator week for {fighterName}"
+                        : $"Fight week for {fighterName}",
+                $"{eventName} vs {opponentName}"
+                + (isTitleFight ? " · belt on the line" : isTitleEliminator ? " · next contender at stake" : string.Empty),
                 cancellationToken);
 
             await InsertAgendaRowAsync(
                 conn, tx, parsedEventDate.AddDays(-2), currentDate,
-                "WeighIn", "Fight", fightId, 86,
-                $"Weigh-in approaching for {fighterName}",
-                $"{eventName} · weight cut checkpoint",
+                "WeighIn", "Fight", fightId, isTitleFight ? 92 : isTitleEliminator ? 88 : 86,
+                isTitleFight
+                    ? $"Title weigh-in for {fighterName}"
+                    : isTitleEliminator
+                        ? $"Eliminator weigh-in for {fighterName}"
+                        : $"Weigh-in approaching for {fighterName}",
+                $"{eventName} · weight cut checkpoint"
+                + (isTitleFight ? " · title stakes" : isTitleEliminator ? " · eliminator stakes" : string.Empty),
                 cancellationToken);
 
             await InsertAgendaRowAsync(
                 conn, tx, parsedEventDate, currentDate,
-                "FightNight", "Fight", fightId, 92,
-                $"Fight night: {fighterName} vs {opponentName}",
-                eventName,
+                "FightNight", "Fight", fightId, isTitleFight ? 99 : isTitleEliminator ? 95 : 92,
+                isTitleFight
+                    ? $"Title fight night: {fighterName} vs {opponentName}"
+                    : isTitleEliminator
+                        ? $"Title eliminator: {fighterName} vs {opponentName}"
+                        : $"Fight night: {fighterName} vs {opponentName}",
+                eventName + (isTitleFight ? " · championship bout" : isTitleEliminator ? " · next contender at stake" : string.Empty),
                 cancellationToken);
         }
     }
@@ -224,6 +257,66 @@ WHERE COALESCE(mf.IsActive, 1) = 1
                 "Recovery", "Fighter", fighterId, 58,
                 $"{fighterName} should return to action",
                 $"Projected {reason}",
+                cancellationToken);
+        }
+    }
+
+    private static async Task InsertTitlePictureMilestonesAsync(
+        SqliteConnection conn,
+        SqliteTransaction tx,
+        string currentDate,
+        CancellationToken cancellationToken)
+    {
+        using var cmd = conn.CreateCommand();
+        cmd.Transaction = tx;
+        cmd.CommandText = @"
+SELECT
+    f.Id AS FighterId,
+    (f.FirstName || ' ' || f.LastName) AS FighterName,
+    f.WeightClass,
+    COALESCE(p.Name, 'Promotion') AS PromotionName,
+    cq.QueueRank
+FROM ManagedFighters mf
+JOIN Fighters f ON f.Id = mf.FighterId
+JOIN ContenderQueue cq
+    ON cq.FighterId = f.Id
+   AND cq.PromotionId = f.PromotionId
+   AND cq.WeightClass = f.WeightClass
+LEFT JOIN Promotions p ON p.Id = f.PromotionId
+WHERE COALESCE(mf.IsActive, 1) = 1
+  AND COALESCE(cq.QueueRank, 999) <= 3
+  AND NOT EXISTS
+  (
+      SELECT 1
+      FROM Titles t
+      WHERE t.PromotionId = f.PromotionId
+        AND t.WeightClass = f.WeightClass
+        AND t.ChampionFighterId = f.Id
+  )
+ORDER BY cq.QueueRank, f.Id;";
+
+        using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            var fighterId = Convert.ToInt32(reader["FighterId"]);
+            var fighterName = reader["FighterName"]?.ToString() ?? "Managed fighter";
+            var weightClass = reader["WeightClass"]?.ToString() ?? "division";
+            var promotionName = reader["PromotionName"]?.ToString() ?? "Promotion";
+            var queueRank = Convert.ToInt32(reader["QueueRank"]);
+
+            await InsertAgendaRowAsync(
+                conn,
+                tx,
+                DateTime.TryParse(currentDate, out var parsedCurrentDate) ? parsedCurrentDate : DateTime.UtcNow.Date,
+                currentDate,
+                "TitlePicture",
+                "Fighter",
+                fighterId,
+                queueRank <= 1 ? 84 : 76,
+                queueRank <= 1
+                    ? $"Title pressure on {fighterName}"
+                    : $"{fighterName} is closing on title range",
+                $"{promotionName} · {weightClass} · queue rank #{queueRank}",
                 cancellationToken);
         }
     }

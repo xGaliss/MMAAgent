@@ -1,11 +1,9 @@
 ﻿@page "/fighters/{fighterId:int}"
 @using MMAAgent.Web.Models
 @using MMAAgent.Web.Services
-@using MMAAgent.Application.Abstractions
 
 @inject FightProfileReadService FightProfileReadService
 @inject WebFighterActionService FighterActionService
-@inject IFighterRepository FighterRepository
 
 <PageTitle>Fight Profile - MMA Agent</PageTitle>
 
@@ -115,22 +113,41 @@ else
 
         <section class="panel-card">
             <div class="table-toolbar">
-                <div class="toolbar-title">Core Attributes</div>
-                <div class="toolbar-subtitle">Current overall and attribute breakdown</div>
+                <div class="toolbar-title">@(_isManaged ? "Core Attributes" : "Scout Read")</div>
+                <div class="toolbar-subtitle">@(_isManaged ? "Current overall and attribute breakdown" : "Public and estimated reads instead of exact private numbers")</div>
             </div>
 
             <div class="attribute-grid">
-                <div class="attribute-card"><span>Skill</span><strong>@_fighter.Skill</strong></div>
-                <div class="attribute-card"><span>Potential</span><strong>@_fighter.Potential</strong></div>
-                <div class="attribute-card"><span>Popularity</span><strong>@_fighter.Popularity</strong></div>
-                <div class="attribute-card"><span>Marketability</span><strong>@_fighter.Marketability</strong></div>
-                <div class="attribute-card"><span>Momentum</span><strong>@_fighter.Momentum</strong></div>
-                <div class="attribute-card"><span>Striking</span><strong>@_fighter.Striking</strong></div>
-                <div class="attribute-card"><span>Grappling</span><strong>@_fighter.Grappling</strong></div>
-                <div class="attribute-card"><span>Wrestling</span><strong>@_fighter.Wrestling</strong></div>
-                <div class="attribute-card"><span>Cardio</span><strong>@_fighter.Cardio</strong></div>
-                <div class="attribute-card"><span>Chin</span><strong>@_fighter.Chin</strong></div>
-                <div class="attribute-card"><span>Fight IQ</span><strong>@_fighter.FightIQ</strong></div>
+                @if (_isManaged)
+                {
+                    <div class="attribute-card"><span>Skill</span><strong>@_fighter.Skill</strong></div>
+                    <div class="attribute-card"><span>Potential</span><strong>@_fighter.Potential</strong></div>
+                    <div class="attribute-card"><span>Popularity</span><strong>@_fighter.Popularity</strong></div>
+                    <div class="attribute-card"><span>Marketability</span><strong>@_fighter.Marketability</strong></div>
+                    <div class="attribute-card"><span>Momentum</span><strong>@_fighter.Momentum</strong></div>
+                    <div class="attribute-card"><span>Striking</span><strong>@_fighter.Striking</strong></div>
+                    <div class="attribute-card"><span>Grappling</span><strong>@_fighter.Grappling</strong></div>
+                    <div class="attribute-card"><span>Wrestling</span><strong>@_fighter.Wrestling</strong></div>
+                    <div class="attribute-card"><span>Cardio</span><strong>@_fighter.Cardio</strong></div>
+                    <div class="attribute-card"><span>Chin</span><strong>@_fighter.Chin</strong></div>
+                    <div class="attribute-card"><span>Fight IQ</span><strong>@_fighter.FightIQ</strong></div>
+                }
+                else
+                {
+                    <div class="attribute-card"><span>Scout Confidence</span><strong>@DescribeConfidence(_fighter.ScoutConfidence)</strong></div>
+                    <div class="attribute-card"><span>Skill Read</span><strong>@DescribeRange(_fighter.EstimatedSkillMin, _fighter.EstimatedSkillMax)</strong></div>
+                    <div class="attribute-card"><span>Potential Read</span><strong>@DescribeRange(_fighter.EstimatedPotentialMin, _fighter.EstimatedPotentialMax)</strong></div>
+                    <div class="attribute-card"><span>Striking Read</span><strong>@DescribeRange(_fighter.EstimatedStrikingMin, _fighter.EstimatedStrikingMax)</strong></div>
+                    <div class="attribute-card"><span>Grappling Read</span><strong>@DescribeRange(_fighter.EstimatedGrapplingMin, _fighter.EstimatedGrapplingMax)</strong></div>
+                    <div class="attribute-card"><span>Wrestling Read</span><strong>@DescribeRange(_fighter.EstimatedWrestlingMin, _fighter.EstimatedWrestlingMax)</strong></div>
+                    <div class="attribute-card"><span>Cardio Read</span><strong>@DescribeRange(_fighter.EstimatedCardioMin, _fighter.EstimatedCardioMax)</strong></div>
+                    <div class="attribute-card"><span>Chin Read</span><strong>@DescribeRange(_fighter.EstimatedChinMin, _fighter.EstimatedChinMax)</strong></div>
+                    <div class="attribute-card"><span>Fight IQ Read</span><strong>@DescribeRange(_fighter.EstimatedFightIQMin, _fighter.EstimatedFightIQMax)</strong></div>
+                    <div class="attribute-card"><span>Popularity</span><strong>@_fighter.Popularity</strong></div>
+                    <div class="attribute-card"><span>Marketability</span><strong>@_fighter.Marketability</strong></div>
+                }
+                <div class="attribute-card"><span>Media Heat</span><strong>@DescribeHeat(_fighter.MediaHeat)</strong></div>
+                <div class="attribute-card"><span>Reliability</span><strong>@DescribeReliability(_fighter.ReliabilityScore)</strong></div>
                 <div class="attribute-card"><span>Fights Left</span><strong>@_fighter.ContractFightsRemaining / @_fighter.TotalFightsInContract</strong></div>
             </div>
         </section>
@@ -157,7 +174,7 @@ else
             </div>
 
             <div class="button-row" style="gap:10px; flex-wrap:wrap;">
-                @foreach (var trait in _fighter.Traits)
+                @foreach (var trait in GetVisibleTraits())
                 {
                     <span class="message-badge">@trait</span>
                 }
@@ -180,6 +197,9 @@ else
                 <div class="attribute-card"><span>Camp Quality</span><strong>@DescribeCamp(_fighter.CampQuality)</strong></div>
                 <div class="attribute-card"><span>Weight Cut</span><strong>@DescribeCut(_fighter.WeightCutReadiness)</strong></div>
                 <div class="attribute-card"><span>Injury Risk</span><strong>@DescribeRisk(_fighter.InjuryRisk)</strong></div>
+                <div class="attribute-card"><span>Media Heat</span><strong>@DescribeHeat(_fighter.MediaHeat)</strong></div>
+                <div class="attribute-card"><span>Reliability</span><strong>@DescribeReliability(_fighter.ReliabilityScore)</strong></div>
+                <div class="attribute-card"><span>Wear</span><strong>@DescribeWear(_fighter.DamageMiles)</strong></div>
                 <div class="attribute-card"><span>Weight Misses</span><strong>@_fighter.WeightMissCount</strong></div>
                 <div class="attribute-card"><span>Camp Withdrawals</span><strong>@_fighter.CampWithdrawalCount</strong></div>
             </div>
@@ -189,6 +209,54 @@ else
                 <div class="meta-box" style="margin-top:16px;">
                     <div class="meta-label">Latest Prep Note</div>
                     <div class="meta-value">@_fighter.LatestPrepNote</div>
+                </div>
+            }
+        </section>
+
+        <section class="panel-card">
+            <div class="table-toolbar">
+                <div class="toolbar-title">Legacy</div>
+                <div class="toolbar-subtitle">What the career already says about this fighter</div>
+            </div>
+
+            @if (_fighter.LegacyTags.Count == 0)
+            {
+                <div class="muted-text">Legacy is still being written.</div>
+            }
+            else
+            {
+                <div class="dashboard-list">
+                    @foreach (var tag in _fighter.LegacyTags)
+                    {
+                        <div class="dashboard-list-item">
+                            <strong>@FormatLegacyTag(tag.TagCode)</strong>
+                            <div class="muted-text">@tag.Summary</div>
+                        </div>
+                    }
+                </div>
+            }
+        </section>
+
+        <section class="panel-card">
+            <div class="table-toolbar">
+                <div class="toolbar-title">Active Storylines</div>
+                <div class="toolbar-subtitle">Narratives currently orbiting this fighter</div>
+            </div>
+
+            @if (_fighter.Storylines.Count == 0)
+            {
+                <div class="muted-text">No active storylines yet.</div>
+            }
+            else
+            {
+                <div class="dashboard-list">
+                    @foreach (var story in _fighter.Storylines)
+                    {
+                        <div class="dashboard-list-item">
+                            <strong>@story.Headline</strong>
+                            <div class="muted-text">@story.Body</div>
+                        </div>
+                    }
                 </div>
             }
         </section>
@@ -233,6 +301,7 @@ else
                             <th>Promotion</th>
                             <th>Event</th>
                             <th>Title</th>
+                            <th>Eliminator</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -248,6 +317,7 @@ else
                                 <td>@item.Promotion</td>
                                 <td>@(item.EventName ?? "-")</td>
                                 <td>@(item.IsTitle ? "Yes" : "No")</td>
+                                <td>@(item.IsTitleEliminator ? "Yes" : "No")</td>
                             </tr>
                         }
                     </tbody>
@@ -277,7 +347,7 @@ else
             _fighter = result.Fighter;
             _history = result.History.ToList();
 
-            _isManaged = await FighterRepository.IsManagedAsync(fighterId);
+            _isManaged = _fighter?.IsManagedByPlayer ?? false;
         }
         catch (Exception ex)
         {
@@ -438,4 +508,74 @@ else
             >= 35 => "Moderate",
             _ => "Low"
         };
+
+    private static string DescribeConfidence(int value)
+        => value switch
+        {
+            >= 90 => "Very High",
+            >= 75 => "High",
+            >= 60 => "Medium",
+            >= 45 => "Low",
+            _ => "Very Low"
+        };
+
+    private static string DescribeRange(int min, int max) => $"{min}-{max}";
+
+    private static string DescribeReliability(int value)
+        => value switch
+        {
+            >= 85 => "Elite",
+            >= 70 => "Strong",
+            >= 55 => "Mixed",
+            >= 40 => "Shaky",
+            _ => "Risky"
+        };
+
+    private static string DescribeHeat(int value)
+        => value switch
+        {
+            >= 85 => "Super hot",
+            >= 70 => "Buzzing",
+            >= 55 => "Warm",
+            >= 40 => "Quiet",
+            _ => "Cold"
+        };
+
+    private static string DescribeWear(int value)
+        => value switch
+        {
+            >= 55 => "Heavy miles",
+            >= 35 => "Accumulating",
+            >= 18 => "Managed",
+            _ => "Fresh"
+        };
+
+    private static string FormatLegacyTag(string tagCode)
+        => tagCode switch
+        {
+            "Champion" => "Champion",
+            "FormerChampion" => "Former Champion",
+            "BigFightFighter" => "Big Fight Fighter",
+            "WeightTrouble" => "Weight Trouble",
+            "ShortNoticeSpecialist" => "Short Notice Specialist",
+            "VeteranMiles" => "Veteran Miles",
+            _ => tagCode
+        };
+
+    private IReadOnlyList<string> GetVisibleTraits()
+    {
+        if (_fighter is null)
+            return Array.Empty<string>();
+
+        if (_isManaged)
+            return _fighter.Traits;
+
+        if (_fighter.ScoutConfidence < 60)
+            return new[] { "Traits unclear" };
+
+        if (_fighter.ScoutConfidence < 80)
+            return _fighter.Traits.Take(1).DefaultIfEmpty("Traits emerging").ToArray();
+
+        return _fighter.Traits;
+    }
 }

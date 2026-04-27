@@ -20,6 +20,22 @@ public sealed record PromotionRankingVm(
     int FighterId,
     string FighterName);
 
+public sealed record PromotionContenderVm(
+    string WeightClass,
+    int QueueRank,
+    int FighterId,
+    string FighterName,
+    int QueueScore,
+    string Notes);
+
+public sealed record PromotionDivisionPictureVm(
+    string WeightClass,
+    int? ChampionId,
+    string ChampionName,
+    IReadOnlyList<PromotionContenderVm> NextContenders,
+    string? UpcomingStakes,
+    string? RivalryHeadline);
+
 public sealed record PromotionProfileVm(
     int Id,
     string Name,
@@ -29,4 +45,6 @@ public sealed record PromotionProfileVm(
     int EventIntervalWeeks,
     int NextEventWeek,
     IReadOnlyList<PromotionChampionVm> Champions,
-    IReadOnlyList<PromotionRankingVm> Rankings);
+    IReadOnlyList<PromotionRankingVm> Rankings,
+    IReadOnlyList<PromotionContenderVm> Contenders,
+    IReadOnlyList<PromotionDivisionPictureVm> Divisions);

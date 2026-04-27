@@ -140,6 +140,7 @@ SELECT
     COALESCE(f.Skill, 50) AS Skill,
     COALESCE(f.Potential, 50) AS Potential,
     COALESCE(f.Popularity, 50) AS Popularity,
+    COALESCE(f.DamageMiles, 0) AS DamageMiles,
     COALESCE(f.WeightMissCount, 0) AS WeightMissCount,
     COALESCE(f.CampWithdrawalCount, 0) AS CampWithdrawalCount,
     COALESCE(f.Striking, 50) AS Striking,
@@ -251,6 +252,7 @@ ORDER BY f.Id;";
                 Skill: Convert.ToInt32(reader["Skill"]),
                 Potential: Convert.ToInt32(reader["Potential"]),
                 Popularity: Convert.ToInt32(reader["Popularity"]),
+                DamageMiles: Convert.ToInt32(reader["DamageMiles"]),
                 WeightMissCount: Convert.ToInt32(reader["WeightMissCount"]),
                 CampWithdrawalCount: Convert.ToInt32(reader["CampWithdrawalCount"]),
                 Striking: Convert.ToInt32(reader["Striking"]),
@@ -425,6 +427,8 @@ ON CONFLICT(FighterId) DO UPDATE SET
             + snapshot.Popularity
             + (int)Math.Round(finishRate * 0.15)
             + (snapshot.Age is >= 24 and <= 32 ? 6 : 0)
+            - Math.Max(0, snapshot.Age - 34) * 2
+            - (snapshot.DamageMiles / 3)
             + (snapshot.IsBooked ? 4 : 0),
             15,
             99);
@@ -440,6 +444,8 @@ ON CONFLICT(FighterId) DO UPDATE SET
             50
             + (state.LastFightResult == "W" ? 12 : state.LastFightResult == "L" ? -10 : 0)
             + (snapshot.IsBooked ? 6 : 0)
+            - Math.Max(0, snapshot.Age - 35)
+            - (snapshot.DamageMiles / 4)
             - Math.Max(snapshot.InjuryWeeksRemaining, snapshot.MedicalSuspensionWeeksRemaining) * 4
             - Math.Min(10, (snapshot.WeightMissCount * 2) + (snapshot.CampWithdrawalCount * 2)),
             10,
@@ -468,6 +474,8 @@ WHERE Id = $fighterId;";
         var daysUntilFight = DaysBetween(currentDate, snapshot.NextFightDate);
         var upcomingWeeks = WeeksBetween(currentDate, snapshot.NextFightDate);
         var disciplineProxy = (snapshot.Cardio + snapshot.FightIQ + snapshot.Potential) / 3;
+        var agePenalty = Math.Max(0, snapshot.Age - 32);
+        var wearPenalty = snapshot.DamageMiles / 3;
         var inCamp = phase.CurrentPhase is "Training Camp" or "Fight Week" or "Weight Cut";
         var inImmediateFightWindow = phase.CurrentPhase is "Fight Week" or "Weight Cut" or "Fight Night";
         var campOutcome = snapshot.NextFightCampOutcome ?? string.Empty;
@@ -487,6 +495,8 @@ WHERE Id = $fighterId;";
             - (campOutcome == "CampInjury" ? 16 : 0)
             + (fightWeekOutcome == "LockedIn" ? 4 : 0)
             - (fightWeekOutcome == "Flat" ? 5 : 0)
+            - (wearPenalty / 2)
+            - agePenalty
             - recoveryBurden * 5
             + (snapshot.Potential - snapshot.Skill > 10 ? 4 : 0),
             15,
@@ -504,6 +514,8 @@ WHERE Id = $fighterId;";
             - (fightWeekOutcome == "Flat" ? 6 : 0)
             - (weighInOutcome == "ToughCut" ? 10 : 0)
             - (weighInOutcome == "MissedWeight" ? 14 : 0)
+            - wearPenalty
+            - agePenalty
             - recoveryBurden * 6
             + (!snapshot.IsBooked ? 4 : 0),
             10,
@@ -522,6 +534,7 @@ WHERE Id = $fighterId;";
             + (fightWeekOutcome == "LockedIn" ? 6 : 0)
             - (fightWeekOutcome == "Flat" ? 8 : 0)
             - (weighInOutcome == "MissedWeight" ? 4 : 0)
+            - (wearPenalty / 2)
             + (snapshot.FightIQ / 8),
             10,
             95);
@@ -541,6 +554,7 @@ WHERE Id = $fighterId;";
             - (fightWeekOutcome == "MediaSwirl" ? 7 : 0)
             - (fightWeekOutcome == "Flat" ? 6 : 0)
             - (weighInOutcome == "MissedWeight" ? 10 : 0)
+            - (wearPenalty / 3)
             - recoveryBurden * 4,
             10,
             95);
@@ -578,6 +592,7 @@ WHERE Id = $fighterId;";
                 - (campOutcome == "CampInjury" ? 18 : 0)
                 - (weighInOutcome == "ToughCut" ? 18 : 0)
                 - (weighInOutcome == "MissedWeight" ? 28 : 0)
+                - (wearPenalty / 2)
                 - recoveryBurden * 4,
                 10,
                 95)
@@ -586,6 +601,7 @@ WHERE Id = $fighterId;";
         var injuryRisk = Clamp(
             12
             + Math.Max(0, snapshot.Age - 30) * 2
+            + wearPenalty
             + recoveryBurden * 8
             + (inCamp ? 6 : 0)
             + (phase.CurrentPhase == "Weight Cut" ? 6 : 0)
@@ -836,6 +852,7 @@ WHERE Id = $fighterId;";
         int Skill,
         int Potential,
         int Popularity,
+        int DamageMiles,
         int WeightMissCount,
         int CampWithdrawalCount,
         int Striking,

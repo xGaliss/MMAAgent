@@ -11,7 +11,13 @@ public sealed record RosterListItemVm(
     string CountryName,
     int Wins,
     int Losses,
-    int Draws);
+    int Draws,
+    string ScoutRead,
+    string ConfidenceLabel,
+    string BaseStyle,
+    int ReliabilityScore,
+    int MediaHeat,
+    string ScoutStatus);
 
 public sealed record RosterQueryResult(
     int TotalCount,

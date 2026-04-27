@@ -27,9 +27,15 @@ public sealed class FightProfileReadService
 
         var fighter = await LoadProfileAsync(conn, tx, fighterId);
         var history = await LoadHistoryAsync(conn, tx, fighterId, take);
+        var storylines = fighter is null
+            ? Array.Empty<FighterStorylineItem>()
+            : await LoadStorylinesAsync(conn, tx, fighterId, 6);
+        var legacyTags = fighter is null
+            ? Array.Empty<FighterLegacyTagItem>()
+            : await LoadLegacyTagsAsync(conn, tx, fighterId, 6);
 
         tx.Commit();
-        return (fighter, history);
+        return (fighter is null ? null : fighter with { Storylines = storylines, LegacyTags = legacyTags }, history);
     }
 
     private static async Task<FighterProfile?> LoadProfileAsync(SqliteConnection conn, SqliteTransaction tx, int id)
@@ -54,6 +60,9 @@ SELECT
     f.Popularity,
     COALESCE(f.Marketability, 50) AS Marketability,
     COALESCE(f.Momentum, 50) AS Momentum,
+    COALESCE(f.ReliabilityScore, 60) AS ReliabilityScore,
+    COALESCE(f.MediaHeat, 20) AS MediaHeat,
+    COALESCE(f.DamageMiles, 0) AS DamageMiles,
     COALESCE(f.WeightMissCount, 0) AS WeightMissCount,
     COALESCE(f.CampWithdrawalCount, 0) AS CampWithdrawalCount,
     f.Striking,
@@ -62,6 +71,23 @@ SELECT
     f.Cardio,
     f.Chin,
     f.FightIQ,
+    COALESCE(sk.Confidence, 40) AS ScoutConfidence,
+    COALESCE(sk.EstimatedSkillMin, MAX(1, f.Skill - 15)) AS EstimatedSkillMin,
+    COALESCE(sk.EstimatedSkillMax, MIN(99, f.Skill + 15)) AS EstimatedSkillMax,
+    COALESCE(sk.EstimatedPotentialMin, MAX(1, f.Potential - 18)) AS EstimatedPotentialMin,
+    COALESCE(sk.EstimatedPotentialMax, MIN(99, f.Potential + 18)) AS EstimatedPotentialMax,
+    COALESCE(sk.EstimatedStrikingMin, MAX(1, f.Striking - 15)) AS EstimatedStrikingMin,
+    COALESCE(sk.EstimatedStrikingMax, MIN(99, f.Striking + 15)) AS EstimatedStrikingMax,
+    COALESCE(sk.EstimatedGrapplingMin, MAX(1, f.Grappling - 15)) AS EstimatedGrapplingMin,
+    COALESCE(sk.EstimatedGrapplingMax, MIN(99, f.Grappling + 15)) AS EstimatedGrapplingMax,
+    COALESCE(sk.EstimatedWrestlingMin, MAX(1, f.Wrestling - 15)) AS EstimatedWrestlingMin,
+    COALESCE(sk.EstimatedWrestlingMax, MIN(99, f.Wrestling + 15)) AS EstimatedWrestlingMax,
+    COALESCE(sk.EstimatedCardioMin, MAX(1, f.Cardio - 15)) AS EstimatedCardioMin,
+    COALESCE(sk.EstimatedCardioMax, MIN(99, f.Cardio + 15)) AS EstimatedCardioMax,
+    COALESCE(sk.EstimatedChinMin, MAX(1, f.Chin - 15)) AS EstimatedChinMin,
+    COALESCE(sk.EstimatedChinMax, MIN(99, f.Chin + 15)) AS EstimatedChinMax,
+    COALESCE(sk.EstimatedFightIQMin, MAX(1, f.FightIQ - 15)) AS EstimatedFightIQMin,
+    COALESCE(sk.EstimatedFightIQMax, MIN(99, f.FightIQ + 15)) AS EstimatedFightIQMax,
     f.ContractStatus,
     f.PromotionId,
     COALESCE(p.Name,'') AS PromotionName,
@@ -144,6 +170,16 @@ SELECT
     COALESCE(st.CurrentPhase, 'Idle') AS CurrentPhase,
     st.NextMilestoneType,
     st.NextMilestoneDate,
+    CASE
+        WHEN EXISTS (
+            SELECT 1
+            FROM ManagedFighters mfSelf
+            WHERE mfSelf.FighterId = f.Id
+              AND mfSelf.AgentId = (SELECT Id FROM AgentProfile ORDER BY Id LIMIT 1)
+              AND COALESCE(mfSelf.IsActive, 1) = 1
+        ) THEN 1
+        ELSE 0
+    END AS IsManagedByPlayer,
     (
         SELECT CASE
             WHEN COALESCE(fp.WeighInNotes, '') <> '' THEN fp.WeighInNotes
@@ -171,6 +207,9 @@ LEFT JOIN Countries c ON c.Id = f.CountryId
 LEFT JOIN Promotions p ON p.Id = f.PromotionId
 LEFT JOIN FighterStyles fs ON fs.FighterId = f.Id
 LEFT JOIN FighterStates st ON st.FighterId = f.Id
+LEFT JOIN ScoutKnowledge sk
+    ON sk.FighterId = f.Id
+   AND sk.AgentId = (SELECT Id FROM AgentProfile ORDER BY Id LIMIT 1)
 LEFT JOIN PromotionRankings pr
     ON pr.FighterId = f.Id
    AND pr.PromotionId = f.PromotionId
@@ -212,6 +251,9 @@ LIMIT 1;";
             Popularity: Convert.ToInt32(r["Popularity"]),
             Marketability: Convert.ToInt32(r["Marketability"]),
             Momentum: Convert.ToInt32(r["Momentum"]),
+            ReliabilityScore: Convert.ToInt32(r["ReliabilityScore"]),
+            MediaHeat: Convert.ToInt32(r["MediaHeat"]),
+            DamageMiles: Convert.ToInt32(r["DamageMiles"]),
             WeightMissCount: Convert.ToInt32(r["WeightMissCount"]),
             CampWithdrawalCount: Convert.ToInt32(r["CampWithdrawalCount"]),
             Striking: Convert.ToInt32(r["Striking"]),
@@ -220,6 +262,23 @@ LIMIT 1;";
             Cardio: Convert.ToInt32(r["Cardio"]),
             Chin: Convert.ToInt32(r["Chin"]),
             FightIQ: Convert.ToInt32(r["FightIQ"]),
+            ScoutConfidence: Convert.ToInt32(r["ScoutConfidence"]),
+            EstimatedSkillMin: Convert.ToInt32(r["EstimatedSkillMin"]),
+            EstimatedSkillMax: Convert.ToInt32(r["EstimatedSkillMax"]),
+            EstimatedPotentialMin: Convert.ToInt32(r["EstimatedPotentialMin"]),
+            EstimatedPotentialMax: Convert.ToInt32(r["EstimatedPotentialMax"]),
+            EstimatedStrikingMin: Convert.ToInt32(r["EstimatedStrikingMin"]),
+            EstimatedStrikingMax: Convert.ToInt32(r["EstimatedStrikingMax"]),
+            EstimatedGrapplingMin: Convert.ToInt32(r["EstimatedGrapplingMin"]),
+            EstimatedGrapplingMax: Convert.ToInt32(r["EstimatedGrapplingMax"]),
+            EstimatedWrestlingMin: Convert.ToInt32(r["EstimatedWrestlingMin"]),
+            EstimatedWrestlingMax: Convert.ToInt32(r["EstimatedWrestlingMax"]),
+            EstimatedCardioMin: Convert.ToInt32(r["EstimatedCardioMin"]),
+            EstimatedCardioMax: Convert.ToInt32(r["EstimatedCardioMax"]),
+            EstimatedChinMin: Convert.ToInt32(r["EstimatedChinMin"]),
+            EstimatedChinMax: Convert.ToInt32(r["EstimatedChinMax"]),
+            EstimatedFightIQMin: Convert.ToInt32(r["EstimatedFightIQMin"]),
+            EstimatedFightIQMax: Convert.ToInt32(r["EstimatedFightIQMax"]),
             ContractStatus: r["ContractStatus"]?.ToString() ?? "",
             PromotionId: r["PromotionId"] == DBNull.Value ? null : Convert.ToInt32(r["PromotionId"]),
             PromotionName: r["PromotionName"]?.ToString(),
@@ -251,6 +310,9 @@ LIMIT 1;";
             WeeksUntilAvailable: Convert.ToInt32(r["WeeksUntilAvailable"]),
             InjuryWeeksRemaining: Convert.ToInt32(r["InjuryWeeksRemaining"]),
             MedicalSuspensionWeeksRemaining: Convert.ToInt32(r["MedicalSuspensionWeeksRemaining"]),
+            IsManagedByPlayer: Convert.ToInt32(r["IsManagedByPlayer"]) == 1,
+            Storylines: Array.Empty<FighterStorylineItem>(),
+            LegacyTags: Array.Empty<FighterLegacyTagItem>(),
             LatestPrepNote: r["LatestPrepNote"]?.ToString(),
             ScheduledOpponentName: r["ScheduledOpponentName"]?.ToString(),
             ScheduledEventName: r["ScheduledEventName"]?.ToString(),
@@ -279,6 +341,7 @@ SELECT
     CASE WHEN fh.WinnerId = $id THEN 1 ELSE 0 END AS Won,
     fh.Method,
     fh.IsTitle,
+    COALESCE(fh.IsTitleEliminator, 0) AS IsTitleEliminator,
     p.Name AS PromotionName,
     e.Name AS EventName,
     (op.FirstName || ' ' || op.LastName) AS Opponent
@@ -308,11 +371,75 @@ LIMIT $take;";
                 Result: won ? "W" : "L",
                 Method: r["Method"]?.ToString() ?? "",
                 IsTitle: Convert.ToInt32(r["IsTitle"]) == 1,
+                IsTitleEliminator: Convert.ToInt32(r["IsTitleEliminator"]) == 1,
                 Promotion: r["PromotionName"]?.ToString() ?? "",
                 EventName: r["EventName"]?.ToString()
             ));
         }
 
         return list;
+    }
+
+    private static async Task<IReadOnlyList<FighterStorylineItem>> LoadStorylinesAsync(
+        SqliteConnection conn,
+        SqliteTransaction tx,
+        int fighterId,
+        int take)
+    {
+        using var cmd = conn.CreateCommand();
+        cmd.Transaction = tx;
+        cmd.CommandText = @"
+SELECT StoryType, Headline, Body, Intensity
+FROM Storylines
+WHERE EntityType = 'Fighter'
+  AND EntityId = $fighterId
+  AND COALESCE(Status, 'Active') = 'Active'
+ORDER BY Intensity DESC, Id DESC
+LIMIT $take;";
+        cmd.Parameters.AddWithValue("$fighterId", fighterId);
+        cmd.Parameters.AddWithValue("$take", take);
+
+        var items = new List<FighterStorylineItem>();
+        using var reader = await cmd.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+        {
+            items.Add(new FighterStorylineItem(
+                reader["StoryType"]?.ToString() ?? "",
+                reader["Headline"]?.ToString() ?? "",
+                reader["Body"]?.ToString() ?? "",
+                Convert.ToInt32(reader["Intensity"])));
+        }
+
+        return items;
+    }
+
+    private static async Task<IReadOnlyList<FighterLegacyTagItem>> LoadLegacyTagsAsync(
+        SqliteConnection conn,
+        SqliteTransaction tx,
+        int fighterId,
+        int take)
+    {
+        using var cmd = conn.CreateCommand();
+        cmd.Transaction = tx;
+        cmd.CommandText = @"
+SELECT TagCode, Summary, Intensity
+FROM LegacyTags
+WHERE FighterId = $fighterId
+ORDER BY Intensity DESC, TagCode
+LIMIT $take;";
+        cmd.Parameters.AddWithValue("$fighterId", fighterId);
+        cmd.Parameters.AddWithValue("$take", take);
+
+        var items = new List<FighterLegacyTagItem>();
+        using var reader = await cmd.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+        {
+            items.Add(new FighterLegacyTagItem(
+                reader["TagCode"]?.ToString() ?? "",
+                reader["Summary"]?.ToString() ?? "",
+                Convert.ToInt32(reader["Intensity"])));
+        }
+
+        return items;
     }
 }

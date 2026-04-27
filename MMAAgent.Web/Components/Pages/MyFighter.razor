@@ -3,7 +3,6 @@
 @using MMAAgent.Web.Models
 @using MMAAgent.Web.Services
 @inject WebMyFightersService MyFightersService
-@using MMAAgent.Web.Services
 @inject WebFighterActionService FighterActionService
 
 
@@ -52,6 +51,11 @@
     </div>
 </section>
 
+@if (_statusMessage is not null)
+{
+    <div class="panel-card" style="margin-top:20px;">@_statusMessage</div>
+}
+
 @if (_error is not null)
 {
     <div class="panel-card error-panel" style="margin-top:20px;">@_error</div>
@@ -85,6 +89,21 @@ else
                 </div>
                 <div class="button-row" style="margin-top:14px;">
                     <a class="btn-secondary" href="@($"/fighters/{item.FighterId}")">View profile</a>
+                    @if (item.PromotionId is null)
+                    {
+                        <select class="text-input" style="max-width:220px;" value="@GetSelectedPromotion(item.FighterId)" @onchange="e => OnPromotionChanged(item.FighterId, e.Value?.ToString())">
+                            @foreach (var option in _promotionTargets)
+                            {
+                                <option value="@option.PromotionId">@option.PromotionName</option>
+                            }
+                        </select>
+                        <button class="btn-secondary" @onclick="() => PitchAsync(item.FighterId)">Pitch promotion</button>
+                    }
+                    else if (item.ContractFightsRemaining > 0)
+                    {
+                        <button class="btn-secondary" @onclick="() => SeekFightAsync(item.FighterId)">Seek fight</button>
+                    }
+
                     <button class="btn-secondary" @onclick="() => ReleaseAsync(item.FighterId)">Release</button>
                     <a class="btn-secondary" href="/inbox">Open inbox</a>
                 </div>
@@ -92,7 +111,7 @@ else
                     Fights remaining: @item.ContractFightsRemaining / @item.TotalFightsInContract
                 </div>
                 <div class="muted-text" style="margin-top:6px;">
-                    Fight offers and contract decisions are handled through the weekly inbox flow.
+                    You can actively pitch free agents to promotions or ask signed fighters to seek a matchup. Results still flow through the inbox and live world systems.
                 </div>
             </article>
         }
@@ -106,14 +125,18 @@ else
     private List<string> _promotions = new();
     private List<string> _weightClasses = new();
     private List<ManagedFighterVm> _fighters = new();
+    private List<PromotionOptionVm> _promotionTargets = new();
+    private readonly Dictionary<int, int> _selectedPromotionByFighter = new();
     private bool _loading = true;
     private string? _error;
+    private string? _statusMessage;
 
     protected override async Task OnInitializedAsync()
     {
         var filters = await MyFightersService.LoadFiltersAsync();
         _promotions = filters.Promotions.ToList();
         _weightClasses = filters.WeightClasses.ToList();
+        _promotionTargets = (await MyFightersService.LoadPromotionTargetsAsync()).ToList();
         await LoadAsync();
     }
 
@@ -132,6 +155,7 @@ else
             _loading = true;
             _error = null;
             _fighters = (await MyFightersService.LoadAsync(_search, _promotion, _weightClass)).ToList();
+            SeedPromotionSelections();
         }
         catch (Exception ex)
         {
@@ -146,7 +170,76 @@ else
     private async Task ReleaseAsync(int fighterId)
     {
         await FighterActionService.ReleaseFighterAsync(fighterId);
+        _statusMessage = "Fighter released from your management roster.";
         await LoadAsync();
+    }
+
+    private async Task PitchAsync(int fighterId)
+    {
+        var promotionId = GetSelectedPromotion(fighterId);
+        if (promotionId <= 0)
+        {
+            _error = "Select a promotion first.";
+            return;
+        }
+
+        var result = await FighterActionService.PitchToPromotionAsync(fighterId, promotionId);
+        if (result.Success)
+        {
+            _statusMessage = result.Message;
+            _error = null;
+        }
+        else
+        {
+            _error = result.Message;
+            _statusMessage = null;
+        }
+
+        await LoadAsync();
+    }
+
+    private async Task SeekFightAsync(int fighterId)
+    {
+        var result = await FighterActionService.SeekFightAsync(fighterId);
+        if (result.Success)
+        {
+            _statusMessage = result.Message;
+            _error = null;
+        }
+        else
+        {
+            _error = result.Message;
+            _statusMessage = null;
+        }
+
+        await LoadAsync();
+    }
+
+    private void SeedPromotionSelections()
+    {
+        if (_promotionTargets.Count == 0)
+            return;
+
+        var defaultPromotionId = _promotionTargets[0].PromotionId;
+        foreach (var fighter in _fighters)
+        {
+            if (!_selectedPromotionByFighter.ContainsKey(fighter.FighterId))
+                _selectedPromotionByFighter[fighter.FighterId] = defaultPromotionId;
+        }
+    }
+
+    private int GetSelectedPromotion(int fighterId)
+    {
+        if (_selectedPromotionByFighter.TryGetValue(fighterId, out var promotionId))
+            return promotionId;
+
+        return _promotionTargets.Count > 0 ? _promotionTargets[0].PromotionId : 0;
+    }
+
+    private void OnPromotionChanged(int fighterId, string? rawValue)
+    {
+        if (int.TryParse(rawValue, out var promotionId))
+            _selectedPromotionByFighter[fighterId] = promotionId;
     }
 
 }

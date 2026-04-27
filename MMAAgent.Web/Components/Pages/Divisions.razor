@@ -1,0 +1,114 @@
+@page "/divisions"
+@rendermode InteractiveServer
+@using MMAAgent.Web.Models
+@using MMAAgent.Web.Services
+@inject WebDivisionsService DivisionsService
+
+<PageTitle>Divisions - MMA Agent</PageTitle>
+
+<div class="page-header">
+    <div>
+        <h1>Divisions</h1>
+        <p class="muted-text">Champion, contender queue, stakes and rivalries across the live world.</p>
+    </div>
+</div>
+
+@if (_error is not null)
+{
+    <div class="panel-card error-panel">@_error</div>
+}
+else if (_loading)
+{
+    <div class="panel-card">Loading divisions...</div>
+}
+else if (_groups.Count == 0)
+{
+    <div class="panel-card">No division picture available yet.</div>
+}
+else
+{
+    <div class="dashboard-grid">
+        @foreach (var group in _groups)
+        {
+            <section class="panel-card">
+                <div class="table-toolbar">
+                    <div class="toolbar-title">
+                        <a class="fighter-link" href="@($"/promotions/{group.PromotionId}")">@group.PromotionName</a>
+                    </div>
+                    <div class="toolbar-subtitle">@group.Divisions.Count divisions tracked</div>
+                </div>
+
+                <div class="dashboard-list">
+                    @foreach (var division in group.Divisions)
+                    {
+                        <div class="dashboard-list-item">
+                            <strong>@division.WeightClass</strong>
+                            <div class="muted-text">
+                                Champion:
+                                @if (division.ChampionId is int championId)
+                                {
+                                    <a class="fighter-link" href="@($"/fighters/{championId}")">@division.ChampionName</a>
+                                }
+                                else
+                                {
+                                    @division.ChampionName
+                                }
+                            </div>
+
+                            @if (division.NextContenders.Count > 0)
+                            {
+                                <div class="muted-text">
+                                    Queue:
+                                    @for (var i = 0; i < division.NextContenders.Count; i++)
+                                    {
+                                        var contender = division.NextContenders[i];
+                                        <span>
+                                            #@contender.QueueRank
+                                            <a class="fighter-link" href="@($"/fighters/{contender.FighterId}")">@contender.FighterName</a>
+                                            @if (i < division.NextContenders.Count - 1)
+                                            {
+                                                <span> · </span>
+                                            }
+                                        </span>
+                                    }
+                                </div>
+                            }
+
+                            @if (!string.IsNullOrWhiteSpace(division.UpcomingStakes))
+                            {
+                                <div class="muted-text">Stakes: @division.UpcomingStakes</div>
+                            }
+
+                            @if (!string.IsNullOrWhiteSpace(division.RivalryHeadline))
+                            {
+                                <div class="muted-text">Rivalry: @division.RivalryHeadline</div>
+                            }
+                        </div>
+                    }
+                </div>
+            </section>
+        }
+    </div>
+}
+
+@code {
+    private List<DivisionPromotionGroupVm> _groups = new();
+    private bool _loading = true;
+    private string? _error;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            _groups = (await DivisionsService.LoadAsync()).ToList();
+        }
+        catch (Exception ex)
+        {
+            _error = ex.ToString();
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+}

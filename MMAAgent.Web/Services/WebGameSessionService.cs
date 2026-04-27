@@ -3,6 +3,7 @@ using MMAAgent.Domain.Agents;
 using MMAAgent.Infrastructure.Files;
 using MMAAgent.Infrastructure.Generation;
 using MMAAgent.Infrastructure.Persistence.Sqlite.Services;
+using MMAAgent.Infrastructure.Persistance.Sqlite.Services;
 using MMAAgent.Web.Infrastructure;
 using Microsoft.Extensions.Options;
 
@@ -17,6 +18,7 @@ public sealed class WebGameSessionService
     private readonly DbBootstrap _bootstrap;
     private readonly CareerSchemaPreparationService _careerSchemaPreparation;
     private readonly IFighterWorldService _fighterWorldService;
+    private readonly WorldEcosystemServiceSqlite _worldEcosystemService;
     private readonly IWorldAgendaService _worldAgendaService;
     private readonly WorldFighterGeneratorSqlite _worldGen;
     private readonly InitialSigningPassSqlite _initialSigning;
@@ -31,6 +33,7 @@ public sealed class WebGameSessionService
         DbBootstrap bootstrap,
         CareerSchemaPreparationService careerSchemaPreparation,
         IFighterWorldService fighterWorldService,
+        WorldEcosystemServiceSqlite worldEcosystemService,
         IWorldAgendaService worldAgendaService,
         WorldFighterGeneratorSqlite worldGen,
         InitialSigningPassSqlite initialSigning,
@@ -44,6 +47,7 @@ public sealed class WebGameSessionService
         _bootstrap = bootstrap;
         _careerSchemaPreparation = careerSchemaPreparation;
         _fighterWorldService = fighterWorldService;
+        _worldEcosystemService = worldEcosystemService;
         _worldAgendaService = worldAgendaService;
         _worldGen = worldGen;
         _initialSigning = initialSigning;
@@ -83,6 +87,7 @@ public sealed class WebGameSessionService
         _savePathProvider.Set(path);
         await _careerSchemaPreparation.PrepareAsync();
         await _fighterWorldService.SynchronizeAsync();
+        await _worldEcosystemService.SynchronizeAsync();
         await _worldAgendaService.SynchronizeAsync();
         SaveLastPath(path);
     }
@@ -128,8 +133,6 @@ public sealed class WebGameSessionService
 
         _rankings.SetSeed(realSeed);
         await _rankings.RunAsync();
-        await _fighterWorldService.SynchronizeAsync();
-        await _worldAgendaService.SynchronizeAsync();
 
         await _agentProfileRepository.CreateAsync(new AgentProfile
         {
@@ -139,6 +142,10 @@ public sealed class WebGameSessionService
             Reputation = 10,
             CreatedDate = DateTime.UtcNow.ToString("yyyy-MM-dd")
         });
+
+        await _fighterWorldService.SynchronizeAsync();
+        await _worldEcosystemService.SynchronizeAsync();
+        await _worldAgendaService.SynchronizeAsync();
 
         SaveLastPath(savePath);
         return savePath;

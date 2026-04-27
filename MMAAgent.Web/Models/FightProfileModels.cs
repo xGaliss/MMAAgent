@@ -6,8 +6,20 @@ public sealed record FightHistoryItem(
     string Result,
     string Method,
     bool IsTitle,
+    bool IsTitleEliminator,
     string Promotion,
     string? EventName);
+
+public sealed record FighterStorylineItem(
+    string StoryType,
+    string Headline,
+    string Body,
+    int Intensity);
+
+public sealed record FighterLegacyTagItem(
+    string TagCode,
+    string Summary,
+    int Intensity);
 
 public sealed record FighterProfile(
     int Id,
@@ -26,6 +38,9 @@ public sealed record FighterProfile(
     int Popularity,
     int Marketability,
     int Momentum,
+    int ReliabilityScore,
+    int MediaHeat,
+    int DamageMiles,
     int WeightMissCount,
     int CampWithdrawalCount,
     int Striking,
@@ -34,6 +49,23 @@ public sealed record FighterProfile(
     int Cardio,
     int Chin,
     int FightIQ,
+    int ScoutConfidence,
+    int EstimatedSkillMin,
+    int EstimatedSkillMax,
+    int EstimatedPotentialMin,
+    int EstimatedPotentialMax,
+    int EstimatedStrikingMin,
+    int EstimatedStrikingMax,
+    int EstimatedGrapplingMin,
+    int EstimatedGrapplingMax,
+    int EstimatedWrestlingMin,
+    int EstimatedWrestlingMax,
+    int EstimatedCardioMin,
+    int EstimatedCardioMax,
+    int EstimatedChinMin,
+    int EstimatedChinMax,
+    int EstimatedFightIQMin,
+    int EstimatedFightIQMax,
     string ContractStatus,
     int? PromotionId,
     string? PromotionName,
@@ -65,6 +97,9 @@ public sealed record FighterProfile(
     int WeeksUntilAvailable,
     int InjuryWeeksRemaining,
     int MedicalSuspensionWeeksRemaining,
+    bool IsManagedByPlayer,
+    IReadOnlyList<FighterStorylineItem> Storylines,
+    IReadOnlyList<FighterLegacyTagItem> LegacyTags,
     string? LatestPrepNote,
     string? ScheduledOpponentName,
     string? ScheduledEventName,

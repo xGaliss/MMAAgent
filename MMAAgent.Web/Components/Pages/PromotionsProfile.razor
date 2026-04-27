@@ -78,6 +78,58 @@ else
         </section>
 
         <section class="panel-card">
+            <div class="toolbar-title">Division Picture</div>
+
+            @if (_profile.Divisions.Count == 0)
+            {
+                <div class="muted-text">No division picture has been built yet.</div>
+            }
+            else
+            {
+                <div class="dashboard-list">
+                    @foreach (var division in _profile.Divisions)
+                    {
+                        <div class="dashboard-list-item">
+                            <div class="toolbar-title">@division.WeightClass</div>
+                            <div class="muted-text">
+                                Champion:
+                                @if (division.ChampionId is int championId && !string.IsNullOrWhiteSpace(division.ChampionName))
+                                {
+                                    <a class="fighter-link" href="@($"/fighters/{championId}")">@division.ChampionName</a>
+                                }
+                                else
+                                {
+                                    <span>@division.ChampionName</span>
+                                }
+                            </div>
+
+                            @if (division.NextContenders.Count > 0)
+                            {
+                                <div class="muted-text" style="margin-top:8px;">
+                                    Next up:
+                                    @foreach (var contender in division.NextContenders)
+                                    {
+                                        <span style="margin-right:10px;">#@contender.QueueRank <a class="fighter-link" href="@($"/fighters/{contender.FighterId}")">@contender.FighterName</a></span>
+                                    }
+                                </div>
+                            }
+
+                            @if (!string.IsNullOrWhiteSpace(division.UpcomingStakes))
+                            {
+                                <div class="muted-text" style="margin-top:8px;">Stakes: @division.UpcomingStakes</div>
+                            }
+
+                            @if (!string.IsNullOrWhiteSpace(division.RivalryHeadline))
+                            {
+                                <div class="muted-text" style="margin-top:8px;">Rivalry: @division.RivalryHeadline</div>
+                            }
+                        </div>
+                    }
+                </div>
+            }
+        </section>
+
+        <section class="panel-card">
             <div class="toolbar-title">Champions</div>
 
             <div class="promotion-champions-grid">
@@ -125,6 +177,48 @@ else
                         </tbody>
                     </table>
                 </div>
+            }
+        </section>
+
+        <section class="panel-card">
+            <div class="toolbar-title">Contender Queue</div>
+
+            @if (_profile.Contenders.Count == 0)
+            {
+                <div class="muted-text">No contender queue has been built yet.</div>
+            }
+            else
+            {
+                @foreach (var group in _profile.Contenders.GroupBy(x => x.WeightClass))
+                {
+                    <div class="ranking-block">
+                        <div class="ranking-title">@group.Key</div>
+
+                        <table class="fighters-table">
+                            <thead>
+                                <tr>
+                                    <th>Queue</th>
+                                    <th>Fighter</th>
+                                    <th>Score</th>
+                                    <th>Read</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var item in group)
+                                {
+                                    <tr>
+                                        <td>@item.QueueRank</td>
+                                        <td>
+                                            <a class="fighter-link" href="@($"/fighters/{item.FighterId}")">@item.FighterName</a>
+                                        </td>
+                                        <td>@item.QueueScore</td>
+                                        <td>@item.Notes</td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                }
             }
         </section>
 

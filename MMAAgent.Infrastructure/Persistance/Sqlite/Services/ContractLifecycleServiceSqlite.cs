@@ -118,9 +118,10 @@ public sealed class ContractLifecycleServiceSqlite : IContractLifecycleService
             }
             else
             {
+                var isFreeAgent = fighter.PromotionId is null;
                 var shouldProbe = processMarketDaily
-                    ? ShouldMarketProbeToday(fighter, currentDate)
-                    : ShouldMarketProbeThisWeek(fighter, absoluteWeek);
+                    ? ShouldMarketProbeToday(fighter, currentDate, isFreeAgent)
+                    : ShouldMarketProbeThisWeek(fighter, absoluteWeek, isFreeAgent);
 
                 if (!shouldProbe)
                     continue;
@@ -316,16 +317,17 @@ WHERE Status = 'Pending'
         await cmd.ExecuteNonQueryAsync(cancellationToken);
     }
 
-    private static bool ShouldMarketProbeThisWeek(ManagedContractSnapshot fighter, int absoluteWeek)
+    private static bool ShouldMarketProbeThisWeek(ManagedContractSnapshot fighter, int absoluteWeek, bool isFreeAgent)
     {
         if (fighter.WeeksUntilAvailable > 0 || fighter.InjuryWeeksRemaining > 0)
             return false;
 
-        var cadenceSeed = Math.Abs(fighter.FighterId % 4);
-        return absoluteWeek % 4 == cadenceSeed;
+        var cadenceWindow = isFreeAgent ? 2 : 4;
+        var cadenceSeed = Math.Abs(fighter.FighterId % cadenceWindow);
+        return absoluteWeek % cadenceWindow == cadenceSeed;
     }
 
-    private static bool ShouldMarketProbeToday(ManagedContractSnapshot fighter, string currentDate)
+    private static bool ShouldMarketProbeToday(ManagedContractSnapshot fighter, string currentDate, bool isFreeAgent)
     {
         if (fighter.WeeksUntilAvailable > 0 || fighter.InjuryWeeksRemaining > 0)
             return false;
@@ -333,7 +335,9 @@ WHERE Status = 'Pending'
         if (!DateTime.TryParse(currentDate, out var parsedDate))
             return false;
 
-        var cadenceDays = 10 + Math.Abs(fighter.FighterId % 6);
+        var cadenceDays = isFreeAgent
+            ? 4 + Math.Abs(fighter.FighterId % 4)
+            : 10 + Math.Abs(fighter.FighterId % 6);
         var daysSinceEpoch = (int)(parsedDate.Date - new DateTime(2026, 1, 1)).TotalDays;
         var cadenceSeed = Math.Abs(fighter.FighterId % cadenceDays);
 
@@ -437,10 +441,11 @@ WHERE Status = 'Pending'
         if (fighter.Age > 35) score -= 10;
         if (fighter.InjuryWeeksRemaining > 0) score -= 15;
         if (fighter.WeeksUntilAvailable > 0) score -= 5;
+        if (fighter.PromotionId is null) score += 8;
 
         score -= promotion.Strictness;
 
-        if (score < 55)
+        if (score < 46)
         {
             return new PitchDecision(false, 0, 0, 0,
                 $"Score {score}. Promotion is not interested right now.");

@@ -53,13 +53,95 @@ else
             <div class="stat-label">Created</div>
             <div class="stat-value">@_agent.CreatedDate</div>
         </section>
+
+        <section class="panel-card" style="grid-column: 1 / -1;">
+            <div class="table-toolbar">
+                <div class="toolbar-title">Manager Levers</div>
+                <div class="toolbar-subtitle">Small strategic settings that shape camp quality, medical support and weekly costs</div>
+            </div>
+
+            <div class="profile-meta-grid">
+                <div class="meta-box">
+                    <div class="meta-label">Camp Investment</div>
+                    <div class="button-row" style="gap:8px; flex-wrap:wrap; margin-top:10px;">
+                        @foreach (var option in _investmentOptions)
+                        {
+                            <button class="@(option.Level == _agent.CampInvestmentLevel ? "btn-primary" : "btn-secondary")"
+                                    disabled="@_savingSettings"
+                                    @onclick="@(() => UpdateCampInvestmentAsync(option.Level))">
+                                @option.Label
+                            </button>
+                        }
+                    </div>
+                    <div class="muted-text" style="margin-top:10px;">@DescribeCampInvestment(_agent.CampInvestmentLevel)</div>
+                </div>
+
+                <div class="meta-box">
+                    <div class="meta-label">Medical Support</div>
+                    <div class="button-row" style="gap:8px; flex-wrap:wrap; margin-top:10px;">
+                        @foreach (var option in _investmentOptions)
+                        {
+                            <button class="@(option.Level == _agent.MedicalInvestmentLevel ? "btn-primary" : "btn-secondary")"
+                                    disabled="@_savingSettings"
+                                    @onclick="@(() => UpdateMedicalInvestmentAsync(option.Level))">
+                                @option.Label
+                            </button>
+                        }
+                    </div>
+                    <div class="muted-text" style="margin-top:10px;">@DescribeMedicalInvestment(_agent.MedicalInvestmentLevel)</div>
+                </div>
+            </div>
+        </section>
+
+        <section class="panel-card" style="grid-column: 1 / -1;">
+            <div class="table-toolbar">
+                <div class="toolbar-title">Recent Transactions</div>
+                <div class="toolbar-subtitle">Payouts, expenses and money flow from the live save</div>
+            </div>
+
+            @if (_agent.Transactions.Count == 0)
+            {
+                <div class="muted-text">No transactions recorded yet.</div>
+            }
+            else
+            {
+                <table class="fighters-table">
+                    <thead>
+                        <tr>
+                            <th>Date</th>
+                            <th>Type</th>
+                            <th>Amount</th>
+                            <th>Notes</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var tx in _agent.Transactions)
+                        {
+                            <tr>
+                                <td>@tx.Date</td>
+                                <td>@tx.TxType</td>
+                                <td class="@(tx.Amount >= 0 ? "record-win" : "record-loss")">@tx.Amount</td>
+                                <td>@(tx.Notes ?? "-")</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            }
+        </section>
     </div>
 }
 
 @code {
     private AgentProfileVm? _agent;
     private bool _loading = true;
+    private bool _savingSettings;
     private string? _error;
+    private readonly (int Level, string Label)[] _investmentOptions =
+    {
+        (0, "Lean"),
+        (1, "Balanced"),
+        (2, "Premium")
+    };
 
     protected override async Task OnInitializedAsync()
     {
@@ -67,4 +149,48 @@ else
         catch (Exception ex) { _error = ex.ToString(); }
         finally { _loading = false; }
     }
+
+    private async Task UpdateCampInvestmentAsync(int level)
+    {
+        await UpdateSettingsAsync(() => AgentProfileService.UpdateCampInvestmentAsync(level));
+    }
+
+    private async Task UpdateMedicalInvestmentAsync(int level)
+    {
+        await UpdateSettingsAsync(() => AgentProfileService.UpdateMedicalInvestmentAsync(level));
+    }
+
+    private async Task UpdateSettingsAsync(Func<Task> action)
+    {
+        try
+        {
+            _savingSettings = true;
+            await action();
+            _agent = await AgentProfileService.LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            _error = ex.ToString();
+        }
+        finally
+        {
+            _savingSettings = false;
+        }
+    }
+
+    private static string DescribeCampInvestment(int level)
+        => level switch
+        {
+            2 => "Premium camps cost more each week, but they improve the odds of clean, sharp preparation.",
+            0 => "Lean camps save money, but you accept rougher prep and more volatile outcomes.",
+            _ => "Balanced camps keep costs and prep quality in a safer middle lane."
+        };
+
+    private static string DescribeMedicalInvestment(int level)
+        => level switch
+        {
+            2 => "Premium medical support increases weekly costs, but helps reduce bad camp and cut outcomes.",
+            0 => "Lean medical support is cheaper, but injuries and rough cuts become a little more dangerous.",
+            _ => "Balanced medical support keeps a reasonable safety net without overspending."
+        };
 }

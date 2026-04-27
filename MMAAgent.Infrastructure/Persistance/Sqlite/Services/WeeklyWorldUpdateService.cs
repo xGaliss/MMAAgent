@@ -17,6 +17,7 @@ public sealed class WeeklyWorldUpdateService : IWeeklyWorldUpdateService
     private readonly InitialSigningPassSqlite _initialSigningPass;
     private readonly WorldFighterGeneratorSqlite _worldFighterGenerator;
     private readonly IFighterWorldService _fighterWorldService;
+    private readonly WorldEcosystemServiceSqlite _worldEcosystemService;
     private readonly IWorldAgendaService _worldAgendaService;
     private readonly IPromotionEventScheduleRepository _scheduleRepository;
     private readonly IEventSimulator _eventSimulator;
@@ -28,6 +29,7 @@ public sealed class WeeklyWorldUpdateService : IWeeklyWorldUpdateService
         InitialSigningPassSqlite initialSigningPass,
         WorldFighterGeneratorSqlite worldFighterGenerator,
         IFighterWorldService fighterWorldService,
+        WorldEcosystemServiceSqlite worldEcosystemService,
         IWorldAgendaService worldAgendaService,
         IPromotionEventScheduleRepository scheduleRepository,
         IEventSimulator eventSimulator,
@@ -38,6 +40,7 @@ public sealed class WeeklyWorldUpdateService : IWeeklyWorldUpdateService
         _initialSigningPass = initialSigningPass;
         _worldFighterGenerator = worldFighterGenerator;
         _fighterWorldService = fighterWorldService;
+        _worldEcosystemService = worldEcosystemService;
         _worldAgendaService = worldAgendaService;
         _scheduleRepository = scheduleRepository;
         _eventSimulator = eventSimulator;
@@ -121,17 +124,19 @@ public sealed class WeeklyWorldUpdateService : IWeeklyWorldUpdateService
             await _scheduleRepository.SetNextEventWeekAsync(promo.PromotionId, nextAbsoluteWeek);
         }
 
-        await CleanupStaleScheduledFightsAsync(state.CurrentDate, cancellationToken);
-        await _fighterWorldService.AdvanceWeekAsync(absoluteWeek, state.CurrentDate, cancellationToken);
-        await _worldAgendaService.SynchronizeAsync(cancellationToken);
-
         if (state.CurrentYear > previousYear)
         {
+            await _worldEcosystemService.ApplyAnnualEvolutionAsync(state.CurrentYear, cancellationToken);
             _worldFighterGenerator.SetSeed(ComputeAnnualIntakeSeed(worldSeed, state.CurrentYear));
             _worldFighterGenerator.GenerateAnnualNewcomers();
         }
 
+        await CleanupStaleScheduledFightsAsync(state.CurrentDate, cancellationToken);
         await _initialSigningPass.RunWeeklyTopUpAsync(cancellationToken);
+        await _fighterWorldService.AdvanceWeekAsync(absoluteWeek, state.CurrentDate, cancellationToken);
+        await _worldEcosystemService.SynchronizeAsync(cancellationToken);
+        await _worldEcosystemService.ApplyWeeklyExpensesAsync(cancellationToken);
+        await _worldAgendaService.SynchronizeAsync(cancellationToken);
         var newFightOffers = await _fightOfferGenerationService.GenerateWeeklyOffersAsync(cancellationToken);
 
         int newMessages;

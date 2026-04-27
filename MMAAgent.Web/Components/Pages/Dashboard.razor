@@ -94,6 +94,27 @@ else
 
         <section class="panel-card">
             <div class="table-toolbar">
+                <div class="toolbar-title">Competitive Pulse</div>
+                <div class="toolbar-subtitle">@_competitivePulse.Count items</div>
+            </div>
+
+            <div class="dashboard-list">
+                @if (_competitivePulse.Count == 0)
+                {
+                    <div class="dashboard-list-item">No live narrative pressure right now.</div>
+                }
+                else
+                {
+                    @foreach (var item in _competitivePulse)
+                    {
+                        <div class="dashboard-list-item">@item</div>
+                    }
+                }
+            </div>
+        </section>
+
+        <section class="panel-card">
+            <div class="table-toolbar">
                 <div class="toolbar-title">Latest Events</div>
                 <div class="toolbar-subtitle">@_latestEvents.Count items</div>
             </div>
@@ -243,11 +264,6 @@ else
     </div>
 }
 
-@if (!string.IsNullOrWhiteSpace(_status))
-{
-    <div class="muted-text" style="margin-top:14px;">@_status</div>
-}
-
 @code {
     private GameState? _gameState;
     private int _fighterCount;
@@ -258,11 +274,11 @@ else
 
     private bool _loading = true;
     private string? _error;
-    private string? _status;
 
     private WeeklyAdvanceSummaryVm? _summary;
 
     private List<string> _latestEvents = new();
+    private List<string> _competitivePulse = new();
     private List<string> _recentMessages = new();
     private List<string> _topManaged = new();
     private List<string> _managedChampions = new();
@@ -295,6 +311,7 @@ else
 
             var feed = await DashboardFeedService.LoadAsync();
             _agenda = feed.Agenda.ToList();
+            _competitivePulse = feed.CompetitivePulse.ToList();
             _latestEvents = feed.Events.ToList();
             _recentMessages = feed.Messages.ToList();
             _topManaged = feed.Managed.ToList();
@@ -336,6 +353,7 @@ else
             "WeighIn" => "Weigh-In",
             "FightNight" => "Fight Night",
             "Recovery" => "Recovery",
+            "TitlePicture" => "Title Picture",
             _ => eventType
         };
 }

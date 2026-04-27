@@ -70,7 +70,67 @@ else
             <div class="stat-label">Unread Messages</div>
             <div class="stat-value">@_messages.Count(x => !x.IsRead)</div>
         </article>
+
+        <article class="stat-card">
+            <div class="stat-label">Live Decisions</div>
+            <div class="stat-value">@_decisions.Count</div>
+        </article>
     </div>
+
+    <section class="panel-card" style="margin-bottom:20px;">
+        <div class="table-toolbar">
+            <div>
+                <div class="toolbar-title">Live Decisions</div>
+                <div class="toolbar-subtitle">Two-way calls that can reshape camps, money and momentum</div>
+            </div>
+        </div>
+
+        @if (_decisions.Count == 0)
+        {
+            <div class="muted-text">No active decisions right now.</div>
+        }
+        else
+        {
+            <div class="offer-list">
+                @foreach (var decision in _decisions)
+                {
+                    <div class="offer-card">
+                        <div class="offer-title">@decision.Headline</div>
+                        <div class="offer-meta">@decision.Body</div>
+
+                        @if (!string.IsNullOrWhiteSpace(decision.OptionADescription))
+                        {
+                            <div class="offer-meta">@decision.OptionALabel: @decision.OptionADescription</div>
+                        }
+
+                        @if (!string.IsNullOrWhiteSpace(decision.OptionBDescription))
+                        {
+                            <div class="offer-meta">@decision.OptionBLabel: @decision.OptionBDescription</div>
+                        }
+
+                        <div class="button-row" style="margin-top:12px;">
+                            <button class="btn-secondary"
+                                    disabled="@_busy"
+                                    @onclick="() => ResolveDecisionAsync(decision.Id, decision.OptionAKey)">
+                                @decision.OptionALabel
+                            </button>
+
+                            <button class="btn-secondary"
+                                    disabled="@_busy"
+                                    @onclick="() => ResolveDecisionAsync(decision.Id, decision.OptionBKey)">
+                                @decision.OptionBLabel
+                            </button>
+
+                            @if (decision.FighterId is int decisionFighterId)
+                            {
+                                <a class="btn-secondary" href="@($"/fighters/{decisionFighterId}")">Open fighter</a>
+                            }
+                        </div>
+                    </div>
+                }
+            </div>
+        }
+    </section>
 
     <div class="inbox-layout">
         <section class="panel-card">
@@ -178,10 +238,14 @@ else
                             <div class="offer-title">@offer.FighterName vs @offer.OpponentName</div>
                             <div class="offer-meta">Promotion: @offer.PromotionName</div>
                             <div class="offer-meta">Purse: @offer.Purse · Bonus: @offer.WinBonus</div>
-                            <div class="offer-meta">Weeks until fight: @offer.WeeksUntilFight · Camp: @offer.CampWeeksOffered week(s) · Title: @(offer.IsTitleFight ? "Yes" : "No")</div>
+                            <div class="offer-meta">Weeks until fight: @offer.WeeksUntilFight · Camp: @offer.CampWeeksOffered week(s) · Title: @(offer.IsTitleFight ? "Yes" : "No") · Eliminator: @(offer.IsTitleEliminator ? "Yes" : "No")</div>
                             @if (offer.IsShortNotice)
                             {
                                 <div class="offer-meta">Short notice: Yes</div>
+                            }
+                            @if (!string.IsNullOrWhiteSpace(offer.Notes))
+                            {
+                                <div class="offer-meta">Notes: @offer.Notes</div>
                             }
                             <div class="offer-meta">Status: @offer.Status</div>
 
@@ -250,12 +314,34 @@ else
                             {
                                 <div class="offer-meta">Notes: @offer.Notes</div>
                             }
+                            @if (!string.IsNullOrWhiteSpace(offer.Recommendation))
+                            {
+                                <div class="offer-meta">Recommended angle: @offer.Recommendation</div>
+                            }
 
                             <div class="button-row" style="margin-top:12px;">
                                 <button class="btn-secondary"
                                         disabled="@(_busy || !IsPending(offer.Status))"
                                         @onclick="() => AcceptContractOfferAsync(offer.Id)">
-                                    Accept
+                                    Accept as-is
+                                </button>
+
+                                <button class="btn-secondary"
+                                        disabled="@(_busy || !IsPending(offer.Status))"
+                                        @onclick="() => AcceptContractForMoneyAsync(offer.Id)">
+                                    Push money
+                                </button>
+
+                                <button class="btn-secondary"
+                                        disabled="@(_busy || !IsPending(offer.Status))"
+                                        @onclick="() => AcceptContractForSecurityAsync(offer.Id)">
+                                    Push security
+                                </button>
+
+                                <button class="btn-secondary"
+                                        disabled="@(_busy || !IsPending(offer.Status))"
+                                        @onclick="() => AcceptContractForExposureAsync(offer.Id)">
+                                    Push exposure
                                 </button>
 
                                 <button class="btn-secondary"
@@ -334,6 +420,7 @@ else
     private List<InboxMessageVm> _messages = new();
     private List<FightOfferVm> _fightOffers = new();
     private List<ContractOfferVm> _contractOffers = new();
+    private List<DecisionEventVm> _decisions = new();
 
     private InboxMessageVm? SelectedMessage;
 
@@ -370,6 +457,7 @@ else
             _messages = result.Messages.ToList();
             _fightOffers = result.Offers.ToList();
             _contractOffers = result.ContractOffers.ToList();
+            _decisions = result.Decisions.ToList();
 
             _messageTypes = _messages
                 .Select(x => x.MessageType)
@@ -733,6 +821,87 @@ else
         }
     }
 
+    private async Task AcceptContractForMoneyAsync(int contractOfferId)
+    {
+        try
+        {
+            _busy = true;
+            _error = null;
+
+            var result = await ContractOfferResponseService.AcceptForMoneyAsync(contractOfferId);
+            if (!result.Success)
+            {
+                _error = result.Message;
+                return;
+            }
+
+            _status = result.Message ?? "Contract money push resolved.";
+            await ReloadAsync();
+        }
+        catch (Exception ex)
+        {
+            _error = ex.ToString();
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task AcceptContractForSecurityAsync(int contractOfferId)
+    {
+        try
+        {
+            _busy = true;
+            _error = null;
+
+            var result = await ContractOfferResponseService.AcceptForSecurityAsync(contractOfferId);
+            if (!result.Success)
+            {
+                _error = result.Message;
+                return;
+            }
+
+            _status = result.Message ?? "Contract security push resolved.";
+            await ReloadAsync();
+        }
+        catch (Exception ex)
+        {
+            _error = ex.ToString();
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task AcceptContractForExposureAsync(int contractOfferId)
+    {
+        try
+        {
+            _busy = true;
+            _error = null;
+
+            var result = await ContractOfferResponseService.AcceptForExposureAsync(contractOfferId);
+            if (!result.Success)
+            {
+                _error = result.Message;
+                return;
+            }
+
+            _status = result.Message ?? "Contract exposure push resolved.";
+            await ReloadAsync();
+        }
+        catch (Exception ex)
+        {
+            _error = ex.ToString();
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
     private async Task DeleteContractOfferAsync(int contractOfferId)
     {
         try
@@ -763,6 +932,26 @@ else
 
             await InboxService.DeleteProcessedContractOffersAsync();
             _status = "Processed contract offers deleted.";
+            await ReloadAsync();
+        }
+        catch (Exception ex)
+        {
+            _error = ex.ToString();
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task ResolveDecisionAsync(int decisionId, string optionKey)
+    {
+        try
+        {
+            _busy = true;
+            _error = null;
+            await InboxService.ResolveDecisionAsync(decisionId, optionKey);
+            _status = "Decision resolved.";
             await ReloadAsync();
         }
         catch (Exception ex)

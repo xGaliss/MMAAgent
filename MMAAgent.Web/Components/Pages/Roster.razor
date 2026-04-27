@@ -67,14 +67,21 @@ else
 
         <table class="fighters-table">
             <thead>
-                <tr>
-                    <th>Name</th>
-                    <th>Weight Class</th>
-                    <th>Record</th>
-                    <th>Country</th>
-                </tr>
-            </thead>
-            <tbody>
+                        <tr>
+                            <th>Name</th>
+                            <th>Weight Class</th>
+                            <th>Record</th>
+                            <th>Country</th>
+                            <th>Scout Read</th>
+                            <th>Confidence</th>
+                            <th>Status</th>
+                            <th>Style</th>
+                            <th>Reliability</th>
+                            <th>Heat</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody>
                 @foreach (var fighter in _items)
                 {
                     <tr>
@@ -84,6 +91,19 @@ else
                         <td>@fighter.WeightClass</td>
                         <td>@fighter.Wins-@fighter.Losses-@fighter.Draws</td>
                         <td>@fighter.CountryName</td>
+                        <td>@fighter.ScoutRead</td>
+                        <td>@fighter.ConfidenceLabel</td>
+                        <td>@fighter.ScoutStatus</td>
+                        <td>@fighter.BaseStyle</td>
+                        <td>@DescribeReliability(fighter.ReliabilityScore)</td>
+                        <td>@DescribeHeat(fighter.MediaHeat)</td>
+                        <td>
+                            <button class="btn-secondary"
+                                    disabled="@(_busyScouting || IsScoutLocked(fighter.ScoutStatus))"
+                                    @onclick="() => StartScoutAsync(fighter.Id)">
+                                Scout
+                            </button>
+                        </td>
                     </tr>
                 }
             </tbody>
@@ -100,6 +120,7 @@ else
     private List<string> _countries = new();
     private int _totalCount;
     private bool _loading = true;
+    private bool _busyScouting;
     private string? _error;
 
     protected override async Task OnInitializedAsync()
@@ -139,4 +160,46 @@ else
             _loading = false;
         }
     }
+
+    private static string DescribeReliability(int value)
+        => value switch
+        {
+            >= 85 => "Elite",
+            >= 70 => "Strong",
+            >= 55 => "Mixed",
+            >= 40 => "Shaky",
+            _ => "Risky"
+        };
+
+    private static string DescribeHeat(int value)
+        => value switch
+        {
+            >= 85 => "Super hot",
+            >= 70 => "Buzzing",
+            >= 55 => "Warm",
+            >= 40 => "Quiet",
+            _ => "Cold"
+        };
+
+    private async Task StartScoutAsync(int fighterId)
+    {
+        try
+        {
+            _busyScouting = true;
+            await RosterService.StartScoutAsync(fighterId);
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            _error = ex.ToString();
+        }
+        finally
+        {
+            _busyScouting = false;
+        }
+    }
+
+    private static bool IsScoutLocked(string status)
+        => string.Equals(status, "Scouting", StringComparison.OrdinalIgnoreCase)
+           || string.Equals(status, "Known", StringComparison.OrdinalIgnoreCase);
 }

@@ -32,6 +32,16 @@ public sealed class WebDashboardFeedService
         using var conn = _factory.CreateConnection();
 
         var agenda = await LoadAgendaAsync(conn);
+        var competitivePulse = await LoadSimpleListAsync(conn, @"
+SELECT
+    (s.Headline || ' · ' || COALESCE(f.FirstName || ' ' || f.LastName, 'World'))
+FROM Storylines s
+LEFT JOIN Fighters f
+    ON s.EntityType = 'Fighter'
+   AND f.Id = s.EntityId
+WHERE COALESCE(s.Status, 'Active') = 'Active'
+ORDER BY COALESCE(s.Intensity, 0) DESC, s.Id DESC
+LIMIT 6;");
 
         var events = await LoadSimpleListAsync(conn, @"
 SELECT COALESCE(Name, 'Event')
@@ -70,7 +80,14 @@ ORDER BY COALESCE(f.Popularity, 0) DESC
 LIMIT 5;", agent.Id);
 
         var pendingFightOffers = await LoadSimpleListAsync(conn, @"
-SELECT ((f.FirstName || ' ' || f.LastName) || ' vs ' || (o.FirstName || ' ' || o.LastName))
+SELECT
+    ((f.FirstName || ' ' || f.LastName) || ' vs ' || (o.FirstName || ' ' || o.LastName)
+        || CASE
+            WHEN COALESCE(fo.IsTitleFight, 0) = 1 THEN ' · title fight'
+            WHEN COALESCE(fo.IsTitleEliminator, 0) = 1 THEN ' · title eliminator'
+            WHEN COALESCE(fo.IsShortNotice, 0) = 1 THEN ' · short notice'
+            ELSE ''
+           END)
 FROM FightOffers fo
 JOIN ManagedFighters mf ON mf.FighterId = fo.FighterId AND mf.AgentId = $agentId AND COALESCE(mf.IsActive, 1) = 1
 JOIN Fighters f ON f.Id = fo.FighterId
@@ -92,6 +109,7 @@ LIMIT 5;", agent.Id);
         return new DashboardFeedVm
         {
             Agenda = agenda,
+            CompetitivePulse = competitivePulse,
             Events = events,
             Messages = messages,
             Managed = managed,

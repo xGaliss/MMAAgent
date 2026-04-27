@@ -79,7 +79,11 @@ INSERT INTO Fights
     EventDate,
     EventId,
     WeightClass,
-    IsTitleFight
+    IsTitleFight,
+    IsTitleEliminator,
+    Purse,
+    WinBonus,
+    IsShortNotice
 )
 VALUES
 (
@@ -91,7 +95,11 @@ VALUES
     $eventDate,
     $eventId,
     $weightClass,
-    $isTitleFight
+    $isTitleFight,
+    $isTitleEliminator,
+    $purse,
+    $winBonus,
+    $isShortNotice
 );";
 
             cmd.Parameters.AddWithValue("$fighterAId", offer.FighterId);
@@ -101,6 +109,10 @@ VALUES
             cmd.Parameters.AddWithValue("$eventId", resolvedEventId);
             cmd.Parameters.AddWithValue("$weightClass", offer.WeightClass ?? "");
             cmd.Parameters.AddWithValue("$isTitleFight", offer.IsTitleFight ? 1 : 0);
+            cmd.Parameters.AddWithValue("$isTitleEliminator", offer.IsTitleEliminator ? 1 : 0);
+            cmd.Parameters.AddWithValue("$purse", offer.Purse);
+            cmd.Parameters.AddWithValue("$winBonus", offer.WinBonus);
+            cmd.Parameters.AddWithValue("$isShortNotice", offer.IsShortNotice ? 1 : 0);
 
             await cmd.ExecuteNonQueryAsync(cancellationToken);
 
@@ -139,8 +151,13 @@ WHERE Id = $id;";
         {
             AgentId = agent.Id,
             MessageType = "FightOfferResponse",
-            Subject = "Fight offer accepted",
-            Body = $"Accepted fight offer #{offerId}. The bout has been added to event #{resolvedEventId}.",
+            Subject = offer.IsTitleFight
+                ? "Title fight accepted"
+                : offer.IsTitleEliminator
+                    ? "Title eliminator accepted"
+                    : "Fight offer accepted",
+            Body = $"Accepted fight offer #{offerId}. The bout has been added to event #{resolvedEventId}."
+                 + (offer.IsTitleEliminator ? " Next-contender stakes are attached to this booking." : string.Empty),
             CreatedDate = DateTime.UtcNow.ToString("yyyy-MM-dd"),
             IsRead = false
         });
@@ -195,9 +212,13 @@ SELECT
     OpponentFighterId,
     EventId,
     PromotionId,
+    Purse,
+    WinBonus,
     WeeksUntilFight,
+    IsShortNotice,
     WeightClass,
-    IsTitleFight
+    IsTitleFight,
+    COALESCE(IsTitleEliminator, 0) AS IsTitleEliminator
 FROM FightOffers
 WHERE Id = $id
 LIMIT 1;";
@@ -213,9 +234,13 @@ LIMIT 1;";
             Convert.ToInt32(r["OpponentFighterId"]),
             r["EventId"] == DBNull.Value ? null : Convert.ToInt32(r["EventId"]),
             r["PromotionId"] == DBNull.Value ? null : Convert.ToInt32(r["PromotionId"]),
+            Convert.ToInt32(r["Purse"]),
+            Convert.ToInt32(r["WinBonus"]),
             Convert.ToInt32(r["WeeksUntilFight"]),
+            Convert.ToInt32(r["IsShortNotice"]) == 1,
             r["WeightClass"]?.ToString() ?? "",
-            Convert.ToInt32(r["IsTitleFight"]) == 1);
+            Convert.ToInt32(r["IsTitleFight"]) == 1,
+            Convert.ToInt32(r["IsTitleEliminator"]) == 1);
     }
 
     private static async Task<string?> GetEventDateAsync(
@@ -355,9 +380,13 @@ LIMIT 1;";
         int OpponentFighterId,
         int? EventId,
         int? PromotionId,
+        int Purse,
+        int WinBonus,
         int WeeksUntilFight,
+        bool IsShortNotice,
         string WeightClass,
-        bool IsTitleFight);
+        bool IsTitleFight,
+        bool IsTitleEliminator);
 
     private sealed record PromotionSnapshot(
         string Name,

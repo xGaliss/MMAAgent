@@ -130,7 +130,8 @@ namespace MMAAgent.Infrastructure.Persistence.Sqlite.Services
                         card.CardSegment,
                         card.CardOrder,
                         card.IsMainEvent,
-                        card.IsCoMainEvent);
+                        card.IsCoMainEvent,
+                        card.Bout.IsTitleEliminator);
                 }
                 else
                 {
@@ -145,6 +146,7 @@ namespace MMAAgent.Infrastructure.Persistence.Sqlite.Services
                         eventId,
                         card.Bout.WeightClass,
                         card.Bout.IsTitleFight,
+                        card.Bout.IsTitleEliminator,
                         card.CardSegment,
                         card.CardOrder,
                         card.IsMainEvent,
@@ -286,6 +288,7 @@ LIMIT 1;";
                 loser.Id,
                 method,
                 card.Bout.IsTitleFight,
+                card.Bout.IsTitleEliminator,
                 fightNotes,
                 eventId,
                 card.CardSegment,
@@ -320,7 +323,8 @@ WHERE PromotionId = $p AND WeightClass = $wc;",
                 }
             }
 
-            var summary = $"{winner.FullName} def. {loser.FullName} via {method}" + (card.Bout.IsTitleFight ? " (TITLE)" : "");
+            var summary = $"{winner.FullName} def. {loser.FullName} via {method}"
+                          + (card.Bout.IsTitleFight ? " (TITLE)" : card.Bout.IsTitleEliminator ? " (ELIMINATOR)" : "");
             return new SimFightResult(winner.Id, loser.Id, method, card.Bout.IsTitleFight, summary);
         }
 
@@ -381,6 +385,7 @@ WHERE FighterId = $fid
                                 challenger.FighterId,
                                 weightClass,
                                 true,
+                                false,
                                 champion.Skill,
                                 champion.Popularity,
                                 challenger.Skill,
@@ -396,6 +401,34 @@ WHERE FighterId = $fid
                     .Where(x => !fightersAlreadyUsed.Contains(x.FighterId) && !localReserved.Contains(x.FighterId))
                     .ToList();
 
+                if (!isTitleWindow && remaining.Count >= 2)
+                {
+                    var eliminatorA = remaining.FirstOrDefault(x => x.QueueRank is > 0 and <= 2);
+                    var eliminatorB = remaining
+                        .FirstOrDefault(x => x.FighterId != eliminatorA?.FighterId && x.QueueRank is > 0 and <= 4);
+
+                    if (eliminatorA is not null && eliminatorB is not null)
+                    {
+                        candidates.Add(CreatePlannedBout(
+                            null,
+                            eliminatorA.FighterId,
+                            eliminatorB.FighterId,
+                            weightClass,
+                            false,
+                            true,
+                            eliminatorA.Skill,
+                            eliminatorA.Popularity,
+                            eliminatorB.Skill,
+                            eliminatorB.Popularity));
+
+                        localReserved.Add(eliminatorA.FighterId);
+                        localReserved.Add(eliminatorB.FighterId);
+                        remaining = ranked
+                            .Where(x => !fightersAlreadyUsed.Contains(x.FighterId) && !localReserved.Contains(x.FighterId))
+                            .ToList();
+                    }
+                }
+
                 var maxPairs = isMajorEvent ? 3 : 2;
                 for (var i = 0; i + 1 < remaining.Count && maxPairs > 0; i += 2, maxPairs--)
                 {
@@ -410,6 +443,7 @@ WHERE FighterId = $fid
                         fighterB.FighterId,
                         weightClass,
                         false,
+                        false,
                         fighterA.Skill,
                         fighterA.Popularity,
                         fighterB.Skill,
@@ -423,7 +457,7 @@ WHERE FighterId = $fid
         private static async Task<List<PlannedBout>> LoadScheduledBoutsAsync(SqliteConnection conn, SqliteTransaction tx, int eventId)
         {
             var rows = await QueryAsync(conn, tx, @"
-SELECT Id, FighterAId, FighterBId, WeightClass, IsTitleFight
+SELECT Id, FighterAId, FighterBId, WeightClass, IsTitleFight, COALESCE(IsTitleEliminator, 0) AS IsTitleEliminator
 FROM Fights
 WHERE EventId = $eventId
   AND Method = 'Scheduled';",
@@ -443,6 +477,7 @@ WHERE EventId = $eventId
                     fighterB.Id,
                     row.GetString("WeightClass"),
                     row.GetInt("IsTitleFight") == 1,
+                    row.GetInt("IsTitleEliminator") == 1,
                     fighterA.Skill,
                     fighterA.Popularity,
                     fighterB.Skill,
@@ -458,6 +493,7 @@ WHERE EventId = $eventId
             int fighterBId,
             string weightClass,
             bool isTitleFight,
+            bool isTitleEliminator,
             int fighterASkill,
             int fighterAPopularity,
             int fighterBSkill,
@@ -465,9 +501,10 @@ WHERE EventId = $eventId
         {
             var score = (fighterASkill + fighterBSkill) * 1.35
                         + (fighterAPopularity + fighterBPopularity) * 1.15
-                        + (isTitleFight ? 150 : 0);
+                        + (isTitleFight ? 150 : 0)
+                        + (isTitleEliminator ? 70 : 0);
 
-            return new PlannedBout(existingFightId, fighterAId, fighterBId, weightClass, isTitleFight, score);
+            return new PlannedBout(existingFightId, fighterAId, fighterBId, weightClass, isTitleFight, isTitleEliminator, score);
         }
 
         private static List<CardAssignment> AssignCardSlots(List<PlannedBout> lineup, PromotionPlan promotion)
@@ -475,7 +512,11 @@ WHERE EventId = $eventId
             if (lineup.Count == 0)
                 return new List<CardAssignment>();
 
-            var ordered = lineup.OrderByDescending(x => x.Score).ThenByDescending(x => x.IsTitleFight).ToList();
+            var ordered = lineup
+                .OrderByDescending(x => x.Score)
+                .ThenByDescending(x => x.IsTitleFight)
+                .ThenByDescending(x => x.IsTitleEliminator)
+                .ToList();
             var mainCardCount = Math.Min(promotion.MainCardFightCount, ordered.Count);
             var prelimCount = Math.Min(promotion.PrelimFightCount, Math.Max(0, ordered.Count - mainCardCount));
             var earlyCount = Math.Max(0, ordered.Count - mainCardCount - prelimCount);
@@ -614,6 +655,8 @@ WHERE Id = $id;",
                 "MissedWeight" => -5.5,
                 _ => 0.0
             };
+            prepAdjustment += prep.PerformanceModifier;
+            prepAdjustment -= (prep.RiskModifier * 0.4);
 
             return basePower + prepAdjustment + NextGaussian(rng, 0, 4.5);
         }
@@ -639,6 +682,8 @@ WHERE Id = $id;",
             if (string.Equals(loserPrep.WeighInOutcome, "MissedWeight", StringComparison.OrdinalIgnoreCase))
                 koProbability += 0.08;
 
+            koProbability += Math.Max(0, loserPrep.RiskModifier) * 0.01;
+
             if (string.Equals(winnerPrep.CampOutcome, "Disrupted", StringComparison.OrdinalIgnoreCase))
             {
                 koProbability -= 0.03;
@@ -656,6 +701,9 @@ WHERE Id = $id;",
                 koProbability -= 0.05;
                 subProbability -= 0.03;
             }
+
+            koProbability += Math.Max(0, winnerPrep.PerformanceModifier) * 0.005;
+            subProbability += Math.Max(0, winnerPrep.PerformanceModifier) * 0.003;
 
             koProbability = Clamp(koProbability, 0.15, 0.70);
             subProbability = Clamp(subProbability, 0.10, 0.60);
@@ -758,7 +806,8 @@ WHERE PromotionId = $p AND WeightClass = $wc;",
             string cardSegment,
             int cardOrder,
             bool isMainEvent,
-            bool isCoMainEvent)
+            bool isCoMainEvent,
+            bool isTitleEliminator)
         {
             using var cmd = conn.CreateCommand();
             cmd.Transaction = tx;
@@ -771,7 +820,8 @@ SET WinnerId = $winnerId,
     CardSegment = $cardSegment,
     CardOrder = $cardOrder,
     IsMainEvent = $isMainEvent,
-    IsCoMainEvent = $isCoMainEvent
+    IsCoMainEvent = $isCoMainEvent,
+    IsTitleEliminator = $isTitleEliminator
 WHERE Id = $fightId;";
             cmd.Parameters.AddWithValue("$winnerId", winnerId);
             cmd.Parameters.AddWithValue("$method", method);
@@ -781,6 +831,7 @@ WHERE Id = $fightId;";
             cmd.Parameters.AddWithValue("$cardOrder", cardOrder);
             cmd.Parameters.AddWithValue("$isMainEvent", isMainEvent ? 1 : 0);
             cmd.Parameters.AddWithValue("$isCoMainEvent", isCoMainEvent ? 1 : 0);
+            cmd.Parameters.AddWithValue("$isTitleEliminator", isTitleEliminator ? 1 : 0);
             cmd.Parameters.AddWithValue("$fightId", fightId);
             await cmd.ExecuteNonQueryAsync();
         }
@@ -796,6 +847,7 @@ WHERE Id = $fightId;";
             int eventId,
             string weightClass,
             bool isTitleFight,
+            bool isTitleEliminator,
             string cardSegment,
             int cardOrder,
             bool isMainEvent,
@@ -813,6 +865,7 @@ INSERT INTO Fights
     EventId,
     WeightClass,
     IsTitleFight,
+    IsTitleEliminator,
     CardSegment,
     CardOrder,
     IsMainEvent,
@@ -829,6 +882,7 @@ VALUES
     $eventId,
     $weightClass,
     $isTitleFight,
+    $isTitleEliminator,
     $cardSegment,
     $cardOrder,
     $isMainEvent,
@@ -842,6 +896,7 @@ VALUES
                 ("$eventId", eventId),
                 ("$weightClass", weightClass),
                 ("$isTitleFight", isTitleFight ? 1 : 0),
+                ("$isTitleEliminator", isTitleEliminator ? 1 : 0),
                 ("$cardSegment", cardSegment),
                 ("$cardOrder", cardOrder),
                 ("$isMainEvent", isMainEvent ? 1 : 0),
@@ -924,6 +979,7 @@ WHERE Id = $eventId;",
             int loserId,
             string method,
             bool isTitle,
+            bool isTitleEliminator,
             string? notes,
             int eventId,
             string cardSegment,
@@ -944,6 +1000,7 @@ INSERT INTO FightHistory
     LoserId,
     Method,
     IsTitle,
+    IsTitleEliminator,
     Notes,
     EventId,
     CardSegment,
@@ -963,6 +1020,7 @@ VALUES
     $loserId,
     $method,
     $isTitle,
+    $isTitleEliminator,
     $notes,
     $eventId,
     $cardSegment,
@@ -980,6 +1038,7 @@ VALUES
                 ("$loserId", loserId),
                 ("$method", method),
                 ("$isTitle", isTitle ? 1 : 0),
+                ("$isTitleEliminator", isTitleEliminator ? 1 : 0),
                 ("$notes", (object?)notes ?? DBNull.Value),
                 ("$eventId", eventId),
                 ("$cardSegment", cardSegment),
@@ -1000,7 +1059,10 @@ SELECT
     COALESCE(FightWeekOutcome, '') AS FightWeekOutcome,
     COALESCE(FightWeekNotes, '') AS FightWeekNotes,
     COALESCE(WeighInOutcome, '') AS WeighInOutcome,
-    COALESCE(WeighInNotes, '') AS WeighInNotes
+    COALESCE(WeighInNotes, '') AS WeighInNotes,
+    COALESCE(PerformanceModifier, 0) AS PerformanceModifier,
+    COALESCE(RiskModifier, 0) AS RiskModifier,
+    COALESCE(DecisionNotes, '') AS DecisionNotes
 FROM FightPreparations
 WHERE FightId = $fightId
   AND FighterId = $fighterId
@@ -1018,7 +1080,10 @@ LIMIT 1;";
                 reader["FightWeekOutcome"]?.ToString() ?? "",
                 reader["FightWeekNotes"]?.ToString() ?? "",
                 reader["WeighInOutcome"]?.ToString() ?? "",
-                reader["WeighInNotes"]?.ToString() ?? "");
+                reader["WeighInNotes"]?.ToString() ?? "",
+                Convert.ToInt32(reader["PerformanceModifier"]),
+                Convert.ToInt32(reader["RiskModifier"]),
+                reader["DecisionNotes"]?.ToString() ?? "");
         }
 
         private static string? BuildFightNotes(FighterRow fighterA, FighterRow fighterB, PrepEffect prepA, PrepEffect prepB)
@@ -1047,6 +1112,9 @@ LIMIT 1;";
                 fragments.Add($"{fighterName} had a draining weight cut.");
             else if (string.Equals(prep.WeighInOutcome, "MissedWeight", StringComparison.OrdinalIgnoreCase))
                 fragments.Add($"{fighterName} missed weight before fight night.");
+
+            if (!string.IsNullOrWhiteSpace(prep.DecisionNotes))
+                fragments.Add(prep.DecisionNotes);
         }
 
         private static async Task<PromotionPlan?> LoadPromotionPlanAsync(SqliteConnection conn, SqliteTransaction tx, int promotionId)
@@ -1088,11 +1156,16 @@ LIMIT 1;";
             cmd.CommandText = @"
 SELECT
     pr.RankPosition,
+    cq.QueueRank,
     f.Id AS FighterId,
     f.Skill,
     f.Popularity
 FROM PromotionRankings pr
 JOIN Fighters f ON f.Id = pr.FighterId
+LEFT JOIN ContenderQueue cq
+    ON cq.FighterId = f.Id
+   AND cq.PromotionId = pr.PromotionId
+   AND cq.WeightClass = pr.WeightClass
 WHERE pr.PromotionId = $promotionId
   AND pr.WeightClass = $weightClass
   AND f.Retired = 0
@@ -1116,6 +1189,7 @@ ORDER BY pr.RankPosition;";
                 list.Add(new RankedFighter(
                     Convert.ToInt32(reader["FighterId"]),
                     Convert.ToInt32(reader["RankPosition"]),
+                    reader["QueueRank"] == DBNull.Value ? null : Convert.ToInt32(reader["QueueRank"]),
                     Convert.ToInt32(reader["Skill"]),
                     Convert.ToInt32(reader["Popularity"])));
             }
@@ -1301,9 +1375,9 @@ LIMIT 1;";
             int MainCardFightCount);
 
         private sealed record EventRuntimeSnapshot(int Id, string Name, string EventDate);
-        private sealed record RankedFighter(int FighterId, int RankPosition, int Skill, int Popularity);
+        private sealed record RankedFighter(int FighterId, int RankPosition, int? QueueRank, int Skill, int Popularity);
         private sealed record RecoveryPlan(int MedicalSuspensionWeeks, int InjuryWeeks);
-        private sealed record PlannedBout(int? ExistingFightId, int FighterAId, int FighterBId, string WeightClass, bool IsTitleFight, double Score);
+        private sealed record PlannedBout(int? ExistingFightId, int FighterAId, int FighterBId, string WeightClass, bool IsTitleFight, bool IsTitleEliminator, double Score);
         private sealed record CardAssignment(PlannedBout Bout, string CardSegment, int CardOrder, bool IsMainEvent, bool IsCoMainEvent);
         private sealed record PrepEffect(
             string CampOutcome,
@@ -1311,9 +1385,12 @@ LIMIT 1;";
             string FightWeekOutcome,
             string FightWeekNotes,
             string WeighInOutcome,
-            string WeighInNotes)
+            string WeighInNotes,
+            int PerformanceModifier,
+            int RiskModifier,
+            string DecisionNotes)
         {
-            public static PrepEffect None { get; } = new("", "", "", "", "", "");
+            public static PrepEffect None { get; } = new("", "", "", "", "", "", 0, 0, "");
         }
         private sealed record SimFightResult(int WinnerId, int LoserId, string Method, bool IsTitle, string Summary);
     }

@@ -30,8 +30,15 @@ public sealed class WebMyFightersService
 
         if (!string.IsNullOrWhiteSpace(promotion))
         {
-            filters.Add("p.Name = $promotion");
-            cmd.Parameters.AddWithValue("$promotion", promotion.Trim());
+            if (string.Equals(promotion.Trim(), "Free Agent", System.StringComparison.OrdinalIgnoreCase))
+            {
+                filters.Add("f.PromotionId IS NULL");
+            }
+            else
+            {
+                filters.Add("p.Name = $promotion");
+                cmd.Parameters.AddWithValue("$promotion", promotion.Trim());
+            }
         }
 
         if (!string.IsNullOrWhiteSpace(weightClass))
@@ -45,6 +52,7 @@ SELECT
     f.Id AS FighterId,
     (f.FirstName || ' ' || f.LastName) AS FighterName,
     f.WeightClass,
+    f.PromotionId,
     COALESCE(p.Name,'Free Agent') AS PromotionName,
     pr.RankPosition,
     CASE WHEN t.ChampionFighterId = f.Id THEN 1 ELSE 0 END AS IsChampion,
@@ -77,6 +85,7 @@ ORDER BY f.Popularity DESC, f.Skill DESC, f.Wins DESC;";
                 Convert.ToInt32(r["FighterId"]),
                 r["FighterName"]?.ToString() ?? "",
                 r["WeightClass"]?.ToString() ?? "",
+                r["PromotionId"] == DBNull.Value ? null : Convert.ToInt32(r["PromotionId"]),
                 r["PromotionName"]?.ToString() ?? "",
                 r["RankPosition"] == DBNull.Value ? null : Convert.ToInt32(r["RankPosition"]),
                 Convert.ToInt32(r["IsChampion"]) == 1,
@@ -128,5 +137,27 @@ ORDER BY f.WeightClass;";
         }
 
         return (promotions, weights);
+    }
+
+    public async Task<IReadOnlyList<PromotionOptionVm>> LoadPromotionTargetsAsync()
+    {
+        using var conn = _factory.CreateConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = @"
+SELECT Id, Name
+FROM Promotions
+WHERE COALESCE(IsActive, 1) = 1
+ORDER BY COALESCE(Prestige, 0) DESC, Name;";
+
+        var list = new List<PromotionOptionVm>();
+        using var reader = await cmd.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+        {
+            list.Add(new PromotionOptionVm(
+                Convert.ToInt32(reader["Id"]),
+                reader["Name"]?.ToString() ?? string.Empty));
+        }
+
+        return list;
     }
 }
