@@ -11,39 +11,85 @@
 
 <div class="menu-screen">
     <section class="menu-hero-card">
-        <div class="menu-kicker">MAIN MENU</div>
-        <h1 class="menu-hero-title">Start your MMA management career</h1>
-        <p class="menu-hero-text">
-            Create a new world from the template database or load an existing save file.
-        </p>
+        <div class="menu-hero-layout">
+            <div class="menu-hero-copy">
+                <div class="menu-kicker">MAIN MENU</div>
+                <h1 class="menu-hero-title">Build your MMA management universe</h1>
+                <p class="menu-hero-text">
+                    Jump back into an active save or create a fresh combat world with your own agency, roster and long-term storylines.
+                </p>
+
+                <div class="menu-hero-tags">
+                    <span class="menu-hero-tag">Career Mode</span>
+                    <span class="menu-hero-tag">Living World</span>
+                    <span class="menu-hero-tag">New Save Ready</span>
+                </div>
+            </div>
+
+            <div class="menu-hero-side">
+                <div class="menu-hero-stat">
+                    <span>Detected saves</span>
+                    <strong>@_saves.Count</strong>
+                </div>
+                <div class="menu-hero-stat">
+                    <span>Current slot</span>
+                    <strong>@GetCurrentSaveLabel()</strong>
+                </div>
+                <div class="menu-hero-stat menu-hero-stat-wide">
+                    <span>Status</span>
+                    <strong>@(_currentSavePath is null ? "Ready to start a new career" : "Save loaded and ready to continue")</strong>
+                </div>
+            </div>
+        </div>
     </section>
 
     <div class="menu-card-grid">
         <section class="menu-card">
-            <div class="menu-card-title">Detected Saves</div>
-            <div class="menu-card-subtitle">Recent saves found on this machine.</div>
-
-            <div class="save-card-list">
-                @foreach (var save in _saves)
-                {
-                    <article class="save-card">
-                        <div>
-                            <div class="save-name">@save.FileName</div>
-                            <div class="muted-text">@save.Path</div>
-                            <div class="muted-text">@save.LastWriteTimeUtc.ToLocalTime()</div>
-                        </div>
-                        <div class="button-row">
-                            <button class="btn-primary" @onclick="() => LoadDetectedAsync(save.Path)">Load</button>
-                            <button class="btn-secondary" @onclick="() => StartRename(save.Path)">Rename</button>
-                            <button class="btn-secondary" @onclick="() => DeleteSaveAsync(save.Path)">Delete</button>
-                        </div>
-                    </article>
-                }
+            <div class="menu-card-head">
+                <div>
+                    <div class="menu-card-title">Detected Saves</div>
+                    <div class="menu-card-subtitle">Recent saves found on this machine.</div>
+                </div>
+                <div class="menu-count-pill">@_saves.Count total</div>
             </div>
+
+            @if (_saves.Count == 0)
+            {
+                <div class="menu-empty-state">
+                    <div class="menu-empty-icon">+</div>
+                    <div class="menu-empty-title">No local saves detected</div>
+                    <div class="menu-empty-text">
+                        Create a new career on the right or load a database manually to get started.
+                    </div>
+                </div>
+            }
+            else
+            {
+                <div class="save-card-list">
+                    @foreach (var save in _saves)
+                    {
+                        <article class="save-card save-card-spotlight">
+                            <div class="save-card-top">
+                                <div>
+                                    <div class="save-name">@save.FileName</div>
+                                    <div class="muted-text">@ShortenPath(save.Path)</div>
+                                </div>
+                                <div class="save-updated-pill">@save.LastWriteTimeUtc.ToLocalTime().ToString("dd MMM yyyy · HH:mm")</div>
+                            </div>
+
+                            <div class="save-card-actions">
+                                <button class="btn-primary" @onclick="() => LoadDetectedAsync(save.Path)">Continue</button>
+                                <button class="btn-secondary" @onclick="() => StartRename(save.Path)">Rename</button>
+                                <button class="btn-secondary" @onclick="() => DeleteSaveAsync(save.Path)">Delete</button>
+                            </div>
+                        </article>
+                    }
+                </div>
+            }
 
             @if (!string.IsNullOrWhiteSpace(_renamePath))
             {
-                <div class="form-stack" style="margin-top:16px;">
+                <div class="form-stack menu-inline-panel" style="margin-top:16px;">
                     <label class="field-label">Rename selected save</label>
                     <input class="text-input" @bind="_renameName" placeholder="New save name" />
                     <div class="button-row">
@@ -55,38 +101,66 @@
         </section>
 
         <section class="menu-card">
-            <div class="menu-card-title">New Game / Manual Load</div>
-            <div class="menu-card-subtitle">Same flow as desktop: template DB, world generation, initial signing and rankings.</div>
+            <div class="menu-card-head">
+                <div>
+                    <div class="menu-card-title">New Game / Manual Load</div>
+                    <div class="menu-card-subtitle">Create a new career world or reconnect to a save file you already know.</div>
+                </div>
+                <div class="menu-count-pill menu-count-pill-gold">Career Setup</div>
+            </div>
 
             <div class="form-stack">
-                <label class="field-label">Save path</label>
-                <input class="text-input" @bind="_loadPath" placeholder="C:\Ruta\A\Tu\Save.db" />
+                <div class="menu-section-block">
+                    <div class="menu-section-title">Continue Existing Career</div>
+                    <div class="menu-section-text">Use a detected save, reopen your configured slot or point directly to a database file.</div>
 
-                <div class="button-row">
-                    <button class="btn-secondary" @onclick="LoadConfiguredAsync" disabled="@_busy">Load configured save</button>
-                    <button class="btn-secondary" @onclick="LoadLastAsync" disabled="@_busy">Load last save</button>
-                    <button class="btn-primary" @onclick="LoadByPathAsync" disabled="@_busy">Load by path</button>
+                    <label class="field-label">Save path</label>
+                    <input class="text-input" @bind="_loadPath" placeholder="C:\Ruta\A\Tu\Save.db" />
+
+                    <div class="button-row menu-action-wrap">
+                        <button class="btn-secondary" @onclick="LoadConfiguredAsync" disabled="@_busy">Load configured save</button>
+                        <button class="btn-secondary" @onclick="LoadLastAsync" disabled="@_busy">Load last save</button>
+                        <button class="btn-primary" @onclick="LoadByPathAsync" disabled="@_busy">Load by path</button>
+                    </div>
                 </div>
 
-                <label class="field-label">Save name</label>
-                <input class="text-input" @bind="_saveName" placeholder="MiPartida" />
+                <div class="menu-section-block menu-section-block-featured">
+                    <div class="menu-section-title">Create New Career World</div>
+                    <div class="menu-section-text">Set your save, manager identity and initial world size. Everything else will spin up from the template database.</div>
 
-                <label class="field-label">Agent name</label>
-                <input class="text-input" @bind="_agentName" placeholder="Alejandro" />
+                    <div class="menu-form-grid">
+                        <div class="form-stack">
+                            <label class="field-label">Save name</label>
+                            <input class="text-input" @bind="_saveName" placeholder="MiPartida" />
+                        </div>
 
-                <label class="field-label">Agency name</label>
-                <input class="text-input" @bind="_agencyName" placeholder="Galiss Management" />
+                        <div class="form-stack">
+                            <label class="field-label">Fighter count</label>
+                            <input class="text-input" type="number" @bind="_fighterCount" />
+                        </div>
 
-                <label class="field-label">Fighter count</label>
-                <input class="text-input" type="number" @bind="_fighterCount" />
+                        <div class="form-stack">
+                            <label class="field-label">Agent name</label>
+                            <input class="text-input" @bind="_agentName" placeholder="Alejandro" />
+                        </div>
 
-                <div class="button-row">
-                    <button class="btn-primary" @onclick="CreateNewGameAsync" disabled="@_busy">
-                        @(_busy ? "Working..." : "Create new game")
-                    </button>
+                        <div class="form-stack">
+                            <label class="field-label">Agency name</label>
+                            <input class="text-input" @bind="_agencyName" placeholder="Galiss Management" />
+                        </div>
+                    </div>
+
+                    <div class="menu-create-footer">
+                        <button class="btn-primary menu-create-button" @onclick="CreateNewGameAsync" disabled="@_busy">
+                            @(_busy ? "Building world..." : "Create new game")
+                        </button>
+
+                        <div class="menu-active-save">
+                            <span>Active save</span>
+                            <strong>@(_currentSavePath ?? "none")</strong>
+                        </div>
+                    </div>
                 </div>
-
-                <div class="muted-text">Active save: @(_currentSavePath ?? "none")</div>
             </div>
         </section>
     </div>
@@ -110,7 +184,7 @@
     private string _saveName = "MiPartida";
     private string _agentName = "";
     private string _agencyName = "";
-    private int _fighterCount = 800;
+    private int _fighterCount = 3000;
     private string? _currentSavePath;
     private List<SaveCardVm> _saves = new();
     private string? _renamePath;
@@ -217,5 +291,27 @@
         {
             _busy = false;
         }
+    }
+
+    private string GetCurrentSaveLabel()
+    {
+        if (string.IsNullOrWhiteSpace(_currentSavePath))
+        {
+            return "No active save";
+        }
+
+        return Path.GetFileNameWithoutExtension(_currentSavePath);
+    }
+
+    private static string ShortenPath(string path)
+    {
+        const int maxLength = 74;
+
+        if (string.IsNullOrWhiteSpace(path) || path.Length <= maxLength)
+        {
+            return path;
+        }
+
+        return "..." + path[^maxLength..];
     }
 }

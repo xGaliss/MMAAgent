@@ -66,6 +66,7 @@ builder.Services.AddScoped<PromotionScheduleSeeder>();
 
 builder.Services.AddScoped<WebGameSessionService>();
 builder.Services.AddScoped<WebInboxService>();
+builder.Services.AddScoped<DecisionPopupService>();
 builder.Services.AddScoped<WebAgentProfileService>();
 builder.Services.AddScoped<WebTimeAdvanceService>();
 builder.Services.AddScoped<WebDashboardStatsService>();
@@ -75,6 +76,7 @@ builder.Services.AddScoped<WebPromotionProfileService>();
 builder.Services.AddScoped<WebMyFightersService>();
 builder.Services.AddScoped<WebMainMenuService>();
 builder.Services.AddScoped<WebDashboardFeedService>();
+builder.Services.AddScoped<WebWorldFeedService>();
 builder.Services.AddScoped<WebWeeklySummaryService>();
 builder.Services.AddScoped<InboxStatusService>();
 builder.Services.AddScoped<HighlightNotificationService>();

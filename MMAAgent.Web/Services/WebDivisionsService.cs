@@ -41,7 +41,14 @@ public sealed class WebDivisionsService
         using var conn = _factory.CreateConnection();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = @"
-SELECT Id, Name, Prestige, Budget, IsActive, EventIntervalWeeks, NextEventWeek
+SELECT
+    Id,
+    Name,
+    COALESCE(Prestige, 0) AS Prestige,
+    COALESCE(Budget, 0) AS Budget,
+    COALESCE(IsActive, 1) AS IsActive,
+    COALESCE(EventIntervalWeeks, 1) AS EventIntervalWeeks,
+    COALESCE(NextEventWeek, 0) AS NextEventWeek
 FROM Promotions
 WHERE COALESCE(IsActive, 1) = 1
 ORDER BY Prestige DESC, Name;";

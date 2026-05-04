@@ -188,7 +188,12 @@ SELECT
     COALESCE(MediaHeat, 20),
     COALESCE(ReliabilityScore, 60),
     COALESCE(Marketability, 50),
-    COALESCE(Age, 28)
+    COALESCE(Age, 28),
+    COALESCE(Ambition, 50),
+    COALESCE(Discipline, 50),
+    COALESCE(RiskTolerance, 50),
+    COALESCE(Stability, 50),
+    COALESCE(Showmanship, 40)
 FROM Fighters
 WHERE Id = $fighterId
 LIMIT 1;";
@@ -196,14 +201,19 @@ LIMIT 1;";
 
         using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
         if (!await reader.ReadAsync(cancellationToken))
-            return new FighterSignals(50, 20, 60, 50, 28);
+            return new FighterSignals(50, 20, 60, 50, 28, 50, 50, 50, 50, 40);
 
         return new FighterSignals(
             Convert.ToInt32(reader.GetValue(0)),
             Convert.ToInt32(reader.GetValue(1)),
             Convert.ToInt32(reader.GetValue(2)),
             Convert.ToInt32(reader.GetValue(3)),
-            Convert.ToInt32(reader.GetValue(4)));
+            Convert.ToInt32(reader.GetValue(4)),
+            Convert.ToInt32(reader.GetValue(5)),
+            Convert.ToInt32(reader.GetValue(6)),
+            Convert.ToInt32(reader.GetValue(7)),
+            Convert.ToInt32(reader.GetValue(8)),
+            Convert.ToInt32(reader.GetValue(9)));
     }
 
     private async Task<PromotionSignals> LoadPromotionSignalsAsync(SqliteConnection conn, int promotionId, CancellationToken cancellationToken)
@@ -234,13 +244,33 @@ LIMIT 1;";
         string strategy)
     {
         var leverage = (fighter.Popularity + fighter.MediaHeat + fighter.ReliabilityScore + fighter.Marketability) / 4;
-        var promotionStrictness = Math.Max(0, (promotion.Prestige - 55) / 8) + Math.Max(0, (400000 - promotion.Budget) / 120000);
-        var accepted = strategy == "Standard" || leverage + 6 >= 40 + (promotionStrictness * 6);
+        var veteranSecurityBias = fighter.Age >= 33 ? 6 : 0;
+        var youngExposureBias = fighter.Age <= 27 ? 5 : 0;
+        var ambitionBias = fighter.Ambition / 10;
+        var securityBias = (fighter.Discipline + fighter.Stability) / 18;
+        var spotlightBias = (fighter.Showmanship + fighter.Ambition) / 18;
+        var prestigePressure = Math.Max(0, (promotion.Prestige - 55) / 8);
+        var budgetPressure = Math.Max(0, (400000 - promotion.Budget) / 120000);
+        var promotionStrictness = prestigePressure + budgetPressure;
+
+        var accepted = strategy switch
+        {
+            "Money" => leverage + ambitionBias + (fighter.Marketability / 10) >= 46 + (promotionStrictness * 7),
+            "Security" => leverage + veteranSecurityBias + securityBias + (string.Equals(offer.SourceType, "Renewal", StringComparison.OrdinalIgnoreCase) ? 4 : 0) >= 40 + (promotionStrictness * 4),
+            "Exposure" => leverage + youngExposureBias + spotlightBias + Math.Max(0, promotion.Prestige - 60) / 5 >= 42 + (budgetPressure * 4),
+            _ => true
+        };
 
         if (!accepted)
         {
             return new NegotiationOutcome(false, offer.OfferedFights, offer.BasePurse, offer.WinBonus, 0, 0, 0,
-                "The promotion held firm and the original deal remains the best available option right now.");
+                strategy switch
+                {
+                    "Money" => "The promotion pushed back on the money ask and would not stretch the purse that far right now.",
+                    "Security" => "The promotion would not add more security to this deal at the moment.",
+                    "Exposure" => "The promotion would not sweeten the visibility angle beyond the current offer.",
+                    _ => "The promotion held firm and the original deal remains the best available option right now."
+                });
         }
 
         return strategy switch
@@ -248,30 +278,30 @@ LIMIT 1;";
             "Money" => new NegotiationOutcome(
                 true,
                 Math.Max(1, offer.OfferedFights - (offer.OfferedFights >= 4 ? 1 : 0)),
-                (int)Math.Round(offer.BasePurse * 1.12),
+                (int)Math.Round(offer.BasePurse * (promotion.Prestige >= 80 ? 1.09 : 1.14)),
                 (int)Math.Round(offer.WinBonus * 1.10),
                 0,
                 1,
                 0,
-                "You pushed for money and landed a richer deal, with a little less long-term security."),
+                "You pushed for money and landed a richer deal, with a little less long-term security baked into it."),
             "Security" => new NegotiationOutcome(
                 true,
-                offer.OfferedFights + 1,
-                (int)Math.Round(offer.BasePurse * 0.95),
+                offer.OfferedFights + (fighter.Age >= 33 ? 2 : 1),
+                (int)Math.Round(offer.BasePurse * (fighter.Age >= 33 ? 0.97 : 0.95)),
                 offer.WinBonus,
                 0,
                 0,
                 0,
-                "You pushed for stability and secured extra fights, though the money softened slightly."),
+                "You pushed for stability and secured extra fights, though the money softened a touch."),
             "Exposure" => new NegotiationOutcome(
                 true,
                 offer.OfferedFights,
                 (int)Math.Round(offer.BasePurse * 1.04),
                 (int)Math.Round(offer.WinBonus * 1.04),
                 2,
-                3,
-                5,
-                "You pushed for exposure and came away with a slightly better deal plus more spotlight around the signing."),
+                promotion.Prestige >= 75 ? 4 : 3,
+                promotion.Prestige >= 75 ? 7 : 5,
+                "You pushed for exposure and came away with a slightly better deal plus a stronger spotlight around the signing."),
             _ => new NegotiationOutcome(
                 true,
                 offer.OfferedFights,
@@ -284,7 +314,17 @@ LIMIT 1;";
         };
     }
 
-    private sealed record FighterSignals(int Popularity, int MediaHeat, int ReliabilityScore, int Marketability, int Age);
+    private sealed record FighterSignals(
+        int Popularity,
+        int MediaHeat,
+        int ReliabilityScore,
+        int Marketability,
+        int Age,
+        int Ambition,
+        int Discipline,
+        int RiskTolerance,
+        int Stability,
+        int Showmanship);
     private sealed record PromotionSignals(int Prestige, int Budget);
     private sealed record NegotiationOutcome(
         bool Accepted,

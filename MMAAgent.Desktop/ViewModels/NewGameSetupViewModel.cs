@@ -67,7 +67,7 @@ namespace MMAAgent.Desktop.ViewModels
 
             try
             {
-                _newGameService.CreateAndLoadNewGame("MiPartida", fighterCount: 800);
+                _newGameService.CreateAndLoadNewGame("MiPartida", fighterCount: 3000);
                 await _createAgentProfileService.CreateAsync(AgentName, AgencyName);
 
                 if (OnCreateCompleted != null)

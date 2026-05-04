@@ -39,6 +39,8 @@ public sealed class DailyWorldEventServiceSqlite : IDailyWorldEventService
         {
             await ProcessScoutAssignmentsAsync(conn, tx, currentDate, agentId.Value, cancellationToken);
             await ProcessCommercialOpportunitiesAsync(conn, tx, currentDate, agentId.Value, cancellationToken);
+            await ProcessMediaOpportunitiesAsync(conn, tx, currentDate, agentId.Value, cancellationToken);
+            await ProcessGymOpportunitiesAsync(conn, tx, currentDate, agentId.Value, cancellationToken);
         }
 
         tx.Commit();
@@ -138,6 +140,7 @@ SELECT
     fp.FightId,
     fp.FighterId,
     fp.CampWeeksPlanned,
+    COALESCE(fp.CampFocus, '') AS CampFocus,
     opp.Id AS OpponentFighterId,
     me.Cardio,
     me.FightIQ,
@@ -174,6 +177,7 @@ ORDER BY f.EventDate, fp.FightId;";
             var fighterId = Convert.ToInt32(reader["FighterId"]);
             var opponentFighterId = Convert.ToInt32(reader["OpponentFighterId"]);
             var campWeeks = Convert.ToInt32(reader["CampWeeksPlanned"]);
+            var campFocus = reader["CampFocus"]?.ToString() ?? "";
             var outcome = DetermineCampOutcome(
                 fightId,
                 fighterId,
@@ -184,7 +188,8 @@ ORDER BY f.EventDate, fp.FightId;";
                 Convert.ToInt32(reader["IsTitleFight"]) == 1,
                 string.Equals(reader["EventTier"]?.ToString(), "Major", StringComparison.OrdinalIgnoreCase),
                 campInvestmentLevel,
-                medicalInvestmentLevel);
+                medicalInvestmentLevel,
+                campFocus);
 
             var notes = outcome switch
             {
@@ -194,6 +199,7 @@ ORDER BY f.EventDate, fp.FightId;";
                 "CampInjury" => "A serious camp injury forced the booking off before fight week.",
                 _ => "Camp opened smoothly and the team is on schedule."
             };
+            notes = AppendCampFocusNote(notes, campFocus, "camp");
 
             var fighterName = reader["FighterName"]?.ToString() ?? "Managed fighter";
             var opponentName = reader["OpponentName"]?.ToString() ?? "Opponent";
@@ -286,6 +292,7 @@ SELECT
     COALESCE(f.Purse, 0) AS Purse,
     COALESCE(f.WinBonus, 0) AS WinBonus,
     COALESCE(fp.CampOutcome, '') AS CampOutcome,
+    COALESCE(fp.CampFocus, '') AS CampFocus,
     me.FightIQ,
     me.Cardio,
     me.Popularity,
@@ -316,6 +323,7 @@ ORDER BY f.EventDate, fp.FightId;";
             var fighterId = Convert.ToInt32(reader["FighterId"]);
             var opponentFighterId = Convert.ToInt32(reader["OpponentFighterId"]);
             var campOutcome = reader["CampOutcome"]?.ToString() ?? "";
+            var campFocus = reader["CampFocus"]?.ToString() ?? "";
             var outcome = DetermineFightWeekOutcome(
                 fightId,
                 fighterId,
@@ -323,7 +331,8 @@ ORDER BY f.EventDate, fp.FightId;";
                 Convert.ToInt32(reader["Cardio"]),
                 Convert.ToInt32(reader["Popularity"]),
                 Convert.ToInt32(reader["MediaHeat"]),
-                campOutcome);
+                campOutcome,
+                campFocus);
             var fighterName = reader["FighterName"]?.ToString() ?? "Managed fighter";
             var opponentName = reader["OpponentName"]?.ToString() ?? "Opponent";
             var eventName = reader["EventName"]?.ToString() ?? "Upcoming Event";
@@ -384,6 +393,7 @@ ORDER BY f.EventDate, fp.FightId;";
                     _ => "Fight week has started and the focus shifts to game plan and weight."
                 }
             };
+            notes = AppendCampFocusNote(notes, campFocus, "fight week");
 
             await ExecAsync(conn, tx, @"
 UPDATE FightPreparations
@@ -466,6 +476,7 @@ SELECT
     me.FightIQ,
     me.Popularity,
     COALESCE(fp.CampOutcome, '') AS CampOutcome,
+    COALESCE(fp.CampFocus, '') AS CampFocus,
     COALESCE(e.Name, 'Upcoming Event') AS EventName,
     COALESCE(p.Name, 'Promotion') AS PromotionName,
     COALESCE(f.EventDate, '') AS EventDate,
@@ -497,7 +508,8 @@ ORDER BY f.EventDate, fp.FightId;";
                 Convert.ToInt32(reader["Popularity"]),
                 reader["CampOutcome"]?.ToString() ?? "",
                 campInvestmentLevel,
-                medicalInvestmentLevel);
+                medicalInvestmentLevel,
+                reader["CampFocus"]?.ToString() ?? "");
 
             var notes = outcome switch
             {
@@ -505,6 +517,7 @@ ORDER BY f.EventDate, fp.FightId;";
                 "ToughCut" => "The fighter made the number, but the cut took a visible toll.",
                 _ => "The fighter hit the target without drama."
             };
+            notes = AppendCampFocusNote(notes, reader["CampFocus"]?.ToString() ?? "", "weigh-in");
 
             await ExecAsync(conn, tx, @"
 UPDATE FightPreparations
@@ -1052,12 +1065,15 @@ WHERE AgentId = $agentId
         cmd.Transaction = tx;
         cmd.CommandText = @"
 SELECT f.Id,
-       (f.FirstName || ' ' || f.LastName) AS FighterName
+       (f.FirstName || ' ' || f.LastName) AS FighterName,
+       COALESCE(f.Style, 'Well Rounded') AS Style,
+       COALESCE(f.Showmanship, 40) AS Showmanship,
+       COALESCE(f.Marketability, 50) AS Marketability
 FROM ManagedFighters mf
 JOIN Fighters f ON f.Id = mf.FighterId
 WHERE mf.AgentId = $agentId
   AND COALESCE(mf.IsActive, 1) = 1
-  AND COALESCE(f.Popularity, 0) >= 58
+  AND (COALESCE(f.Popularity, 0) >= 58 OR COALESCE(f.Showmanship, 40) >= 66 OR COALESCE(f.Marketability, 50) >= 64)
   AND NOT EXISTS
   (
       SELECT 1
@@ -1077,9 +1093,18 @@ LIMIT 1;";
 
         var fighterId = Convert.ToInt32(reader["Id"]);
         var fighterName = reader["FighterName"]?.ToString() ?? "Your fighter";
+        var style = reader["Style"]?.ToString() ?? "Well Rounded";
+        var showmanship = Convert.ToInt32(reader["Showmanship"]);
+        var marketability = Convert.ToInt32(reader["Marketability"]);
         var triggerSeed = Math.Abs(HashCode.Combine(fighterId, currentDate, "SponsorSpotlight")) % 7;
-        if (triggerSeed != 0)
+        if (triggerSeed > (showmanship >= 72 || marketability >= 70 ? 1 : 0))
             return;
+
+        var body = BuildCommercialOpportunityBody(fighterName, style, showmanship);
+        var optionALabel = showmanship >= 70 ? "Lean into the brand" : "Take the ad";
+        var optionBLabel = style is "Pressure Wrestler" or "Control Wrestler" or "Submission Hunter"
+            ? "Keep camp quiet"
+            : "Stay focused";
 
         await TryInsertDecisionEventAsync(
             conn,
@@ -1089,16 +1114,223 @@ LIMIT 1;";
             null,
             "SponsorSpotlight",
             $"Commercial call for {fighterName}",
-            $"{fighterName} has a quick sponsor activation on the table. You can cash it in for money and attention, or keep the week cleaner and more fighter-focused.",
+            body,
             "AdCampaign",
-            "Take the ad",
+            optionALabel,
             "Immediate cash and extra buzz, but the week gets noisier.",
             "StayFocused",
-            "Stay focused",
+            optionBLabel,
             "Skip the distraction and protect morale and sharpness.",
             currentDate,
             cancellationToken);
     }
+
+    private static async Task ProcessMediaOpportunitiesAsync(
+        SqliteConnection conn,
+        SqliteTransaction tx,
+        string currentDate,
+        int agentId,
+        CancellationToken cancellationToken)
+    {
+        using var cmd = conn.CreateCommand();
+        cmd.Transaction = tx;
+        cmd.CommandText = @"
+SELECT f.Id,
+       (f.FirstName || ' ' || f.LastName) AS FighterName,
+       COALESCE(f.IsBooked, 0) AS IsBooked,
+       COALESCE(f.Style, 'Well Rounded') AS Style,
+       COALESCE(f.Showmanship, 40) AS Showmanship,
+       COALESCE(f.Stability, 50) AS Stability
+FROM ManagedFighters mf
+JOIN Fighters f ON f.Id = mf.FighterId
+WHERE mf.AgentId = $agentId
+  AND COALESCE(mf.IsActive, 1) = 1
+  AND COALESCE(f.Popularity, 0) >= 52
+  AND COALESCE(f.MediaHeat, 0) >= 35
+  AND NOT EXISTS
+  (
+      SELECT 1
+      FROM DecisionEvents de
+      WHERE de.AgentId = $agentId
+        AND de.FighterId = f.Id
+        AND de.DecisionType = 'PressInterview'
+        AND de.Status = 'Pending'
+  )
+ORDER BY COALESCE(f.MediaHeat, 20) DESC, COALESCE(f.Popularity, 50) DESC, f.Id
+LIMIT 1;";
+        cmd.Parameters.AddWithValue("$agentId", agentId);
+
+        using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
+        if (!await reader.ReadAsync(cancellationToken))
+            return;
+
+        var fighterId = Convert.ToInt32(reader["Id"]);
+        var fighterName = reader["FighterName"]?.ToString() ?? "Your fighter";
+        var isBooked = Convert.ToInt32(reader["IsBooked"]) == 1;
+        var style = reader["Style"]?.ToString() ?? "Well Rounded";
+        var showmanship = Convert.ToInt32(reader["Showmanship"]);
+        var stability = Convert.ToInt32(reader["Stability"]);
+        var triggerSeed = Math.Abs(HashCode.Combine(fighterId, currentDate, "PressInterview")) % 8;
+        if (triggerSeed > (showmanship >= 70 ? 1 : stability >= 68 ? 0 : 0))
+            return;
+
+        var body = BuildMediaOpportunityBody(fighterName, style, isBooked, showmanship, stability);
+        var optionALabel = stability >= 68 ? "Stay composed" : "Stay measured";
+        var optionBLabel = showmanship >= 70 ? "Cut a promo" : "Call your shot";
+
+        await TryInsertDecisionEventAsync(
+            conn,
+            tx,
+            agentId,
+            fighterId,
+            null,
+            "PressInterview",
+            $"Media angle for {fighterName}",
+            body,
+            "StayMeasured",
+            optionALabel,
+            "Professional tone, a little less buzz, but better long-term trust and less volatility.",
+            "CallYourShot",
+            optionBLabel,
+            "More heat, more marketability and more pressure if the week gets noisy.",
+            currentDate,
+            cancellationToken);
+    }
+
+    private static async Task ProcessGymOpportunitiesAsync(
+        SqliteConnection conn,
+        SqliteTransaction tx,
+        string currentDate,
+        int agentId,
+        CancellationToken cancellationToken)
+    {
+        using var cmd = conn.CreateCommand();
+        cmd.Transaction = tx;
+        cmd.CommandText = @"
+SELECT
+    fp.FightId,
+    fp.FighterId,
+    (f.FirstName || ' ' || f.LastName) AS FighterName,
+    COALESCE(e.Name, 'Upcoming Event') AS EventName,
+    COALESCE(f.Style, 'Well Rounded') AS Style,
+    COALESCE(f.Discipline, 50) AS Discipline,
+    COALESCE(f.RiskTolerance, 50) AS RiskTolerance
+FROM FightPreparations fp
+JOIN Fighters f ON f.Id = fp.FighterId
+JOIN ManagedFighters mf
+  ON mf.FighterId = fp.FighterId
+ AND mf.AgentId = $agentId
+ AND COALESCE(mf.IsActive, 1) = 1
+JOIN Fights sf ON sf.Id = fp.FightId AND sf.Method = 'Scheduled'
+LEFT JOIN Events e ON e.Id = sf.EventId
+WHERE fp.CampStartProcessed = 1
+  AND fp.FightWeekProcessed = 0
+  AND NOT EXISTS
+  (
+      SELECT 1
+      FROM DecisionEvents de
+      WHERE de.AgentId = $agentId
+        AND de.FightId = fp.FightId
+        AND de.FighterId = fp.FighterId
+        AND de.DecisionType = 'GymOpportunity'
+        AND de.Status = 'Pending'
+  )
+ORDER BY COALESCE(sf.EventDate, '9999-12-31'), fp.FightId
+LIMIT 1;";
+        cmd.Parameters.AddWithValue("$agentId", agentId);
+
+        using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
+        if (!await reader.ReadAsync(cancellationToken))
+            return;
+
+        var fightId = Convert.ToInt32(reader["FightId"]);
+        var fighterId = Convert.ToInt32(reader["FighterId"]);
+        var fighterName = reader["FighterName"]?.ToString() ?? "Your fighter";
+        var eventName = reader["EventName"]?.ToString() ?? "Upcoming Event";
+        var style = reader["Style"]?.ToString() ?? "Well Rounded";
+        var discipline = Convert.ToInt32(reader["Discipline"]);
+        var riskTolerance = Convert.ToInt32(reader["RiskTolerance"]);
+        var triggerSeed = Math.Abs(HashCode.Combine(fightId, currentDate, "GymOpportunity")) % 7;
+        if (triggerSeed > (discipline >= 70 ? 1 : riskTolerance >= 70 ? 0 : 0))
+            return;
+
+        var body = BuildGymOpportunityBody(fighterName, eventName, style);
+        var specialistLabel = BuildGymSpecialistLabel(style);
+
+        await TryInsertDecisionEventAsync(
+            conn,
+            tx,
+            agentId,
+            fighterId,
+            fightId,
+            "GymOpportunity",
+            $"Camp upgrade call for {fighterName}",
+            body,
+            "BringSpecialists",
+            specialistLabel,
+            "Pay extra for elite work and sharpen the camp, with a bit more intensity and cost.",
+            "StayRoutine",
+            "Stay routine",
+            "Keep the current room, save money and protect the fighter's rhythm.",
+            currentDate,
+            cancellationToken);
+    }
+
+    private static string BuildCommercialOpportunityBody(string fighterName, string style, int showmanship)
+    {
+        if (showmanship >= 72 || style is "Boxer" or "Kickboxer" or "Brawler")
+            return $"{fighterName} has a sponsor activation built around personality and highlights. You can lean into the brand push for extra money and attention, or keep the week cleaner and more fighter-focused.";
+
+        if (style is "Pressure Wrestler" or "Control Wrestler" or "Submission Hunter")
+            return $"{fighterName} has a sponsor piece built around professionalism and craft. You can cash it in for money and visibility, or keep camp quieter and more technical.";
+
+        return $"{fighterName} has a quick sponsor activation on the table. You can cash it in for money and attention, or keep the week cleaner and more fighter-focused.";
+    }
+
+    private static string BuildMediaOpportunityBody(string fighterName, string style, bool isBooked, int showmanship, int stability)
+    {
+        if (showmanship >= 72)
+        {
+            return isBooked
+                ? $"{fighterName} has a fight on the horizon and the media wants a bigger performance from the mic. You can stay controlled, or cut a louder promo and accept the extra noise."
+                : $"{fighterName} has a media slot available and could turn it into a real spotlight moment. You can stay controlled, or cut a louder promo and accept the extra noise that follows.";
+        }
+
+        if (style is "Pressure Wrestler" or "Control Wrestler" && stability >= 68)
+        {
+            return isBooked
+                ? $"{fighterName} has a fight booked and the media wants a stronger angle. You can keep the tone disciplined and professional, or step outside the usual comfort zone for more buzz."
+                : $"{fighterName} has a media slot available. You can reinforce the disciplined image, or swing for a louder storyline and accept the extra pressure that comes with it.";
+        }
+
+        return isBooked
+            ? $"{fighterName} has a fight on the horizon and the media wants a sharper angle. You can keep the tone measured, or lean into a louder callout and accept the extra noise."
+            : $"{fighterName} has a media slot available. You can keep the tone measured, or swing for a louder storyline and accept the extra noise that comes with it.";
+    }
+
+    private static string BuildGymOpportunityBody(string fighterName, string eventName, string style)
+    {
+        return style switch
+        {
+            "Boxer" or "Kickboxer" or "Counter Striker"
+                => $"{fighterName} could bring in striking specialists before {eventName}. You can spend to sharpen the stand-up details, or keep the core routine and avoid extra cost and disruption.",
+            "Pressure Wrestler" or "Control Wrestler"
+                => $"{fighterName} could bring in wrestling specialists before {eventName}. You can spend to sharpen chain work and control, or keep the core routine and avoid extra cost and disruption.",
+            "Submission Hunter" or "Scrambler"
+                => $"{fighterName} could bring in grappling specialists before {eventName}. You can spend to tighten the mat work, or keep the core routine and avoid extra cost and disruption.",
+            _
+                => $"{fighterName} could bring in outside specialists before {eventName}. You can spend to sharpen the camp, or keep the core routine and avoid extra cost and disruption."
+        };
+    }
+
+    private static string BuildGymSpecialistLabel(string style)
+        => style switch
+        {
+            "Boxer" or "Kickboxer" or "Counter Striker" => "Bring striking coaches",
+            "Pressure Wrestler" or "Control Wrestler" => "Bring wrestling coaches",
+            "Submission Hunter" or "Scrambler" => "Bring grappling coaches",
+            _ => "Bring specialists"
+        };
 
     private static async Task<ReplacementCandidate?> FindEmergencyReplacementAsync(
         SqliteConnection conn,
@@ -1117,7 +1349,11 @@ SELECT
     f.Id AS FighterId,
     (f.FirstName || ' ' || f.LastName) AS FighterName,
     f.Skill,
-    f.Popularity
+    f.Popularity,
+    COALESCE(f.ReliabilityScore, 60) AS ReliabilityScore,
+    COALESCE(f.Ambition, 50) AS Ambition,
+    COALESCE(f.RiskTolerance, 50) AS RiskTolerance,
+    COALESCE(f.Showmanship, 40) AS Showmanship
 FROM Fighters f
 WHERE f.Id NOT IN ($fighterId, $previousOpponentId)
   AND f.PromotionId = $promotionId
@@ -1141,7 +1377,16 @@ WHERE f.Id NOT IN ($fighterId, $previousOpponentId)
         AND (sf.FighterAId = f.Id OR sf.FighterBId = f.Id)
         AND COALESCE(sf.EventDate, '9999-12-31') >= $currentDate
   )
-ORDER BY COALESCE(f.ReliabilityScore, 60) DESC, f.Popularity DESC, f.Skill DESC, f.Id
+ORDER BY
+    CAST(ROUND(
+        (COALESCE(f.ReliabilityScore, 60) * 0.34)
+        + (COALESCE(f.RiskTolerance, 50) * 0.28)
+        + (COALESCE(f.Ambition, 50) * 0.22)
+        + (COALESCE(f.Showmanship, 40) * 0.16)
+    ) AS INTEGER) DESC,
+    f.Popularity DESC,
+    f.Skill DESC,
+    f.Id
 LIMIT 1;";
         cmd.Parameters.AddWithValue("$fighterId", fighterId);
         cmd.Parameters.AddWithValue("$previousOpponentId", previousOpponentId);
@@ -1157,7 +1402,11 @@ LIMIT 1;";
             Convert.ToInt32(reader["FighterId"]),
             reader["FighterName"]?.ToString() ?? "Replacement",
             Convert.ToInt32(reader["Skill"]),
-            Convert.ToInt32(reader["Popularity"]));
+            Convert.ToInt32(reader["Popularity"]),
+            Convert.ToInt32(reader["ReliabilityScore"]),
+            Convert.ToInt32(reader["Ambition"]),
+            Convert.ToInt32(reader["RiskTolerance"]),
+            Convert.ToInt32(reader["Showmanship"]));
     }
 
     private static async Task<string?> LoadEventDateAsync(
@@ -1377,11 +1626,21 @@ WHERE Id = $fighterId;", cancellationToken,
         bool isTitleFight,
         bool isMajorEvent,
         int campInvestmentLevel,
-        int medicalInvestmentLevel)
+        int medicalInvestmentLevel,
+        string campFocus)
     {
         var prepScore = ((cardio + fightIq + potential) / 3)
             + (campInvestmentLevel * 4)
             + (medicalInvestmentLevel * 2);
+        prepScore += campFocus switch
+        {
+            "Cardio" => 5,
+            "Wrestling" => 4,
+            "Striking" => 4,
+            "Recovery" => 3,
+            "WeightManagement" => 2,
+            _ => 0
+        };
         var premiumCamp = isTitleFight || isMajorEvent;
         var shortCamp = campWeeks <= 2;
         var roll = CreateDeterministicRandom(fightId, fighterId, "Camp").Next(100);
@@ -1393,6 +1652,31 @@ WHERE Id = $fighterId;", cancellationToken,
             campInjuryThreshold += 1;
 
         var injuryThreshold = (shortCamp ? 10 : 6) - medicalInvestmentLevel;
+
+        switch (campFocus)
+        {
+            case "Cardio":
+                excellentThreshold += 3;
+                disruptedThreshold -= 2;
+                injuryThreshold -= 1;
+                break;
+            case "Wrestling":
+            case "Striking":
+                excellentThreshold += 4;
+                disruptedThreshold += 1;
+                injuryThreshold += 1;
+                break;
+            case "Recovery":
+                disruptedThreshold -= 4;
+                campInjuryThreshold -= 2;
+                injuryThreshold -= 3;
+                break;
+            case "WeightManagement":
+                disruptedThreshold -= 2;
+                campInjuryThreshold -= 1;
+                injuryThreshold -= 1;
+                break;
+        }
 
         excellentThreshold = Math.Clamp(excellentThreshold, 8, 42);
         disruptedThreshold = Math.Clamp(disruptedThreshold, 8, 34);
@@ -1424,9 +1708,19 @@ WHERE Id = $fighterId;", cancellationToken,
         int cardio,
         int popularity,
         int mediaHeat,
-        string campOutcome)
+        string campOutcome,
+        string campFocus)
     {
         var score = (fightIq + cardio + popularity + mediaHeat) / 4;
+        score += campFocus switch
+        {
+            "Cardio" => 6,
+            "Wrestling" => 4,
+            "Striking" => 4,
+            "Recovery" => 3,
+            "WeightManagement" => 2,
+            _ => 0
+        };
         var roll = CreateDeterministicRandom(fightId, fighterId, "FightWeek").Next(100);
 
         if (!string.Equals(campOutcome, "CampInjury", StringComparison.OrdinalIgnoreCase)
@@ -1441,15 +1735,15 @@ WHERE Id = $fighterId;", cancellationToken,
 
         if ((string.Equals(campOutcome, "Disrupted", StringComparison.OrdinalIgnoreCase)
              || string.Equals(campOutcome, "MinorInjury", StringComparison.OrdinalIgnoreCase))
-            && roll >= 55)
+            && roll >= (campFocus == "Recovery" ? 65 : campFocus == "Cardio" ? 60 : 55))
         {
             return "Flat";
         }
 
-        if (mediaHeat >= 75 && fightIq < 75 && roll >= 62)
+        if (mediaHeat >= 75 && fightIq < 75 && roll >= (campFocus == "Recovery" ? 70 : 62))
             return "MediaSwirl";
 
-        if (popularity >= 70 && fightIq < 72 && roll >= 74)
+        if (popularity >= 70 && fightIq < 72 && roll >= (campFocus == "Recovery" ? 80 : 74))
             return "MediaSwirl";
 
         return "Steady";
@@ -1463,16 +1757,33 @@ WHERE Id = $fighterId;", cancellationToken,
         int popularity,
         string campOutcome,
         int campInvestmentLevel,
-        int medicalInvestmentLevel)
+        int medicalInvestmentLevel,
+        string campFocus)
     {
         var cutScore = ((cardio * 2 + fightIq + popularity) / 4)
             + (campInvestmentLevel * 3)
             + (medicalInvestmentLevel * 4);
+        cutScore += campFocus switch
+        {
+            "WeightManagement" => 14,
+            "Recovery" => 6,
+            "Cardio" => 4,
+            "Wrestling" => 1,
+            _ => 0
+        };
         var roll = CreateDeterministicRandom(fightId, fighterId, "WeighIn").Next(100);
         var penalty = campOutcome switch
         {
             "MinorInjury" => 10,
             "Disrupted" => 8,
+            _ => 0
+        };
+        penalty += campFocus switch
+        {
+            "Striking" => 2,
+            "Wrestling" => 1,
+            "WeightManagement" => -6,
+            "Recovery" => -3,
             _ => 0
         };
 
@@ -1490,6 +1801,24 @@ WHERE Id = $fighterId;", cancellationToken,
             return "ToughCut";
 
         return "OnWeight";
+    }
+
+    private static string AppendCampFocusNote(string baseNote, string campFocus, string phase)
+    {
+        if (string.IsNullOrWhiteSpace(campFocus))
+            return baseNote;
+
+        var suffix = campFocus switch
+        {
+            "Cardio" => $"The room leaned hard into cardio work through {phase}.",
+            "Wrestling" => $"The room put extra time into wrestling-specific work through {phase}.",
+            "Striking" => $"The room sharpened the striking side of camp through {phase}.",
+            "Recovery" => $"The team prioritized recovery and body management through {phase}.",
+            "WeightManagement" => $"The team kept a close eye on the cut and bodyweight through {phase}.",
+            _ => string.Empty
+        };
+
+        return string.IsNullOrWhiteSpace(suffix) ? baseNote : $"{baseNote} {suffix}";
     }
 
     private static Random CreateDeterministicRandom(int fightId, int fighterId, string scope)
@@ -1731,5 +2060,13 @@ VALUES
         await cmd.ExecuteNonQueryAsync(cancellationToken);
     }
 
-    private sealed record ReplacementCandidate(int FighterId, string Name, int Skill, int Popularity);
+    private sealed record ReplacementCandidate(
+        int FighterId,
+        string Name,
+        int Skill,
+        int Popularity,
+        int ReliabilityScore,
+        int Ambition,
+        int RiskTolerance,
+        int Showmanship);
 }

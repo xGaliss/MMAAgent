@@ -32,7 +32,7 @@ public sealed class WorldEcosystemServiceSqlite
         tx.Commit();
     }
 
-    public async Task ApplyAnnualEvolutionAsync(int currentYear, CancellationToken cancellationToken = default)
+    public async Task<AnnualWorldShiftSummary> ApplyAnnualEvolutionAsync(int currentYear, CancellationToken cancellationToken = default)
     {
         using var conn = _factory.CreateConnection();
         using var tx = conn.BeginTransaction();
@@ -148,17 +148,108 @@ SET
     ));", cancellationToken,
             ("$year", currentYear));
 
-        await ExecAsync(conn, tx, @"
+        var veteranDeclineCases = await ExecWithCountAsync(conn, tx, @"
 UPDATE Fighters
-SET PromotionId = NULL,
-    ContractStatus = 'FreeAgent',
+SET Skill = MAX(10, COALESCE(Skill, 50) - CASE WHEN COALESCE(Age, 18) >= 38 THEN 2 ELSE 1 END),
+    Striking = MAX(10, COALESCE(Striking, 50) - 1),
+    Grappling = MAX(10, COALESCE(Grappling, 50) - CASE WHEN COALESCE(DamageMiles, 0) >= 30 THEN 1 ELSE 0 END),
+    Wrestling = MAX(10, COALESCE(Wrestling, 50) - CASE WHEN COALESCE(DamageMiles, 0) >= 30 THEN 1 ELSE 0 END),
+    Cardio = MAX(10, COALESCE(Cardio, 50) - 1),
+    Chin = MAX(10, COALESCE(Chin, 50) - CASE WHEN COALESCE(DamageMiles, 0) >= 32 THEN 2 ELSE 1 END),
+    Popularity = MAX(0, COALESCE(Popularity, 50) - 2),
+    Marketability = MAX(10, COALESCE(Marketability, 50) - 3),
+    Momentum = MAX(5, COALESCE(Momentum, 50) - 4),
+    ReliabilityScore = MAX(15, COALESCE(ReliabilityScore, 60) - 5),
+    MediaHeat = MAX(5, COALESCE(MediaHeat, 20) - 4)
+WHERE COALESCE(Retired, 0) = 0
+  AND COALESCE(Age, 18) >= 35
+  AND COALESCE(DamageMiles, 0) >= 24
+  AND (COALESCE(Momentum, 50) < 55 OR COALESCE(Popularity, 50) < 65);", cancellationToken);
+
+        var retirements = await ExecWithCountAsync(conn, tx, @"
+UPDATE Fighters
+SET Retired = 1,
+    PromotionId = NULL,
+    Salary = 0,
+    ContractFightsRemaining = 0,
+    TotalFightsInContract = 0,
+    ContractStatus = 'Retired',
     IsBooked = 0
-WHERE COALESCE(Age, 18) >= 39
-  AND COALESCE(DamageMiles, 0) >= 34
-  AND COALESCE(Momentum, 50) <= 40
-  AND COALESCE(Popularity, 50) <= 45;", cancellationToken);
+WHERE COALESCE(Retired, 0) = 0
+  AND (
+      COALESCE(Age, 18) >= 41
+      OR (
+          COALESCE(Age, 18) >= 38
+          AND COALESCE(DamageMiles, 0) >= 30
+          AND COALESCE(Momentum, 50) <= 48
+      )
+      OR (
+          COALESCE(Age, 18) >= 36
+          AND COALESCE(DamageMiles, 0) >= 38
+          AND COALESCE(Popularity, 50) <= 42
+      )
+  );", cancellationToken);
+
+        await ExecAsync(conn, tx, @"
+UPDATE Titles
+SET ChampionFighterId = NULL
+WHERE COALESCE(ChampionFighterId, 0) IN
+(
+    SELECT Id
+    FROM Fighters
+    WHERE COALESCE(Retired, 0) = 1
+);", cancellationToken);
+
+        var reshuffledDivisions = await RebuildAnnualRankingsAsync(conn, tx, cancellationToken);
 
         tx.Commit();
+        return new AnnualWorldShiftSummary(retirements, veteranDeclineCases, reshuffledDivisions);
+    }
+
+    public async Task<int> PromoteAnnualProspectClassAsync(int newcomerCount, CancellationToken cancellationToken = default)
+    {
+        if (newcomerCount <= 0)
+            return 0;
+
+        using var conn = _factory.CreateConnection();
+        using var tx = conn.BeginTransaction();
+
+        var prospectDebuts = await ExecWithCountAsync(conn, tx, @"
+WITH RecentFreeAgents AS
+(
+    SELECT Id
+    FROM Fighters
+    WHERE COALESCE(Retired, 0) = 0
+      AND PromotionId IS NULL
+      AND COALESCE(ContractStatus, '') = 'FreeAgent'
+      AND COALESCE(Age, 18) <= 23
+    ORDER BY Id DESC
+    LIMIT $recentPool
+),
+ProspectClass AS
+(
+    SELECT f.Id
+    FROM Fighters f
+    JOIN RecentFreeAgents rfa ON rfa.Id = f.Id
+    ORDER BY
+        (COALESCE(f.Potential, 50) - COALESCE(f.Skill, 50)) DESC,
+        COALESCE(f.Skill, 50) DESC,
+        COALESCE(f.Popularity, 50) DESC,
+        f.Id DESC
+    LIMIT $prospectCount
+)
+UPDATE Fighters
+SET Popularity = MIN(100, COALESCE(Popularity, 50) + 4),
+    Marketability = MIN(99, COALESCE(Marketability, 50) + 5),
+    Momentum = MIN(99, COALESCE(Momentum, 50) + 8),
+    MediaHeat = MIN(99, COALESCE(MediaHeat, 20) + 6),
+    ReliabilityScore = MIN(99, COALESCE(ReliabilityScore, 60) + 2)
+WHERE Id IN (SELECT Id FROM ProspectClass);", cancellationToken,
+            ("$recentPool", Math.Max(newcomerCount, 12)),
+            ("$prospectCount", Math.Max(2, Math.Min(6, newcomerCount / 8))));
+
+        tx.Commit();
+        return prospectDebuts;
     }
 
     public async Task<int> ApplyWeeklyExpensesAsync(CancellationToken cancellationToken = default)
@@ -239,7 +330,10 @@ WHERE Id = $agentId;", cancellationToken,
         await ExecAsync(conn, tx, @"
 UPDATE Fighters
 SET ReliabilityScore = MIN(99, MAX(15,
-        84
+        42
+        + CAST(ROUND(COALESCE(Discipline, 50) * 0.42) AS INTEGER)
+        + CAST(ROUND(COALESCE(Stability, 50) * 0.22) AS INTEGER)
+        - CAST(ROUND(COALESCE(RiskTolerance, 50) * 0.10) AS INTEGER)
         - (COALESCE(WeightMissCount, 0) * 12)
         - (COALESCE(CampWithdrawalCount, 0) * 10)
         - CASE
@@ -264,8 +358,10 @@ SET ReliabilityScore = MIN(99, MAX(15,
     MediaHeat = MIN(99, MAX(5,
         CAST(ROUND(
             (COALESCE(Popularity, 50) * 0.45)
-            + (COALESCE(Marketability, 50) * 0.35)
+            + (COALESCE(Marketability, 50) * 0.28)
             + (COALESCE(Momentum, 50) * 0.20)
+            + (COALESCE(Showmanship, 40) * 0.22)
+            + (COALESCE(RiskTolerance, 50) * 0.05)
             + CASE
                 WHEN EXISTS (
                     SELECT 1
@@ -645,6 +741,56 @@ INSERT INTO Storylines (EntityType, EntityId, StoryType, Headline, Body, Intensi
 SELECT
     'Fighter',
     f.Id,
+    'ActionFighter',
+    f.FirstName || ' ' || f.LastName || ' feels built for the spotlight',
+    f.FirstName || ' ' || f.LastName || ' carries an action-friendly style and enough personality that big-stage matchmaking starts to make sense around them.',
+    MIN(86, 66 + CAST(ROUND(COALESCE(f.Showmanship, 40) * 0.18) AS INTEGER)),
+    'Active',
+    $currentDate
+FROM Fighters f
+WHERE COALESCE(f.Style, '') IN ('Boxer', 'Kickboxer', 'Brawler', 'Counter Striker')
+  AND (COALESCE(f.Showmanship, 40) >= 66 OR COALESCE(f.MediaHeat, 20) >= 68);", cancellationToken,
+            ("$currentDate", currentDate));
+
+        await ExecAsync(conn, tx, @"
+INSERT INTO Storylines (EntityType, EntityId, StoryType, Headline, Body, Intensity, Status, LastUpdatedDate)
+SELECT
+    'Fighter',
+    f.Id,
+    'PressureGame',
+    f.FirstName || ' ' || f.LastName || ' is suffocating people',
+    f.FirstName || ' ' || f.LastName || ' is building a reputation for making fights ugly, hard and exhausting for opponents, which matters in this division.',
+    MIN(82, 62 + CAST(ROUND(COALESCE(f.ReliabilityScore, 60) * 0.16) AS INTEGER)),
+    'Active',
+    $currentDate
+FROM Fighters f
+WHERE COALESCE(f.Style, '') IN ('Pressure Wrestler', 'Control Wrestler')
+  AND COALESCE(f.Wrestling, 50) >= 68
+  AND COALESCE(f.Cardio, 50) >= 64;", cancellationToken,
+            ("$currentDate", currentDate));
+
+        await ExecAsync(conn, tx, @"
+INSERT INTO Storylines (EntityType, EntityId, StoryType, Headline, Body, Intensity, Status, LastUpdatedDate)
+SELECT
+    'Fighter',
+    f.Id,
+    'SubmissionThreat',
+    f.FirstName || ' ' || f.LastName || ' is a live submission threat',
+    f.FirstName || ' ' || f.LastName || ' has the kind of grappling style that changes how opponents prepare and how matchmakers frame the danger.',
+    MIN(84, 64 + CAST(ROUND(COALESCE(f.Grappling, 50) * 0.16) AS INTEGER)),
+    'Active',
+    $currentDate
+FROM Fighters f
+WHERE COALESCE(f.Style, '') IN ('Submission Hunter', 'Scrambler')
+  AND COALESCE(f.Grappling, 50) >= 68
+  AND (COALESCE(f.Momentum, 50) >= 58 OR COALESCE(f.Potential, 50) >= COALESCE(f.Skill, 50) + 6);", cancellationToken,
+            ("$currentDate", currentDate));
+
+        await ExecAsync(conn, tx, @"
+INSERT INTO Storylines (EntityType, EntityId, StoryType, Headline, Body, Intensity, Status, LastUpdatedDate)
+SELECT
+    'Fighter',
+    f.Id,
     'MediaHeat',
     f.FirstName || ' ' || f.LastName || ' is drawing attention',
     f.FirstName || ' ' || f.LastName || ' is carrying real media heat right now, which helps the spotlight but also adds pressure in big weeks.',
@@ -961,6 +1107,84 @@ WHERE COALESCE(f.DamageMiles, 0) >= 22
             ("$currentDate", currentDate));
     }
 
+    private static async Task<int> RebuildAnnualRankingsAsync(
+        SqliteConnection conn,
+        SqliteTransaction tx,
+        CancellationToken cancellationToken)
+    {
+        var divisions = await CountAsync(conn, tx, @"
+SELECT COUNT(*)
+FROM
+(
+    SELECT PromotionId, WeightClass
+    FROM Fighters
+    WHERE PromotionId IS NOT NULL
+      AND COALESCE(Retired, 0) = 0
+      AND COALESCE(ContractStatus, '') = 'Active'
+      AND WeightClass IS NOT NULL
+      AND WeightClass <> ''
+    GROUP BY PromotionId, WeightClass
+    HAVING COUNT(*) >= 4
+);", cancellationToken);
+
+        await ExecAsync(conn, tx, "DELETE FROM PromotionRankings;", cancellationToken);
+
+        await ExecAsync(conn, tx, @"
+WITH Champions AS
+(
+    SELECT PromotionId, WeightClass, ChampionFighterId
+    FROM Titles
+    WHERE COALESCE(ChampionFighterId, 0) > 0
+),
+Scored AS
+(
+    SELECT
+        f.PromotionId,
+        f.WeightClass,
+        f.Id AS FighterId,
+        CAST(ROUND(
+            CASE
+                WHEN ch.ChampionFighterId = f.Id THEN 1000
+                ELSE
+                    (COALESCE(f.Skill, 50) * 0.42)
+                    + (COALESCE(f.Momentum, 50) * 0.22)
+                    + (COALESCE(f.Popularity, 50) * 0.14)
+                    + (COALESCE(f.Marketability, 50) * 0.10)
+                    + (COALESCE(f.MediaHeat, 20) * 0.06)
+                    + (COALESCE(f.ReliabilityScore, 60) * 0.06)
+                    - CASE WHEN COALESCE(f.IsBooked, 0) = 1 THEN 5 ELSE 0 END
+            END
+        ) AS INTEGER) AS RankScore
+    FROM Fighters f
+    LEFT JOIN Champions ch
+      ON ch.PromotionId = f.PromotionId
+     AND ch.WeightClass = f.WeightClass
+    WHERE f.PromotionId IS NOT NULL
+      AND COALESCE(f.Retired, 0) = 0
+      AND COALESCE(f.ContractStatus, '') = 'Active'
+      AND f.WeightClass IS NOT NULL
+      AND f.WeightClass <> ''
+),
+Ranked AS
+(
+    SELECT
+        PromotionId,
+        WeightClass,
+        FighterId,
+        ROW_NUMBER() OVER (
+            PARTITION BY PromotionId, WeightClass
+            ORDER BY RankScore DESC, FighterId
+        ) AS RankPosition
+    FROM Scored
+)
+INSERT INTO PromotionRankings (PromotionId, WeightClass, RankPosition, FighterId)
+SELECT PromotionId, WeightClass, RankPosition, FighterId
+FROM Ranked
+WHERE RankPosition <= 15;", cancellationToken);
+
+        return divisions;
+    }
+
     private static async Task<(int CampInvestmentLevel, int MedicalInvestmentLevel)> LoadAgentInvestmentLevelsAsync(
         SqliteConnection conn,
         SqliteTransaction tx,
@@ -1165,4 +1389,38 @@ VALUES
 
         await cmd.ExecuteNonQueryAsync(cancellationToken);
     }
+
+    private static async Task<int> ExecAsync(
+        SqliteConnection conn,
+        SqliteTransaction tx,
+        string sql,
+        CancellationToken cancellationToken)
+    {
+        using var cmd = conn.CreateCommand();
+        cmd.Transaction = tx;
+        cmd.CommandText = sql;
+        return await cmd.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    private static async Task<int> ExecWithCountAsync(
+        SqliteConnection conn,
+        SqliteTransaction tx,
+        string sql,
+        CancellationToken cancellationToken,
+        params (string Name, object? Value)[] parameters)
+    {
+        using var cmd = conn.CreateCommand();
+        cmd.Transaction = tx;
+        cmd.CommandText = sql;
+
+        foreach (var (name, value) in parameters)
+            cmd.Parameters.AddWithValue(name, value ?? DBNull.Value);
+
+        return await cmd.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    public sealed record AnnualWorldShiftSummary(
+        int Retirements,
+        int VeteranDeclines,
+        int DivisionsReshuffled);
 }

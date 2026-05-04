@@ -22,7 +22,14 @@ public sealed class WebPromotionProfileService
         using (var cmd = conn.CreateCommand())
         {
             cmd.CommandText = @"
-SELECT Id, Name, Prestige, Budget, IsActive, EventIntervalWeeks, NextEventWeek
+SELECT
+    Id,
+    Name,
+    COALESCE(Prestige, 0) AS Prestige,
+    COALESCE(Budget, 0) AS Budget,
+    COALESCE(IsActive, 1) AS IsActive,
+    COALESCE(EventIntervalWeeks, 1) AS EventIntervalWeeks,
+    COALESCE(NextEventWeek, 0) AS NextEventWeek
 FROM Promotions
 WHERE Id = $id
 LIMIT 1;";
@@ -65,8 +72,8 @@ ORDER BY t.WeightClass;";
             {
                 champions.Add(new PromotionChampionVm(
                     r["WeightClass"]?.ToString() ?? "",
-                    Convert.ToInt32(r["ChampionFighterId"]),
-                    r["FighterName"]?.ToString() ?? ""));
+                    r["ChampionFighterId"] == DBNull.Value ? null : Convert.ToInt32(r["ChampionFighterId"]),
+                    r["FighterName"] == DBNull.Value ? "Vacant" : (r["FighterName"]?.ToString() ?? "Vacant")));
             }
         }
 
@@ -178,7 +185,7 @@ ORDER BY cq.WeightClass, cq.QueueRank;";
                 return new PromotionDivisionPictureVm(
                     weightClass,
                     champion?.FighterId,
-                    champion?.FighterName ?? "Vacant",
+                    champion?.FighterId is int ? (champion.FighterName ?? "Vacant") : "Vacant",
                     nextContenders,
                     stakes,
                     rivalry);

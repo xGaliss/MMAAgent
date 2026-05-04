@@ -1,4 +1,5 @@
 ﻿using MMAAgent.Infrastructure.Persistence.Sqlite;
+using MMAAgent.Web.Helpers;
 using MMAAgent.Web.Models;
 
 namespace MMAAgent.Web.Services;
@@ -16,6 +17,8 @@ public sealed class WebRosterService
         string? searchText,
         string? weightClass,
         string? country,
+        string? status,
+        string? sortBy,
         int take = 500)
     {
         using var conn = _factory.CreateConnection();
@@ -45,7 +48,24 @@ public sealed class WebRosterService
             listCmd.Parameters.AddWithValue("$country", country.Trim());
         }
 
+        if (!string.IsNullOrWhiteSpace(status))
+        {
+            switch (status.Trim())
+            {
+                case "Active":
+                    where.Add("COALESCE(f.Retired, 0) = 0 AND f.PromotionId IS NOT NULL");
+                    break;
+                case "Free Agent":
+                    where.Add("COALESCE(f.Retired, 0) = 0 AND (f.PromotionId IS NULL OR COALESCE(f.ContractStatus, '') = 'FreeAgent')");
+                    break;
+                case "Retired":
+                    where.Add("COALESCE(f.Retired, 0) = 1");
+                    break;
+            }
+        }
+
         var whereSql = where.Count == 0 ? "" : "WHERE " + string.Join(" AND ", where);
+        var orderBySql = BuildOrderByClause(sortBy);
 
         countCmd.CommandText = $@"
 SELECT COUNT(*)
@@ -59,8 +79,15 @@ LEFT JOIN Countries c ON c.Id = f.CountryId
 SELECT
     f.Id,
     (f.FirstName || ' ' || f.LastName) AS FighterName,
+    COALESCE(f.Age, 0) AS Age,
     f.WeightClass,
     COALESCE(c.Name, '') AS CountryName,
+    COALESCE(p.Name, 'Free Agent') AS PromotionName,
+    CASE
+        WHEN COALESCE(f.Retired, 0) = 1 THEN 'Retired'
+        WHEN f.PromotionId IS NULL OR COALESCE(f.ContractStatus, '') = 'FreeAgent' THEN 'Free Agent'
+        ELSE 'Active'
+    END AS FighterStatus,
     f.Wins,
     f.Losses,
     f.Draws,
@@ -73,6 +100,7 @@ SELECT
     COALESCE(f.MediaHeat, 20) AS MediaHeat
 FROM Fighters f
 LEFT JOIN Countries c ON c.Id = f.CountryId
+LEFT JOIN Promotions p ON p.Id = f.PromotionId
 LEFT JOIN ScoutKnowledge sk
     ON sk.FighterId = f.Id
    AND sk.AgentId = (SELECT Id FROM AgentProfile ORDER BY Id LIMIT 1)
@@ -82,7 +110,7 @@ LEFT JOIN ScoutAssignments sa
    AND sa.Status = 'InProgress'
 LEFT JOIN FighterStyles fs ON fs.FighterId = f.Id
 {whereSql}
-ORDER BY COALESCE(sk.EstimatedSkillMax, f.Skill) DESC, f.Popularity DESC, f.Wins DESC
+ORDER BY {orderBySql}
 LIMIT $take;";
         listCmd.Parameters.AddWithValue("$take", take);
 
@@ -94,8 +122,12 @@ LIMIT $take;";
                 items.Add(new RosterListItemVm(
                     Convert.ToInt32(r["Id"]),
                     r["FighterName"]?.ToString() ?? "",
+                    Convert.ToInt32(r["Age"]),
                     r["WeightClass"]?.ToString() ?? "",
                     r["CountryName"]?.ToString() ?? "",
+                    CountryFlagHelper.GetFlagImageUrl(r["CountryName"]?.ToString()),
+                    r["PromotionName"]?.ToString() ?? "Free Agent",
+                    r["FighterStatus"]?.ToString() ?? "Active",
                     Convert.ToInt32(r["Wins"]),
                     Convert.ToInt32(r["Losses"]),
                     Convert.ToInt32(r["Draws"]),
@@ -211,4 +243,15 @@ VALUES
             _ => "Unscouted"
         };
     }
+
+    private static string BuildOrderByClause(string? sortBy)
+        => sortBy?.Trim() switch
+        {
+            "AgeDesc" => "COALESCE(f.Age, 0) DESC, FighterName",
+            "AgeAsc" => "COALESCE(f.Age, 0) ASC, FighterName",
+            "RecordDesc" => "(COALESCE(f.Wins, 0) - COALESCE(f.Losses, 0)) DESC, COALESCE(f.Wins, 0) DESC, FighterName",
+            "CountryAsc" => "COALESCE(c.Name, '') ASC, FighterName",
+            "PopularityDesc" => "COALESCE(f.Popularity, 0) DESC, COALESCE(f.MediaHeat, 0) DESC, FighterName",
+            _ => "COALESCE(sk.EstimatedSkillMax, f.Skill) DESC, COALESCE(f.Popularity, 0) DESC, COALESCE(f.Wins, 0) DESC, FighterName"
+        };
 }

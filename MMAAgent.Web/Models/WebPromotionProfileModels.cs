@@ -11,7 +11,7 @@ public sealed record PromotionSummaryVm(
 
 public sealed record PromotionChampionVm(
     string WeightClass,
-    int FighterId,
+    int? FighterId,
     string FighterName);
 
 public sealed record PromotionRankingVm(

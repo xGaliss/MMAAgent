@@ -16,6 +16,7 @@ public sealed class CareerSchemaPreparationService
     {
         using var conn = _factory.CreateConnection();
 
+        await EnsureCountryCultureWeightsAsync(conn, cancellationToken);
         await EnsurePromotionConfigurationAsync(conn, cancellationToken);
         await EnsureAgentConfigurationAsync(conn, cancellationToken);
         await EnsureFighterAvailabilityColumnsAsync(conn, cancellationToken);
@@ -121,6 +122,27 @@ SET CampInvestmentLevel = CASE
         await EnsureColumnAsync(conn, "Fighters", "MedicalSuspensionWeeksRemaining", "INTEGER NOT NULL DEFAULT 0", cancellationToken);
     }
 
+    private static async Task EnsureCountryCultureWeightsAsync(SqliteConnection conn, CancellationToken cancellationToken)
+    {
+        // Schema safety only.
+        // Canonical country/culture rows live in the web template DB and its SQL seed asset.
+        // Countries.CulturalGroup remains the legacy fallback/default used by the generator.
+        await ExecAsync(conn, @"
+CREATE TABLE IF NOT EXISTS CountryCultureWeights
+(
+    Id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+    CountryId INTEGER NOT NULL,
+    CulturalGroup TEXT NOT NULL,
+    Weight INTEGER NOT NULL DEFAULT 0,
+    FOREIGN KEY(CountryId) REFERENCES Countries(Id) ON DELETE CASCADE
+);", cancellationToken);
+
+        await ExecAsync(conn, "CREATE INDEX IF NOT EXISTS IX_CountryCultureWeights_CountryId ON CountryCultureWeights(CountryId);", cancellationToken);
+        await ExecAsync(conn, "CREATE UNIQUE INDEX IF NOT EXISTS UX_CountryCultureWeights_Country_Culture ON CountryCultureWeights(CountryId, CulturalGroup);", cancellationToken);
+
+        await EnsureColumnAsync(conn, "Fighters", "CulturalGroup", "TEXT NULL", cancellationToken);
+    }
+
     private static async Task EnsureFighterWorldColumnsAsync(SqliteConnection conn, CancellationToken cancellationToken)
     {
         await EnsureColumnAsync(conn, "Fighters", "Marketability", "INTEGER NOT NULL DEFAULT 50", cancellationToken);
@@ -131,6 +153,11 @@ SET CampInvestmentLevel = CASE
         await EnsureColumnAsync(conn, "Fighters", "MediaHeat", "INTEGER NOT NULL DEFAULT 20", cancellationToken);
         await EnsureColumnAsync(conn, "Fighters", "DamageMiles", "INTEGER NOT NULL DEFAULT 0", cancellationToken);
         await EnsureColumnAsync(conn, "Fighters", "LastAgedYear", "INTEGER NOT NULL DEFAULT 0", cancellationToken);
+        await EnsureColumnAsync(conn, "Fighters", "Ambition", "INTEGER NOT NULL DEFAULT 50", cancellationToken);
+        await EnsureColumnAsync(conn, "Fighters", "Discipline", "INTEGER NOT NULL DEFAULT 50", cancellationToken);
+        await EnsureColumnAsync(conn, "Fighters", "RiskTolerance", "INTEGER NOT NULL DEFAULT 50", cancellationToken);
+        await EnsureColumnAsync(conn, "Fighters", "Stability", "INTEGER NOT NULL DEFAULT 50", cancellationToken);
+        await EnsureColumnAsync(conn, "Fighters", "Showmanship", "INTEGER NOT NULL DEFAULT 40", cancellationToken);
 
         await ExecAsync(conn, @"
 UPDATE Fighters
@@ -161,6 +188,26 @@ SET Marketability = CASE
     MediaHeat = CASE
         WHEN COALESCE(MediaHeat, 0) <= 0 THEN MIN(99, MAX(10, COALESCE(Popularity, 20)))
         ELSE MediaHeat
+    END,
+    Ambition = CASE
+        WHEN COALESCE(Ambition, 0) <= 0 THEN 50
+        ELSE Ambition
+    END,
+    Discipline = CASE
+        WHEN COALESCE(Discipline, 0) <= 0 THEN 50
+        ELSE Discipline
+    END,
+    RiskTolerance = CASE
+        WHEN COALESCE(RiskTolerance, 0) <= 0 THEN 50
+        ELSE RiskTolerance
+    END,
+    Stability = CASE
+        WHEN COALESCE(Stability, 0) <= 0 THEN 50
+        ELSE Stability
+    END,
+    Showmanship = CASE
+        WHEN COALESCE(Showmanship, 0) <= 0 THEN 40
+        ELSE Showmanship
     END,
     LastAgedYear = CASE
         WHEN COALESCE(LastAgedYear, 0) <= 0 THEN 2026
@@ -230,6 +277,7 @@ CREATE TABLE IF NOT EXISTS FightPreparations
 );", cancellationToken);
 
         await EnsureColumnAsync(conn, "FightPreparations", "FightWeekOutcome", "TEXT NULL", cancellationToken);
+        await EnsureColumnAsync(conn, "FightPreparations", "CampFocus", "TEXT NULL", cancellationToken);
         await EnsureColumnAsync(conn, "FightPreparations", "ManagerDecisionType", "TEXT NULL", cancellationToken);
         await EnsureColumnAsync(conn, "FightPreparations", "ManagerDecisionChoice", "TEXT NULL", cancellationToken);
         await EnsureColumnAsync(conn, "FightPreparations", "PerformanceModifier", "INTEGER NOT NULL DEFAULT 0", cancellationToken);
@@ -491,4 +539,5 @@ CREATE TABLE IF NOT EXISTS ScoutAssignments
         cmd.CommandText = sql;
         await cmd.ExecuteNonQueryAsync(cancellationToken);
     }
+
 }

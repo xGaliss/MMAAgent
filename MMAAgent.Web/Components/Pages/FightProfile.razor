@@ -4,6 +4,7 @@
 
 @inject FightProfileReadService FightProfileReadService
 @inject WebFighterActionService FighterActionService
+@inject WebRosterService RosterService
 
 <PageTitle>Fight Profile - MMA Agent</PageTitle>
 
@@ -40,7 +41,17 @@ else
                         }
                     </div>
 
-                    <div class="muted-text">@_fighter.CountryName · @_fighter.WeightClass · Age @_fighter.Age</div>
+                    <div class="muted-text profile-origin-row">
+                        @if (!string.IsNullOrWhiteSpace(_fighter.CountryFlagUrl))
+                        {
+                            <span class="country-flag-image profile-flag"
+                                  role="img"
+                                  aria-label="@($"{_fighter.CountryName} flag")"
+                                  title="@_fighter.CountryName"
+                                  style="@BuildFlagStyle(_fighter.CountryFlagUrl)"></span>
+                        }
+                        <span>@_fighter.CountryName · @_fighter.WeightClass · Age @_fighter.Age</span>
+                    </div>
 
                     <div class="profile-action-row">
                         @if (_isManaged)
@@ -49,10 +60,25 @@ else
                         }
                         else
                         {
-                            <button class="@GetSignButtonClass()"
-                                    @onclick="SignCurrentFighterAsync">
-                                @GetSignButtonText()
-                            </button>
+                            <div class="profile-button-group">
+                                <button class="@GetSignButtonClass()"
+                                        @onclick="SignCurrentFighterAsync">
+                                    @GetSignButtonText()
+                                </button>
+
+                                @if (CanScout())
+                                {
+                                    <button class="btn-secondary"
+                                            disabled="@_busyScouting"
+                                            @onclick="StartScoutAsync">
+                                        Scout
+                                    </button>
+                                }
+                                else
+                                {
+                                    <span class="roster-scout-status">@_fighter.ScoutStatus</span>
+                                }
+                            </div>
                         }
                     </div>
                 </div>
@@ -195,6 +221,7 @@ else
                 <div class="attribute-card"><span>Sharpness</span><strong>@DescribeCondition(_fighter.Sharpness)</strong></div>
                 <div class="attribute-card"><span>Morale</span><strong>@DescribeMorale(_fighter.Morale)</strong></div>
                 <div class="attribute-card"><span>Camp Quality</span><strong>@DescribeCamp(_fighter.CampQuality)</strong></div>
+                <div class="attribute-card"><span>Camp Focus</span><strong>@DescribeCampFocus(_fighter.CampFocus)</strong></div>
                 <div class="attribute-card"><span>Weight Cut</span><strong>@DescribeCut(_fighter.WeightCutReadiness)</strong></div>
                 <div class="attribute-card"><span>Injury Risk</span><strong>@DescribeRisk(_fighter.InjuryRisk)</strong></div>
                 <div class="attribute-card"><span>Media Heat</span><strong>@DescribeHeat(_fighter.MediaHeat)</strong></div>
@@ -204,6 +231,56 @@ else
                 <div class="attribute-card"><span>Camp Withdrawals</span><strong>@_fighter.CampWithdrawalCount</strong></div>
             </div>
 
+            @if (CanAdjustCampFocus())
+            {
+                <div class="table-toolbar" style="margin-top:18px;">
+                    <div class="toolbar-title">Camp Focus</div>
+                    <div class="toolbar-subtitle">Shape the prep toward a clear edge before fight week.</div>
+                </div>
+
+                <div class="button-row" style="gap:10px; flex-wrap:wrap;">
+                    @foreach (var option in CampFocusOptions)
+                    {
+                        <button class="btn-secondary @(IsCampFocusSelected(option.Key) ? "camp-focus-btn-active" : "")"
+                                disabled="@_busyCampFocus"
+                                @onclick="() => SetCampFocusAsync(option.Key)">
+                            @option.Label
+                        </button>
+                    }
+                </div>
+
+                <div class="muted-text" style="margin-top:10px;">@BuildCampFocusSummary()</div>
+
+                @if (HasCampRecommendation())
+                {
+                    <div class="meta-box" style="margin-top:14px;">
+                        <div class="meta-label">Staff Recommendation</div>
+                        <div class="meta-value">@DescribeCampFocus(_fighter!.CampRecommendationFocus)</div>
+                        <div class="muted-text" style="margin-top:8px;">@_fighter!.CampRecommendationReason</div>
+                        @if (!string.IsNullOrWhiteSpace(_fighter!.ScheduledOpponentStyleSummary))
+                        {
+                            <div class="muted-text" style="margin-top:6px;">Opponent read: @_fighter!.ScheduledOpponentStyleSummary</div>
+                        }
+
+                        @if (!IsCampFocusSelected(_fighter!.CampRecommendationFocus!))
+                        {
+                            <div class="button-row" style="margin-top:12px;">
+                                <button class="btn-secondary"
+                                        disabled="@_busyCampFocus"
+                                        @onclick="UseStaffCampReadAsync">
+                                    Use staff read
+                                </button>
+                            </div>
+                        }
+                    </div>
+                }
+
+                @if (!string.IsNullOrWhiteSpace(_campFocusStatus))
+                {
+                    <div class="muted-text" style="margin-top:8px;">@_campFocusStatus</div>
+                }
+            }
+
             @if (!string.IsNullOrWhiteSpace(_fighter.LatestPrepNote))
             {
                 <div class="meta-box" style="margin-top:16px;">
@@ -211,6 +288,21 @@ else
                     <div class="meta-value">@_fighter.LatestPrepNote</div>
                 </div>
             }
+        </section>
+
+        <section class="panel-card">
+            <div class="table-toolbar">
+                <div class="toolbar-title">Personality</div>
+                <div class="toolbar-subtitle">How this fighter is likely to behave over a career, not just in a fight</div>
+            </div>
+
+            <div class="attribute-grid">
+                <div class="attribute-card"><span>Ambition</span><strong>@DescribePersonality(_fighter.Ambition)</strong></div>
+                <div class="attribute-card"><span>Discipline</span><strong>@DescribePersonality(_fighter.Discipline)</strong></div>
+                <div class="attribute-card"><span>Risk Profile</span><strong>@DescribeRiskMindset(_fighter.RiskTolerance)</strong></div>
+                <div class="attribute-card"><span>Stability</span><strong>@DescribePersonality(_fighter.Stability)</strong></div>
+                <div class="attribute-card"><span>Showmanship</span><strong>@DescribeShowmanship(_fighter.Showmanship)</strong></div>
+            </div>
         </section>
 
         <section class="panel-card">
@@ -334,6 +426,9 @@ else
     private List<FightHistoryItem> _history = new();
     private bool _loading = true;
     private bool _isManaged;
+    private bool _busyScouting;
+    private bool _busyCampFocus;
+    private string? _campFocusStatus;
     private string? _error;
 
     protected override async Task OnParametersSetAsync()
@@ -402,6 +497,95 @@ else
 
         return "Approach fighter";
     }
+
+    private async Task StartScoutAsync()
+    {
+        try
+        {
+            if (_fighter is null)
+                return;
+
+            _busyScouting = true;
+            await RosterService.StartScoutAsync(_fighter.Id);
+
+            var result = await FightProfileReadService.LoadAsync(fighterId, 20);
+            _fighter = result.Fighter;
+            _history = result.History.ToList();
+            _isManaged = _fighter?.IsManagedByPlayer ?? false;
+        }
+        catch (Exception ex)
+        {
+            _error = ex.ToString();
+        }
+        finally
+        {
+            _busyScouting = false;
+        }
+    }
+
+    private async Task SetCampFocusAsync(string focus)
+    {
+        try
+        {
+            if (_fighter is null || !CanAdjustCampFocus())
+                return;
+
+            _busyCampFocus = true;
+            _campFocusStatus = null;
+
+            var result = await FighterActionService.SetCampFocusAsync(_fighter.Id, focus);
+            if (!result.Success)
+            {
+                _campFocusStatus = result.Message;
+                return;
+            }
+
+            _campFocusStatus = result.Message;
+            var refreshed = await FightProfileReadService.LoadAsync(fighterId, 20);
+            _fighter = refreshed.Fighter;
+            _history = refreshed.History.ToList();
+            _isManaged = _fighter?.IsManagedByPlayer ?? false;
+        }
+        catch (Exception ex)
+        {
+            _error = ex.ToString();
+        }
+        finally
+        {
+            _busyCampFocus = false;
+        }
+    }
+
+    private Task UseStaffCampReadAsync()
+    {
+        if (_fighter is null || string.IsNullOrWhiteSpace(_fighter.CampRecommendationFocus))
+            return Task.CompletedTask;
+
+        return SetCampFocusAsync(_fighter.CampRecommendationFocus);
+    }
+
+    private bool CanScout()
+    {
+        if (_fighter is null || _isManaged)
+            return false;
+
+        return !string.Equals(_fighter.ScoutStatus, "Scouting", StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(_fighter.ScoutStatus, "Known", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private bool CanAdjustCampFocus()
+    {
+        if (_fighter is null || !_isManaged || !_fighter.IsBooked)
+            return false;
+
+        return !string.Equals(_fighter.CurrentPhase, "Fight Night", StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(_fighter.CurrentPhase, "Medical Suspension", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private bool HasCampRecommendation()
+        => _fighter is not null
+           && !string.IsNullOrWhiteSpace(_fighter.CampRecommendationFocus)
+           && !string.IsNullOrWhiteSpace(_fighter.CampRecommendationReason);
 
     private string BuildAvailabilityText()
     {
@@ -490,6 +674,17 @@ else
             _ => "Chaotic"
         };
 
+    private static string DescribeCampFocus(string? focus)
+        => focus switch
+        {
+            "Cardio" => "Cardio",
+            "Wrestling" => "Wrestling",
+            "Striking" => "Striking",
+            "Recovery" => "Recovery",
+            "WeightManagement" => "Weight Management",
+            _ => "Balanced"
+        };
+
     private static string DescribeCut(int value)
         => value switch
         {
@@ -550,6 +745,36 @@ else
             _ => "Fresh"
         };
 
+    private static string DescribePersonality(int value)
+        => value switch
+        {
+            >= 85 => "Extreme",
+            >= 70 => "High",
+            >= 55 => "Noticeable",
+            >= 40 => "Balanced",
+            _ => "Low"
+        };
+
+    private static string DescribeRiskMindset(int value)
+        => value switch
+        {
+            >= 85 => "All action",
+            >= 70 => "Bold",
+            >= 55 => "Aggressive",
+            >= 40 => "Measured",
+            _ => "Conservative"
+        };
+
+    private static string DescribeShowmanship(int value)
+        => value switch
+        {
+            >= 85 => "Headliner aura",
+            >= 70 => "Magnetic",
+            >= 55 => "Crowd-friendly",
+            >= 40 => "Low-key",
+            _ => "Quiet worker"
+        };
+
     private static string FormatLegacyTag(string tagCode)
         => tagCode switch
         {
@@ -560,6 +785,37 @@ else
             "ShortNoticeSpecialist" => "Short Notice Specialist",
             "VeteranMiles" => "Veteran Miles",
             _ => tagCode
+        };
+
+    private static string BuildFlagStyle(string? flagUrl)
+    {
+        if (string.IsNullOrWhiteSpace(flagUrl))
+            return "";
+
+        return $"background-image:url('{flagUrl}');";
+    }
+
+    private static readonly (string Key, string Label)[] CampFocusOptions =
+    {
+        ("Cardio", "Cardio"),
+        ("Wrestling", "Wrestling"),
+        ("Striking", "Striking"),
+        ("Recovery", "Recovery"),
+        ("WeightManagement", "Weight Management")
+    };
+
+    private bool IsCampFocusSelected(string focus)
+        => string.Equals(_fighter?.CampFocus, focus, StringComparison.OrdinalIgnoreCase);
+
+    private string BuildCampFocusSummary()
+        => _fighter?.CampFocus switch
+        {
+            "Cardio" => "Improves pace and late-fight stability. Best for long fights and grindy matchups.",
+            "Wrestling" => "Pushes control, entries and clinch pressure. Strong for wrestlers and pressure games.",
+            "Striking" => "Sharpens timing and offense, but can come with a little more volatility.",
+            "Recovery" => "Protects the body, lowers camp risk and steadies rough pre-fight weeks.",
+            "WeightManagement" => "Makes the cut safer and cleaner, especially useful for tight or draining cuts.",
+            _ => "No specific emphasis selected. The camp stays more balanced across every area."
         };
 
     private IReadOnlyList<string> GetVisibleTraits()

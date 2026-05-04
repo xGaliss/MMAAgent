@@ -52,6 +52,21 @@ public sealed class FightOfferResponseServiceSqlite : IFightOfferResponseService
             return new FightOfferResponseResult(false, "Game state not found.", offerId, null, null);
         }
 
+        if (offer.IsShortNotice)
+        {
+            var willingness = await LoadShortNoticeWillingnessAsync(conn, tx, offer.FighterId, cancellationToken);
+            if (!CanAcceptShortNotice(offer, willingness))
+            {
+                tx.Commit();
+                return new FightOfferResponseResult(
+                    false,
+                    BuildShortNoticeRefusalMessage(willingness),
+                    offerId,
+                    null,
+                    null);
+            }
+        }
+
         var resolvedEventId = offer.EventId ?? await EnsureEventAsync(
             conn,
             tx,
@@ -258,6 +273,72 @@ LIMIT 1;";
         return result?.ToString();
     }
 
+    private static async Task<ShortNoticeWillingnessSnapshot> LoadShortNoticeWillingnessAsync(
+        SqliteConnection conn,
+        SqliteTransaction tx,
+        int fighterId,
+        CancellationToken cancellationToken)
+    {
+        using var cmd = conn.CreateCommand();
+        cmd.Transaction = tx;
+        cmd.CommandText = @"
+SELECT
+    COALESCE(Ambition, 50) AS Ambition,
+    COALESCE(Discipline, 50) AS Discipline,
+    COALESCE(RiskTolerance, 50) AS RiskTolerance,
+    COALESCE(Stability, 50) AS Stability,
+    COALESCE(Showmanship, 40) AS Showmanship
+FROM Fighters
+WHERE Id = $fighterId
+LIMIT 1;";
+        cmd.Parameters.AddWithValue("$fighterId", fighterId);
+
+        using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
+        if (!await reader.ReadAsync(cancellationToken))
+            return new ShortNoticeWillingnessSnapshot(50, 50, 50, 50, 40);
+
+        return new ShortNoticeWillingnessSnapshot(
+            Convert.ToInt32(reader["Ambition"]),
+            Convert.ToInt32(reader["Discipline"]),
+            Convert.ToInt32(reader["RiskTolerance"]),
+            Convert.ToInt32(reader["Stability"]),
+            Convert.ToInt32(reader["Showmanship"]));
+    }
+
+    private static bool CanAcceptShortNotice(OfferSnapshot offer, ShortNoticeWillingnessSnapshot willingness)
+    {
+        var score =
+            (willingness.RiskTolerance * 0.36)
+            + (willingness.Ambition * 0.26)
+            + (willingness.Showmanship * 0.20)
+            + (willingness.Discipline * 0.10)
+            + (willingness.Stability * 0.08);
+
+        if (offer.IsTitleFight || offer.IsTitleEliminator)
+            score += 5;
+
+        if (offer.WeeksUntilFight <= 2)
+            score -= 10;
+        else if (offer.WeeksUntilFight <= 3)
+            score -= 5;
+
+        return score >= 48;
+    }
+
+    private static string BuildShortNoticeRefusalMessage(ShortNoticeWillingnessSnapshot willingness)
+    {
+        if (willingness.Stability < 42 && willingness.RiskTolerance < 46)
+            return "The fighter pushed back on the short-notice call. The camp window feels too volatile for them right now.";
+
+        if (willingness.Discipline < 42)
+            return "The fighter pushed back on the short-notice call. They do not trust the preparation window enough to sign off.";
+
+        if (willingness.Ambition >= 60)
+            return "The fighter likes the opportunity, but the short-notice turnaround still feels too thin to commit cleanly.";
+
+        return "The fighter pushed back on the short-notice call and wants a fuller camp before taking this booking.";
+    }
+
     private static async Task<int> EnsureEventAsync(
         SqliteConnection conn,
         SqliteTransaction tx,
@@ -387,6 +468,13 @@ LIMIT 1;";
         string WeightClass,
         bool IsTitleFight,
         bool IsTitleEliminator);
+
+    private sealed record ShortNoticeWillingnessSnapshot(
+        int Ambition,
+        int Discipline,
+        int RiskTolerance,
+        int Stability,
+        int Showmanship);
 
     private sealed record PromotionSnapshot(
         string Name,

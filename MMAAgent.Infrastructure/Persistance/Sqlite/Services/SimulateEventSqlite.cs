@@ -656,7 +656,24 @@ WHERE Id = $id;",
                 _ => 0.0
             };
             prepAdjustment += prep.PerformanceModifier;
-            prepAdjustment -= (prep.RiskModifier * 0.4);
+            prepAdjustment += prep.CampFocus switch
+            {
+                "Cardio" => 1.8 + Math.Max(0, (fighter.Cardio - 60) / 15.0),
+                "Wrestling" => 1.6 + Math.Max(0, ((fighter.Wrestling + fighter.Grappling) - 120) / 35.0),
+                "Striking" => 1.8 + Math.Max(0, (fighter.Striking - 60) / 14.0),
+                "Recovery" => 1.0 + Math.Max(0, (fighter.Chin - 55) / 20.0),
+                "WeightManagement" => string.Equals(prep.WeighInOutcome, "OnWeight", StringComparison.OrdinalIgnoreCase) ? 1.2 : 0.3,
+                _ => 0.0
+            };
+
+            var riskMultiplier = prep.CampFocus switch
+            {
+                "Recovery" => 0.15,
+                "WeightManagement" => 0.22,
+                "Cardio" => 0.30,
+                _ => 0.40
+            };
+            prepAdjustment -= (prep.RiskModifier * riskMultiplier);
 
             return basePower + prepAdjustment + NextGaussian(rng, 0, 4.5);
         }
@@ -683,6 +700,24 @@ WHERE Id = $id;",
                 koProbability += 0.08;
 
             koProbability += Math.Max(0, loserPrep.RiskModifier) * 0.01;
+
+            switch (winnerPrep.CampFocus)
+            {
+                case "Striking":
+                    koProbability += 0.05;
+                    break;
+                case "Wrestling":
+                    subProbability += 0.04;
+                    break;
+                case "Cardio":
+                    koProbability -= 0.01;
+                    subProbability -= 0.01;
+                    break;
+                case "Recovery":
+                    koProbability += 0.01;
+                    subProbability += 0.01;
+                    break;
+            }
 
             if (string.Equals(winnerPrep.CampOutcome, "Disrupted", StringComparison.OrdinalIgnoreCase))
             {
@@ -1056,6 +1091,7 @@ VALUES
 SELECT
     COALESCE(CampOutcome, '') AS CampOutcome,
     COALESCE(CampNotes, '') AS CampNotes,
+    COALESCE(CampFocus, '') AS CampFocus,
     COALESCE(FightWeekOutcome, '') AS FightWeekOutcome,
     COALESCE(FightWeekNotes, '') AS FightWeekNotes,
     COALESCE(WeighInOutcome, '') AS WeighInOutcome,
@@ -1077,6 +1113,7 @@ LIMIT 1;";
             return new PrepEffect(
                 reader["CampOutcome"]?.ToString() ?? "",
                 reader["CampNotes"]?.ToString() ?? "",
+                reader["CampFocus"]?.ToString() ?? "",
                 reader["FightWeekOutcome"]?.ToString() ?? "",
                 reader["FightWeekNotes"]?.ToString() ?? "",
                 reader["WeighInOutcome"]?.ToString() ?? "",
@@ -1112,6 +1149,17 @@ LIMIT 1;";
                 fragments.Add($"{fighterName} had a draining weight cut.");
             else if (string.Equals(prep.WeighInOutcome, "MissedWeight", StringComparison.OrdinalIgnoreCase))
                 fragments.Add($"{fighterName} missed weight before fight night.");
+
+            if (string.Equals(prep.CampFocus, "Cardio", StringComparison.OrdinalIgnoreCase))
+                fragments.Add($"{fighterName} centered camp around cardio.");
+            else if (string.Equals(prep.CampFocus, "Wrestling", StringComparison.OrdinalIgnoreCase))
+                fragments.Add($"{fighterName} centered camp around wrestling.");
+            else if (string.Equals(prep.CampFocus, "Striking", StringComparison.OrdinalIgnoreCase))
+                fragments.Add($"{fighterName} centered camp around striking.");
+            else if (string.Equals(prep.CampFocus, "Recovery", StringComparison.OrdinalIgnoreCase))
+                fragments.Add($"{fighterName} prioritized recovery through camp.");
+            else if (string.Equals(prep.CampFocus, "WeightManagement", StringComparison.OrdinalIgnoreCase))
+                fragments.Add($"{fighterName} prioritized weight management through camp.");
 
             if (!string.IsNullOrWhiteSpace(prep.DecisionNotes))
                 fragments.Add(prep.DecisionNotes);
@@ -1382,6 +1430,7 @@ LIMIT 1;";
         private sealed record PrepEffect(
             string CampOutcome,
             string CampNotes,
+            string CampFocus,
             string FightWeekOutcome,
             string FightWeekNotes,
             string WeighInOutcome,
@@ -1390,7 +1439,7 @@ LIMIT 1;";
             int RiskModifier,
             string DecisionNotes)
         {
-            public static PrepEffect None { get; } = new("", "", "", "", "", "", 0, 0, "");
+            public static PrepEffect None { get; } = new("", "", "", "", "", "", "", 0, 0, "");
         }
         private sealed record SimFightResult(int WinnerId, int LoserId, string Method, bool IsTitle, string Summary);
     }

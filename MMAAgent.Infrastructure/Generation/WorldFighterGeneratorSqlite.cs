@@ -20,14 +20,20 @@ namespace MMAAgent.Infrastructure.Generation
         public int AnnualNewcomerCount { get; set; } = 48;
         public bool ClearExistingFighters { get; set; } = true;
 
+        private const string DefaultCulturalGroup = "Anglo";
+        private const double CountrySpecificNameChance = 0.15;
+
         // --- Caches ---
         private List<CountryRow> _countries = new();
-        private int _totalCountryWeight = 0;
+        private readonly List<WeightedValue<CountryRow>> _countryWeights = new();
 
         private readonly Dictionary<int, List<NameWeight>> _firstNamesByCountry = new();
         private readonly Dictionary<int, List<NameWeight>> _lastNamesByCountry = new();
         private readonly Dictionary<string, List<NameWeight>> _firstNamesByGroup = new(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<string, List<NameWeight>> _lastNamesByGroup = new(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<int, List<WeightedValue<string>>> _culturesByCountry = new();
+        private readonly List<NameWeight> _globalFirstNames = new();
+        private readonly List<NameWeight> _globalLastNames = new();
 
         private readonly HashSet<string> _usedFullNames = new();
 
@@ -55,8 +61,9 @@ namespace MMAAgent.Infrastructure.Generation
 
             LoadCountries(conn, tx);
             LoadNameCaches(conn, tx);
+            LoadCountryCultureWeights(conn, tx);
 
-            if (_countries.Count == 0 || _totalCountryWeight <= 0)
+            if (_countries.Count == 0 || _countryWeights.Count == 0)
                 throw new InvalidOperationException("No hay países válidos (FighterSpawnWeight > 0).");
 
             if (ClearExistingFighters)
@@ -70,7 +77,8 @@ namespace MMAAgent.Infrastructure.Generation
             for (int i = 0; i < GenerateCount; i++)
             {
                 var c = PickCountry();
-                var (first, last) = GenerateUniqueName(c);
+                var culturalGroup = PickCultureForCountry(c);
+                var (first, last) = GenerateUniqueName(c, culturalGroup);
 
                 int age = GenerateAge();
                 string wc = PickWeightClass();
@@ -78,16 +86,23 @@ namespace MMAAgent.Infrastructure.Generation
                 int primeStart = _rng.Next(26, 29);
                 int primeEnd = primeStart + _rng.Next(5, 8);
 
-                int potential = ClampInt((int)(c.MmaLevel + NextGaussian(0, 12)), 20, 99);
+                int potential = GeneratePotential(c, isNewcomer: false);
                 int skill = GenerateSkillFromAgePotential(age, potential);
                 string style = PickStyle(c);
+                var personality = GeneratePersonalityProfile(c, age, potential, style, isNewcomer: false);
 
-                var stats = GenerateStats(skill, potential, c, style);
+                var stats = GenerateAttributes(c, skill, potential, style);
                 var record = GenerateRecord(age, skill);
+                var popularity = GeneratePopularity(skill, record.W, record.L, personality, age, isNewcomer: false);
+                var marketability = GenerateMarketability(popularity, personality, style, age, potential, isNewcomer: false);
+                var momentum = GenerateMomentum(skill, potential, age, record.W, record.L, isNewcomer: false);
+                var reliability = GenerateReliability(personality, age, record.W, record.L);
+                var mediaHeat = GenerateMediaHeat(popularity, marketability, momentum, personality, style, isNewcomer: false);
 
                 InsertFighter(
                     conn, tx,
                     first, last, c.Id,
+                    culturalGroup,
                     age, wc,
                     primeStart, primeEnd,
                     potential, skill,
@@ -95,7 +110,16 @@ namespace MMAAgent.Infrastructure.Generation
                     style,
                     record.W, record.L, record.D,
                     record.KO, record.SUB, record.DEC,
-                    popularity: GeneratePopularity(skill, record.W, record.L),
+                    popularity: popularity,
+                    marketability: marketability,
+                    momentum: momentum,
+                    reliabilityScore: reliability,
+                    mediaHeat: mediaHeat,
+                    ambition: personality.Ambition,
+                    discipline: personality.Discipline,
+                    riskTolerance: personality.RiskTolerance,
+                    stability: personality.Stability,
+                    showmanship: personality.Showmanship,
                     retired: 0,
                     promotionId: null,
                     salary: 0,
@@ -120,9 +144,10 @@ namespace MMAAgent.Infrastructure.Generation
 
             LoadCountries(conn, tx);
             LoadNameCaches(conn, tx);
+            LoadCountryCultureWeights(conn, tx);
             LoadUsedFullNames(conn, tx);
 
-            if (_countries.Count == 0 || _totalCountryWeight <= 0)
+            if (_countries.Count == 0 || _countryWeights.Count == 0)
                 throw new InvalidOperationException("No hay países válidos (FighterSpawnWeight > 0).");
 
             var generated = 0;
@@ -130,23 +155,31 @@ namespace MMAAgent.Infrastructure.Generation
             for (int i = 0; i < totalToGenerate; i++)
             {
                 var c = PickCountry();
-                var (first, last) = GenerateUniqueName(c);
+                var culturalGroup = PickCultureForCountry(c);
+                var (first, last) = GenerateUniqueName(c, culturalGroup);
                 var age = GenerateNewcomerAge();
                 var wc = PickWeightClass();
 
                 int primeStart = _rng.Next(26, 29);
                 int primeEnd = primeStart + _rng.Next(5, 8);
 
-                int potential = GenerateNewcomerPotential(c);
+                int potential = GeneratePotential(c, isNewcomer: true);
                 int skill = GenerateNewcomerSkill(age, potential);
                 string style = PickStyle(c);
+                var personality = GeneratePersonalityProfile(c, age, potential, style, isNewcomer: true);
 
-                var stats = GenerateStats(skill, potential, c, style);
+                var stats = GenerateAttributes(c, skill, potential, style);
                 var record = GenerateNewcomerRecord(age, skill);
+                var popularity = GeneratePopularity(skill, record.W, record.L, personality, age, isNewcomer: true);
+                var marketability = GenerateMarketability(popularity, personality, style, age, potential, isNewcomer: true);
+                var momentum = GenerateMomentum(skill, potential, age, record.W, record.L, isNewcomer: true);
+                var reliability = GenerateReliability(personality, age, record.W, record.L);
+                var mediaHeat = GenerateMediaHeat(popularity, marketability, momentum, personality, style, isNewcomer: true);
 
                 InsertFighter(
                     conn, tx,
                     first, last, c.Id,
+                    culturalGroup,
                     age, wc,
                     primeStart, primeEnd,
                     potential, skill,
@@ -154,7 +187,16 @@ namespace MMAAgent.Infrastructure.Generation
                     style,
                     record.W, record.L, record.D,
                     record.KO, record.SUB, record.DEC,
-                    popularity: GenerateNewcomerPopularity(skill, record.W, record.L),
+                    popularity: popularity,
+                    marketability: marketability,
+                    momentum: momentum,
+                    reliabilityScore: reliability,
+                    mediaHeat: mediaHeat,
+                    ambition: personality.Ambition,
+                    discipline: personality.Discipline,
+                    riskTolerance: personality.RiskTolerance,
+                    stability: personality.Stability,
+                    showmanship: personality.Showmanship,
                     retired: 0,
                     promotionId: null,
                     salary: 0,
@@ -176,7 +218,7 @@ namespace MMAAgent.Infrastructure.Generation
         private void LoadCountries(SqliteConnection conn, SqliteTransaction tx)
         {
             _countries = new List<CountryRow>();
-            _totalCountryWeight = 0;
+            _countryWeights.Clear();
 
             using var cmd = conn.CreateCommand();
             cmd.Transaction = tx;
@@ -200,7 +242,8 @@ WHERE FighterSpawnWeight > 0;";
                     GrapplingBias = Convert.ToInt32(reader["GrapplingBias"]),
                 };
                 _countries.Add(c);
-                _totalCountryWeight += Math.Max(0, c.FighterSpawnWeight);
+                if (c.FighterSpawnWeight > 0)
+                    _countryWeights.Add(new WeightedValue<CountryRow>(c, c.FighterSpawnWeight));
             }
         }
 
@@ -210,6 +253,8 @@ WHERE FighterSpawnWeight > 0;";
             _lastNamesByCountry.Clear();
             _firstNamesByGroup.Clear();
             _lastNamesByGroup.Clear();
+            _globalFirstNames.Clear();
+            _globalLastNames.Clear();
 
             // FirstNameCountries
             using (var cmd = conn.CreateCommand())
@@ -232,6 +277,7 @@ WHERE fnc.Weight > 0;";
                     if (!_firstNamesByCountry.TryGetValue(countryId, out var list))
                         _firstNamesByCountry[countryId] = list = new List<NameWeight>();
                     list.Add(row);
+                    _globalFirstNames.Add(row);
                 }
             }
 
@@ -256,6 +302,7 @@ WHERE lnc.Weight > 0;";
                     if (!_lastNamesByCountry.TryGetValue(countryId, out var list))
                         _lastNamesByCountry[countryId] = list = new List<NameWeight>();
                     list.Add(row);
+                    _globalLastNames.Add(row);
                 }
             }
 
@@ -280,6 +327,7 @@ WHERE fng.Weight > 0;";
                     if (!_firstNamesByGroup.TryGetValue(group, out var list))
                         _firstNamesByGroup[group] = list = new List<NameWeight>();
                     list.Add(row);
+                    _globalFirstNames.Add(row);
                 }
             }
 
@@ -304,7 +352,34 @@ WHERE lng.Weight > 0;";
                     if (!_lastNamesByGroup.TryGetValue(group, out var list))
                         _lastNamesByGroup[group] = list = new List<NameWeight>();
                     list.Add(row);
+                    _globalLastNames.Add(row);
                 }
+            }
+        }
+
+        private void LoadCountryCultureWeights(SqliteConnection conn, SqliteTransaction tx)
+        {
+            _culturesByCountry.Clear();
+
+            using var cmd = conn.CreateCommand();
+            cmd.Transaction = tx;
+            cmd.CommandText = @"
+SELECT CountryId, CulturalGroup, Weight
+FROM CountryCultureWeights
+WHERE Weight > 0
+ORDER BY CountryId, Weight DESC, CulturalGroup;";
+
+            using var reader = cmd.ExecuteReader();
+            while (reader.Read())
+            {
+                var countryId = Convert.ToInt32(reader["CountryId"]);
+                var culturalGroup = reader["CulturalGroup"]?.ToString() ?? DefaultCulturalGroup;
+                var weight = Convert.ToInt32(reader["Weight"]);
+
+                if (!_culturesByCountry.TryGetValue(countryId, out var list))
+                    _culturesByCountry[countryId] = list = new List<WeightedValue<string>>();
+
+                list.Add(new WeightedValue<string>(culturalGroup, weight));
             }
         }
 
@@ -332,45 +407,47 @@ LEFT JOIN Countries c ON c.Id = f.CountryId;";
         // ---------------- Picks ----------------
 
         private CountryRow PickCountry()
+            => WeightedRandomPicker.PickOrDefault(_countryWeights, _rng, _countries[0]);
+
+        /// <summary>
+        /// Country describes geography and MMA environment.
+        /// Culture describes naming pool and background flavor inside that country.
+        /// We prefer CountryCultureWeights and only fall back to Countries.CulturalGroup when needed.
+        /// </summary>
+        private string PickCultureForCountry(CountryRow country)
         {
-            int roll = _rng.Next(_totalCountryWeight);
-            int cum = 0;
-            foreach (var c in _countries)
-            {
-                cum += Math.Max(0, c.FighterSpawnWeight);
-                if (roll < cum) return c;
-            }
-            return _countries[0];
+            if (_culturesByCountry.TryGetValue(country.Id, out var weightedCultures) && weightedCultures.Count > 0)
+                return WeightedRandomPicker.PickOrDefault(weightedCultures, _rng, DefaultCulturalGroup);
+
+            if (!string.IsNullOrWhiteSpace(country.CulturalGroup))
+                return country.CulturalGroup;
+
+            return DefaultCulturalGroup;
         }
 
-        private string PickFirstName(int countryId, string group)
+        /// <summary>
+        /// Country-specific name tables are only overrides/flavor.
+        /// The main source is the cultural pool so we do not need to duplicate every name by country.
+        /// About 15% of the time we try the country-specific pool first if it exists.
+        /// </summary>
+        private string PickFirstName(string culturalGroup, int countryId)
         {
-            if (_firstNamesByCountry.TryGetValue(countryId, out var list) && list.Count > 0)
-                return WeightedPick(list);
+            var countryPool = _firstNamesByCountry.TryGetValue(countryId, out var namesByCountry) ? namesByCountry : null;
+            var culturePool = !string.IsNullOrWhiteSpace(culturalGroup) && _firstNamesByGroup.TryGetValue(culturalGroup, out var namesByCulture)
+                ? namesByCulture
+                : null;
 
-            if (!string.IsNullOrWhiteSpace(group) &&
-                _firstNamesByGroup.TryGetValue(group, out var glist) && glist.Count > 0)
-                return WeightedPick(glist);
-
-            foreach (var kv in _firstNamesByGroup)
-                if (kv.Value.Count > 0) return WeightedPick(kv.Value);
-
-            return "Unknown";
+            return PickNameFromPools(countryPool, culturePool, _globalFirstNames);
         }
 
-        private string PickLastName(int countryId, string group)
+        private string PickLastName(string culturalGroup, int countryId)
         {
-            if (_lastNamesByCountry.TryGetValue(countryId, out var list) && list.Count > 0)
-                return WeightedPick(list);
+            var countryPool = _lastNamesByCountry.TryGetValue(countryId, out var namesByCountry) ? namesByCountry : null;
+            var culturePool = !string.IsNullOrWhiteSpace(culturalGroup) && _lastNamesByGroup.TryGetValue(culturalGroup, out var namesByCulture)
+                ? namesByCulture
+                : null;
 
-            if (!string.IsNullOrWhiteSpace(group) &&
-                _lastNamesByGroup.TryGetValue(group, out var glist) && glist.Count > 0)
-                return WeightedPick(glist);
-
-            foreach (var kv in _lastNamesByGroup)
-                if (kv.Value.Count > 0) return WeightedPick(kv.Value);
-
-            return "Unknown";
+            return PickNameFromPools(countryPool, culturePool, _globalLastNames);
         }
 
         private string PickWeightClass()
@@ -389,38 +466,34 @@ LEFT JOIN Countries c ON c.Id = f.CountryId;";
 
         private string PickStyle(CountryRow c)
         {
-            int striker = 30 + c.StrikingBias;
-            int wrestler = 30 + c.WrestlingBias;
-            int grappler = 30 + c.GrapplingBias;
-            int all = 25;
+            var options = new List<WeightedValue<string>>
+            {
+                new("Boxer", Math.Max(6, 16 + c.StrikingBias + _rng.Next(-4, 5))),
+                new("Kickboxer", Math.Max(6, 18 + c.StrikingBias + _rng.Next(-4, 5))),
+                new("Counter Striker", Math.Max(6, 12 + c.StrikingBias + _rng.Next(-3, 4))),
+                new("Pressure Wrestler", Math.Max(6, 18 + c.WrestlingBias + _rng.Next(-4, 5))),
+                new("Control Wrestler", Math.Max(6, 18 + c.WrestlingBias + _rng.Next(-4, 5))),
+                new("Submission Hunter", Math.Max(6, 18 + c.GrapplingBias + _rng.Next(-4, 5))),
+                new("Scrambler", Math.Max(6, 12 + c.GrapplingBias + c.WrestlingBias / 2 + _rng.Next(-4, 5))),
+                new("Brawler", Math.Max(6, 12 + c.StrikingBias + _rng.Next(-4, 5))),
+                new("Well Rounded", Math.Max(10, 24 + _rng.Next(-6, 7)))
+            };
 
-            striker = Math.Max(5, striker);
-            wrestler = Math.Max(5, wrestler);
-            grappler = Math.Max(5, grappler);
-            all = Math.Max(5, all);
-
-            int total = striker + wrestler + grappler + all;
-            int roll = _rng.Next(total);
-            if (roll < striker) return "Striker";
-            roll -= striker;
-            if (roll < wrestler) return "Wrestler";
-            roll -= wrestler;
-            if (roll < grappler) return "Grappler";
-            return "AllRounder";
+            return WeightedRandomPicker.PickOrDefault(options, _rng, "Well Rounded");
         }
 
-        private (string First, string Last) GenerateUniqueName(CountryRow c)
+        private (string First, string Last) GenerateUniqueName(CountryRow country, string culturalGroup)
         {
-            string first = PickFirstName(c.Id, c.CulturalGroup);
-            string last = PickLastName(c.Id, c.CulturalGroup);
-            string key = BuildNameKey(first, last, c.Name);
+            string first = PickFirstName(culturalGroup, country.Id);
+            string last = PickLastName(culturalGroup, country.Id);
+            string key = BuildNameKey(first, last, country.Name);
             int attempts = 0;
 
             while (_usedFullNames.Contains(key) && attempts < 15)
             {
-                first = PickFirstName(c.Id, c.CulturalGroup);
-                last = PickLastName(c.Id, c.CulturalGroup);
-                key = BuildNameKey(first, last, c.Name);
+                first = PickFirstName(culturalGroup, country.Id);
+                last = PickLastName(culturalGroup, country.Id);
+                key = BuildNameKey(first, last, country.Name);
                 attempts++;
             }
 
@@ -430,6 +503,38 @@ LEFT JOIN Countries c ON c.Id = f.CountryId;";
 
         private static string BuildNameKey(string first, string last, string countryName)
             => $"{first} {last} ({countryName})";
+
+        private string PickNameFromPools(
+            List<NameWeight>? countryPool,
+            List<NameWeight>? culturePool,
+            List<NameWeight> globalPool)
+        {
+            var tryCountryFirst = countryPool is { Count: > 0 } && _rng.NextDouble() < CountrySpecificNameChance;
+
+            if (tryCountryFirst)
+            {
+                var picked = WeightedPickOrNull(countryPool!);
+                if (!string.IsNullOrWhiteSpace(picked))
+                    return picked!;
+            }
+
+            if (culturePool is { Count: > 0 })
+            {
+                var picked = WeightedPickOrNull(culturePool);
+                if (!string.IsNullOrWhiteSpace(picked))
+                    return picked!;
+            }
+
+            if (!tryCountryFirst && countryPool is { Count: > 0 })
+            {
+                var picked = WeightedPickOrNull(countryPool);
+                if (!string.IsNullOrWhiteSpace(picked))
+                    return picked!;
+            }
+
+            var globalPicked = WeightedPickOrNull(globalPool);
+            return !string.IsNullOrWhiteSpace(globalPicked) ? globalPicked! : "Unknown";
+        }
 
         // ---------------- Generation logic ----------------
 
@@ -452,6 +557,25 @@ LEFT JOIN Countries c ON c.Id = f.CountryId;";
                 (25, 1)
             });
 
+        private int GeneratePotential(CountryRow country, bool isNewcomer)
+        {
+            var baseline = country.MmaLevel + (isNewcomer ? 6 : 0);
+            var spread = isNewcomer ? 13 : 12;
+            var potential = ClampInt((int)Math.Round(baseline + NextGaussian(0, spread)), isNewcomer ? 28 : 20, 99);
+
+            // Weak countries can still produce rare prodigies.
+            var prodigyChance = ClampDouble(0.02 + (country.MmaLevel / 2000.0), 0.02, 0.08);
+            if (_rng.NextDouble() < prodigyChance)
+                potential = ClampInt(potential + _rng.Next(8, 21), isNewcomer ? 32 : 24, 99);
+
+            // Strong countries can still produce mediocre talent.
+            var mediocreChance = ClampDouble(0.02 + (country.MmaLevel / 2500.0), 0.02, 0.06);
+            if (_rng.NextDouble() < mediocreChance)
+                potential = ClampInt(potential - _rng.Next(6, 17), isNewcomer ? 24 : 18, 99);
+
+            return potential;
+        }
+
         private int GenerateSkillFromAgePotential(int age, int potential)
         {
             double t;
@@ -466,15 +590,6 @@ LEFT JOIN Countries c ON c.Id = f.CountryId;";
             return ClampInt(skill, 15, potential);
         }
 
-        private int GenerateNewcomerPotential(CountryRow c)
-        {
-            int potential = ClampInt((int)Math.Round(c.MmaLevel + 6 + NextGaussian(0, 13)), 28, 92);
-            if (_rng.NextDouble() < 0.08)
-                potential = ClampInt(potential + _rng.Next(6, 14), 32, 97);
-
-            return potential;
-        }
-
         private int GenerateNewcomerSkill(int age, int potential)
         {
             double readiness;
@@ -487,27 +602,73 @@ LEFT JOIN Countries c ON c.Id = f.CountryId;";
             return ClampInt(skill, 12, Math.Min(72, potential));
         }
 
+        private PersonalityProfile GeneratePersonalityProfile(CountryRow country, int age, int potential, string style, bool isNewcomer)
+        {
+            var ambition = ClampInt((int)Math.Round(45 + NextGaussian(0, 14) + ((potential - 50) * 0.18) + (isNewcomer ? 5 : 0)), 15, 95);
+            var discipline = ClampInt((int)Math.Round(50 + NextGaussian(0, 13) + (country.WrestlingBias * 0.18) + (country.MmaLevel - 50) * 0.08), 15, 95);
+            var riskTolerance = ClampInt((int)Math.Round(46 + NextGaussian(0, 14)
+                + (style is "Brawler" or "Boxer" or "Counter Striker" ? 10 : 0)
+                + (style is "Pressure Wrestler" or "Submission Hunter" ? 6 : 0)
+                - (style == "Control Wrestler" ? 8 : 0)), 15, 95);
+            var stability = ClampInt((int)Math.Round(52 + NextGaussian(0, 12) + (age >= 30 ? 5 : 0) - (isNewcomer ? 4 : 0)), 15, 95);
+            var showmanship = ClampInt((int)Math.Round(34 + NextGaussian(0, 16)
+                + (style is "Boxer" or "Kickboxer" or "Brawler" ? 10 : 0)
+                + (country.StrikingBias * 0.12)
+                + ((potential - 50) * 0.10)), 5, 95);
+
+            return new PersonalityProfile(ambition, discipline, riskTolerance, stability, showmanship);
+        }
+
         private (int Striking, int Grappling, int Wrestling, int Cardio, int Chin, int FightIQ)
-        GenerateStats(int skill, int potential, CountryRow c, string style)
+        GenerateAttributes(CountryRow c, int skill, int potential, string style)
         {
             int baseStat = skill;
 
             int striking = baseStat;
             int grappling = baseStat;
             int wrestling = baseStat;
+            int cardioBoost = 0;
+            int chinBoost = 0;
+            int fightIQBoost = 0;
 
-            if (style == "Striker") { striking += 10; grappling -= 5; wrestling -= 5; }
-            if (style == "Wrestler") { wrestling += 10; striking -= 5; grappling -= 5; }
-            if (style == "Grappler") { grappling += 10; striking -= 5; wrestling -= 5; }
-            if (style == "AllRounder") { striking += 2; grappling += 2; wrestling += 2; }
+            switch (style)
+            {
+                case "Boxer":
+                    striking += 12; grappling -= 5; wrestling -= 4;
+                    break;
+                case "Kickboxer":
+                    striking += 10; grappling -= 4; wrestling -= 4; cardioBoost += 1;
+                    break;
+                case "Counter Striker":
+                    striking += 9; fightIQBoost = 4; wrestling -= 3;
+                    break;
+                case "Pressure Wrestler":
+                    wrestling += 11; cardioBoost = 4; striking -= 3;
+                    break;
+                case "Control Wrestler":
+                    wrestling += 10; grappling += 4; striking -= 5;
+                    break;
+                case "Submission Hunter":
+                    grappling += 12; wrestling += 3; striking -= 5;
+                    break;
+                case "Scrambler":
+                    grappling += 7; wrestling += 6; cardioBoost = 3; chinBoost = -1;
+                    break;
+                case "Brawler":
+                    striking += 9; chinBoost = 2; cardioBoost = -2; fightIQBoost = -2;
+                    break;
+                default:
+                    striking += 2; grappling += 2; wrestling += 2;
+                    break;
+            }
 
-            wrestling += (int)Math.Round(c.WrestlingBias * 0.2);
-            striking += (int)Math.Round(c.StrikingBias * 0.2);
-            grappling += (int)Math.Round(c.GrapplingBias * 0.2);
+            wrestling += (int)Math.Round(c.WrestlingBias * 0.28) + _rng.Next(-2, 3);
+            striking += (int)Math.Round(c.StrikingBias * 0.28) + _rng.Next(-2, 3);
+            grappling += (int)Math.Round(c.GrapplingBias * 0.28) + _rng.Next(-2, 3);
 
-            int cardio = ClampInt((int)Math.Round(skill + NextGaussian(0, 8)), 10, 99);
-            int chin = ClampInt((int)Math.Round(skill + NextGaussian(0, 10)), 10, 99);
-            int iq = ClampInt((int)Math.Round(skill + NextGaussian(0, 7)), 10, 99);
+            int cardio = ClampInt((int)Math.Round(skill + NextGaussian(0, 8) + (c.WrestlingBias * 0.05) + cardioBoost), 10, 99);
+            int chin = ClampInt((int)Math.Round(skill + NextGaussian(0, 10) + chinBoost), 10, 99);
+            int iq = ClampInt((int)Math.Round(skill + NextGaussian(0, 7) + ((c.WrestlingBias + c.GrapplingBias + c.StrikingBias) / 30.0) + fightIQBoost), 10, 99);
 
             striking = ClampInt((int)Math.Round(striking + NextGaussian(0, 6)), 10, 99);
             grappling = ClampInt((int)Math.Round(grappling + NextGaussian(0, 6)), 10, 99);
@@ -682,16 +843,83 @@ LEFT JOIN Countries c ON c.Id = f.CountryId;";
             return items[items.Length - 1].value;
         }
 
-        private int GeneratePopularity(int skill, int wins, int losses)
+        private int GeneratePopularity(int skill, int wins, int losses, PersonalityProfile personality, int age, bool isNewcomer)
         {
-            int pop = (int)Math.Round(NextGaussian(20, 12) + skill * 0.35 + (wins - losses) * 0.8);
-            return ClampInt(pop, 0, 100);
+            var ageVisibility = age is >= 25 and <= 32 ? 4 : age <= 21 ? -3 : 0;
+            var newcomerPenalty = isNewcomer ? 12 : 0;
+            int pop = (int)Math.Round(
+                NextGaussian(isNewcomer ? 14 : 24, isNewcomer ? 7 : 12)
+                + skill * (isNewcomer ? 0.14 : 0.28)
+                + (wins - losses) * (isNewcomer ? 0.55 : 0.75)
+                + (personality.Showmanship * 0.24)
+                + (personality.Ambition * 0.08)
+                + ageVisibility
+                - newcomerPenalty);
+
+            return ClampInt(pop, 0, isNewcomer ? 42 : 100);
         }
 
-        private int GenerateNewcomerPopularity(int skill, int wins, int losses)
+        private int GenerateMarketability(int popularity, PersonalityProfile personality, string style, int age, int potential, bool isNewcomer)
         {
-            int pop = (int)Math.Round(NextGaussian(6, 5) + skill * 0.12 + wins * 0.7 - losses * 0.3);
-            return ClampInt(pop, 0, 35);
+            var styleBonus = style is "Boxer" or "Kickboxer" or "Brawler" or "Counter Striker" ? 7
+                : style is "Submission Hunter" or "Pressure Wrestler" ? 3
+                : 0;
+            var ageBonus = age is >= 24 and <= 33 ? 5 : age >= 36 ? -4 : 0;
+            var newcomerPenalty = isNewcomer ? 10 : 0;
+
+            return ClampInt((int)Math.Round(
+                16
+                + (popularity * 0.55)
+                + (personality.Showmanship * 0.30)
+                + (personality.RiskTolerance * 0.08)
+                + ((potential - 50) * 0.10)
+                + styleBonus
+                + ageBonus
+                - newcomerPenalty), 10, 99);
+        }
+
+        private int GenerateMomentum(int skill, int potential, int age, int wins, int losses, bool isNewcomer)
+        {
+            var upside = Math.Max(0, potential - skill);
+            var youthPush = age <= 24 ? 6 : age >= 35 ? -4 : 0;
+            var newcomerPush = isNewcomer ? 4 : 0;
+            return ClampInt((int)Math.Round(
+                42
+                + NextGaussian(0, 8)
+                + (upside * 0.35)
+                + ((wins - losses) * 0.8)
+                + youthPush
+                + newcomerPush), 8, 92);
+        }
+
+        private int GenerateReliability(PersonalityProfile personality, int age, int wins, int losses)
+        {
+            return ClampInt((int)Math.Round(
+                42
+                + (personality.Discipline * 0.32)
+                + (personality.Stability * 0.22)
+                - (personality.RiskTolerance * 0.12)
+                + (age >= 29 ? 3 : 0)
+                + (wins >= losses ? 2 : -1)
+                + NextGaussian(0, 5)), 18, 95);
+        }
+
+        private int GenerateMediaHeat(int popularity, int marketability, int momentum, PersonalityProfile personality, string style, bool isNewcomer)
+        {
+            var styleBonus = style is "Boxer" or "Kickboxer" or "Brawler" ? 6
+                : style is "Counter Striker" ? 4
+                : 0;
+            var newcomerPenalty = isNewcomer ? 8 : 0;
+
+            return ClampInt((int)Math.Round(
+                10
+                + (popularity * 0.28)
+                + (marketability * 0.24)
+                + (momentum * 0.20)
+                + (personality.Showmanship * 0.18)
+                + styleBonus
+                - newcomerPenalty
+                + NextGaussian(0, 4)), 5, 95);
         }
 
         // ---------------- Insert ----------------
@@ -699,6 +927,7 @@ LEFT JOIN Countries c ON c.Id = f.CountryId;";
         private void InsertFighter(
             SqliteConnection conn, SqliteTransaction tx,
             string first, string last, int countryId,
+            string culturalGroup,
             int age, string weightClass,
             int primeStart, int primeEnd,
             int potential, int skill,
@@ -706,7 +935,17 @@ LEFT JOIN Countries c ON c.Id = f.CountryId;";
             string style,
             int wins, int losses, int draws,
             int koWins, int subWins, int decWins,
-            int popularity, int retired,
+            int popularity,
+            int marketability,
+            int momentum,
+            int reliabilityScore,
+            int mediaHeat,
+            int ambition,
+            int discipline,
+            int riskTolerance,
+            int stability,
+            int showmanship,
+            int retired,
             int? promotionId,
             int salary,
             int contractFightsRemaining,
@@ -720,7 +959,7 @@ LEFT JOIN Countries c ON c.Id = f.CountryId;";
 
             cmd.CommandText = @"
 INSERT INTO Fighters
-(FirstName, LastName, CountryId,
+(FirstName, LastName, CountryId, CulturalGroup,
  Age, WeightClass,
  PrimeAgeStart, PrimeAgeEnd,
  Potential, Skill,
@@ -728,10 +967,12 @@ INSERT INTO Fighters
  Style,
  Wins, Losses, Draws,
  KOWins, SubWins, DecWins,
- Popularity, Retired,
+ Popularity, Marketability, Momentum, ReliabilityScore, MediaHeat,
+ Ambition, Discipline, RiskTolerance, Stability, Showmanship,
+ Retired,
  PromotionId, Salary, ContractFightsRemaining, TotalFightsInContract, ContractStatus, NegotiationTurnsRemaining)
 VALUES
-($FirstName, $LastName, $CountryId,
+($FirstName, $LastName, $CountryId, $CulturalGroup,
  $Age, $WeightClass,
  $PrimeAgeStart, $PrimeAgeEnd,
  $Potential, $Skill,
@@ -739,13 +980,16 @@ VALUES
  $Style,
  $Wins, $Losses, $Draws,
  $KOWins, $SubWins, $DecWins,
- $Popularity, $Retired,
+ $Popularity, $Marketability, $Momentum, $ReliabilityScore, $MediaHeat,
+ $Ambition, $Discipline, $RiskTolerance, $Stability, $Showmanship,
+ $Retired,
  $PromotionId, $Salary, $ContractFightsRemaining, $TotalFightsInContract, $ContractStatus, $NegotiationTurnsRemaining);
 ";
 
             cmd.Parameters.AddWithValue("$FirstName", first);
             cmd.Parameters.AddWithValue("$LastName", last);
             cmd.Parameters.AddWithValue("$CountryId", countryId);
+            cmd.Parameters.AddWithValue("$CulturalGroup", culturalGroup);
             cmd.Parameters.AddWithValue("$Age", age);
             cmd.Parameters.AddWithValue("$WeightClass", weightClass);
             cmd.Parameters.AddWithValue("$PrimeAgeStart", primeStart);
@@ -766,6 +1010,15 @@ VALUES
             cmd.Parameters.AddWithValue("$SubWins", subWins);
             cmd.Parameters.AddWithValue("$DecWins", decWins);
             cmd.Parameters.AddWithValue("$Popularity", popularity);
+            cmd.Parameters.AddWithValue("$Marketability", marketability);
+            cmd.Parameters.AddWithValue("$Momentum", momentum);
+            cmd.Parameters.AddWithValue("$ReliabilityScore", reliabilityScore);
+            cmd.Parameters.AddWithValue("$MediaHeat", mediaHeat);
+            cmd.Parameters.AddWithValue("$Ambition", ambition);
+            cmd.Parameters.AddWithValue("$Discipline", discipline);
+            cmd.Parameters.AddWithValue("$RiskTolerance", riskTolerance);
+            cmd.Parameters.AddWithValue("$Stability", stability);
+            cmd.Parameters.AddWithValue("$Showmanship", showmanship);
             cmd.Parameters.AddWithValue("$Retired", retired);
 
             if (promotionId.HasValue) cmd.Parameters.AddWithValue("$PromotionId", promotionId.Value);
@@ -782,22 +1035,19 @@ VALUES
 
         // ---------------- Utils ----------------
 
-        private string WeightedPick(List<NameWeight> list)
+        private string? WeightedPickOrNull(List<NameWeight> list)
         {
-            if (list == null || list.Count == 0) return "Unknown";
+            if (list == null || list.Count == 0)
+                return null;
 
-            int total = 0;
-            for (int i = 0; i < list.Count; i++) total += Math.Max(0, list[i].Weight);
-            if (total <= 0) return list[0].Name;
-
-            int roll = _rng.Next(total);
-            int cum = 0;
-            for (int i = 0; i < list.Count; i++)
+            var weighted = new List<WeightedValue<string>>(list.Count);
+            for (var i = 0; i < list.Count; i++)
             {
-                cum += Math.Max(0, list[i].Weight);
-                if (roll < cum) return list[i].Name;
+                if (list[i].Weight > 0 && !string.IsNullOrWhiteSpace(list[i].Name))
+                    weighted.Add(new WeightedValue<string>(list[i].Name, list[i].Weight));
             }
-            return list[list.Count - 1].Name;
+
+            return WeightedRandomPicker.PickOrDefault(weighted, _rng, null!);
         }
 
         private int ClampInt(int v, int min, int max) => Math.Min(max, Math.Max(min, v));
@@ -838,6 +1088,13 @@ VALUES
             public string Name { get; set; } = "";
             public int Weight { get; set; }
         }
+
+        private sealed record PersonalityProfile(
+            int Ambition,
+            int Discipline,
+            int RiskTolerance,
+            int Stability,
+            int Showmanship);
      
     }
 }

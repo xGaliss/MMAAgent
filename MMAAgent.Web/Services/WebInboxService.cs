@@ -50,6 +50,15 @@ public sealed class WebInboxService
         };
     }
 
+    public async Task<IReadOnlyList<DecisionEventVm>> LoadPendingDecisionsAsync()
+    {
+        var agent = await _agentProfileRepository.GetAsync();
+        if (agent is null)
+            return Array.Empty<DecisionEventVm>();
+
+        return await LoadDecisionEventsAsync(agent.Id);
+    }
+
     public async Task MarkAllReadAsync()
     {
         var agent = await _agentProfileRepository.GetAsync();
@@ -243,9 +252,15 @@ WHERE Id = $decisionId;";
             case "FightWeekApproach":
                 if (decision.FightId is int fightId && decision.FighterId is int fighterId)
                 {
-                    var performanceModifier = string.Equals(optionKey, "QuietCamp", StringComparison.OrdinalIgnoreCase) ? 1 : -1;
-                    var riskModifier = string.Equals(optionKey, "QuietCamp", StringComparison.OrdinalIgnoreCase) ? -1 : 1;
-                    var decisionNotes = string.Equals(optionKey, "QuietCamp", StringComparison.OrdinalIgnoreCase)
+                    var personality = await LoadDecisionPersonalityAsync(conn, tx, fighterId);
+                    var quietCamp = string.Equals(optionKey, "QuietCamp", StringComparison.OrdinalIgnoreCase);
+                    var performanceModifier = quietCamp
+                        ? 1 + (personality.Discipline >= 70 ? 1 : 0) + (personality.Stability >= 70 ? 1 : 0)
+                        : -1 + (personality.Showmanship >= 70 ? 1 : 0) + (personality.Ambition >= 70 ? 1 : 0);
+                    var riskModifier = quietCamp
+                        ? -1 - (personality.Stability >= 70 ? 1 : 0)
+                        : 1 + (personality.RiskTolerance >= 70 ? 1 : 0);
+                    var decisionNotes = quietCamp
                         ? "The team shut out the noise and kept the fighter focused through fight week."
                         : "The team leaned into the spotlight and accepted a little more volatility for extra attention.";
 
@@ -269,14 +284,18 @@ WHERE FightId = $fightId
                     cmd.Parameters.AddWithValue("$fighterId", fighterId);
                     await cmd.ExecuteNonQueryAsync();
 
-                    if (!string.Equals(optionKey, "QuietCamp", StringComparison.OrdinalIgnoreCase))
+                    if (!quietCamp)
                     {
                         await ExecAsync(conn, tx, @"
 UPDATE Fighters
-SET MediaHeat = MIN(99, COALESCE(MediaHeat, 20) + 5),
-    Marketability = MIN(99, COALESCE(Marketability, 50) + 3),
-    Momentum = MIN(99, COALESCE(Momentum, 50) + 1)
-WHERE Id = $fighterId;", ("$fighterId", fighterId));
+SET MediaHeat = MIN(99, COALESCE(MediaHeat, 20) + $heatGain),
+    Marketability = MIN(99, COALESCE(Marketability, 50) + $marketabilityGain),
+    Momentum = MIN(99, COALESCE(Momentum, 50) + $momentumGain)
+WHERE Id = $fighterId;",
+                            ("$fighterId", fighterId),
+                            ("$heatGain", 4 + (personality.Showmanship >= 70 ? 2 : 0)),
+                            ("$marketabilityGain", 2 + (personality.Showmanship >= 75 ? 2 : 0)),
+                            ("$momentumGain", personality.Ambition >= 68 ? 2 : 1));
                     }
 
                     await InsertDecisionMessageAsync(conn, tx, agentId, "FightWeekDecision", "Fight week call made", decisionNotes);
@@ -287,12 +306,17 @@ WHERE Id = $fighterId;", ("$fighterId", fighterId));
             case "WeightCutCall":
                 if (decision.FightId is int weightCutFightId && decision.FighterId is int fighterId2)
                 {
+                    var personality = await LoadDecisionPersonalityAsync(conn, tx, fighterId2);
                     var protect = string.Equals(optionKey, "ProtectFighter", StringComparison.OrdinalIgnoreCase);
-                    var performanceModifier = protect ? 1 : -2;
-                    var riskModifier = protect ? -2 : 3;
+                    var performanceModifier = protect
+                        ? 1 + (personality.Discipline >= 68 ? 1 : 0)
+                        : -2 + (personality.RiskTolerance >= 75 ? 1 : 0);
+                    var riskModifier = protect
+                        ? -2 - (personality.Stability >= 68 ? 1 : 0)
+                        : 3 + (personality.RiskTolerance >= 72 ? 1 : 0);
                     var decisionNotes = protect
-                        ? "The team eased the final cut and prioritized recovery for fight night."
-                        : "The team forced the cut all the way through to chase the event upside.";
+                        ? "The team protected the cut, trimmed the extra stress and accepted a slightly safer approach."
+                        : "The team forced the cut line hard, gambling on professionalism and a little more chaos.";
 
                     using var cmd = conn.CreateCommand();
                     cmd.Transaction = tx;
@@ -321,9 +345,12 @@ WHERE FightId = $fightId
                     {
                         await ExecAsync(conn, tx, @"
 UPDATE Fighters
-SET MediaHeat = MIN(99, COALESCE(MediaHeat, 20) + 3),
-    ReliabilityScore = MAX(15, COALESCE(ReliabilityScore, 60) - 2)
-WHERE Id = $fighterId;", ("$fighterId", fighterId2));
+SET MediaHeat = MIN(99, COALESCE(MediaHeat, 20) + $heatGain),
+    ReliabilityScore = MAX(15, COALESCE(ReliabilityScore, 60) - $reliabilityLoss)
+WHERE Id = $fighterId;",
+                            ("$fighterId", fighterId2),
+                            ("$heatGain", 2 + (personality.Showmanship >= 70 ? 2 : 0)),
+                            ("$reliabilityLoss", personality.Discipline >= 70 ? 1 : 2));
                     }
 
                     await InsertDecisionMessageAsync(conn, tx, agentId, "WeightCutDecision", "Weight cut decision made", decisionNotes);
@@ -334,6 +361,7 @@ WHERE Id = $fighterId;", ("$fighterId", fighterId2));
             case "SponsorSpotlight":
                 if (decision.FighterId is int fighterId3)
                 {
+                    var personality = await LoadDecisionPersonalityAsync(conn, tx, fighterId3);
                     var adCampaign = string.Equals(optionKey, "AdCampaign", StringComparison.OrdinalIgnoreCase);
                     if (adCampaign)
                     {
@@ -344,10 +372,14 @@ WHERE Id = $agentId;", ("$agentId", agentId));
 
                         await ExecAsync(conn, tx, @"
 UPDATE Fighters
-SET MediaHeat = MIN(99, COALESCE(MediaHeat, 20) + 6),
-    Marketability = MIN(99, COALESCE(Marketability, 50) + 5),
-    Momentum = MIN(99, COALESCE(Momentum, 50) + 2)
-WHERE Id = $fighterId;", ("$fighterId", fighterId3));
+SET MediaHeat = MIN(99, COALESCE(MediaHeat, 20) + $heatGain),
+    Marketability = MIN(99, COALESCE(Marketability, 50) + $marketabilityGain),
+    Momentum = MIN(99, COALESCE(Momentum, 50) + $momentumGain)
+WHERE Id = $fighterId;",
+                            ("$fighterId", fighterId3),
+                            ("$heatGain", 4 + (personality.Showmanship >= 70 ? 3 : 1)),
+                            ("$marketabilityGain", 3 + (personality.Showmanship >= 75 ? 3 : 1)),
+                            ("$momentumGain", 1 + (personality.Ambition >= 68 ? 2 : 1)));
 
                         await ExecAsync(conn, tx, @"
 INSERT INTO AgentTransactions (AgentId, TxDate, Amount, TxType, Notes)
@@ -358,22 +390,177 @@ VALUES ($agentId, date('now'), 2200, 'SponsorDeal', 'Commercial activation accep
                     {
                         await ExecAsync(conn, tx, @"
 UPDATE FighterStates
-SET Morale = MIN(95, COALESCE(Morale, 50) + 4),
-    Sharpness = MIN(95, COALESCE(Sharpness, 50) + 3)
-WHERE FighterId = $fighterId;", ("$fighterId", fighterId3));
+SET Morale = MIN(95, COALESCE(Morale, 50) + $moraleGain),
+    Sharpness = MIN(95, COALESCE(Sharpness, 50) + $sharpnessGain)
+WHERE FighterId = $fighterId;",
+                            ("$fighterId", fighterId3),
+                            ("$moraleGain", personality.Stability >= 68 ? 5 : 4),
+                            ("$sharpnessGain", personality.Discipline >= 68 ? 4 : 3));
                     }
 
                     var summary = adCampaign
-                        ? "The fighter took the ad spot, bringing money and visibility at the cost of a noisier week."
+                        ? "The fighter took the ad spot, bringing money and visibility while making camp a little louder."
                         : "The team skipped the commercial noise and kept the fighter locked into preparation.";
 
                     await InsertDecisionMessageAsync(conn, tx, agentId, "SponsorDecision", "Commercial decision made", summary);
                     return summary;
                 }
                 break;
+
+            case "PressInterview":
+                if (decision.FighterId is int fighterId4)
+                {
+                    var personality = await LoadDecisionPersonalityAsync(conn, tx, fighterId4);
+                    var stayMeasured = string.Equals(optionKey, "StayMeasured", StringComparison.OrdinalIgnoreCase);
+                    if (stayMeasured)
+                    {
+                        await ExecAsync(conn, tx, @"
+UPDATE Fighters
+SET ReliabilityScore = MIN(99, COALESCE(ReliabilityScore, 60) + $reliabilityGain),
+    Popularity = MIN(100, COALESCE(Popularity, 50) + 1),
+    MediaHeat = MIN(99, COALESCE(MediaHeat, 20) + 1),
+    Momentum = MIN(99, COALESCE(Momentum, 50) + 1)
+WHERE Id = $fighterId;",
+                            ("$fighterId", fighterId4),
+                            ("$reliabilityGain", personality.Stability >= 68 ? 4 : 3));
+
+                        await ExecAsync(conn, tx, @"
+UPDATE FighterStates
+SET Morale = MIN(95, COALESCE(Morale, 50) + 2)
+WHERE FighterId = $fighterId;", ("$fighterId", fighterId4));
+
+                        await ExecAsync(conn, tx, @"
+UPDATE AgentProfile
+SET Reputation = MIN(99, COALESCE(Reputation, 50) + 1)
+WHERE Id = $agentId;", ("$agentId", agentId));
+                    }
+                    else
+                    {
+                        await ExecAsync(conn, tx, @"
+UPDATE Fighters
+SET MediaHeat = MIN(99, COALESCE(MediaHeat, 20) + $heatGain),
+    Marketability = MIN(99, COALESCE(Marketability, 50) + $marketabilityGain),
+    Momentum = MIN(99, COALESCE(Momentum, 50) + $momentumGain),
+    ReliabilityScore = MAX(15, COALESCE(ReliabilityScore, 60) - $reliabilityLoss)
+WHERE Id = $fighterId;",
+                            ("$fighterId", fighterId4),
+                            ("$heatGain", 5 + (personality.Showmanship >= 72 ? 3 : 0)),
+                            ("$marketabilityGain", 3 + (personality.Showmanship >= 72 ? 2 : 0)),
+                            ("$momentumGain", 2 + (personality.Ambition >= 68 ? 1 : 0)),
+                            ("$reliabilityLoss", personality.Stability >= 70 ? 2 : 3));
+                    }
+
+                    var summary = stayMeasured
+                        ? "The interview stayed measured. The fighter gave off a controlled, professional tone and the room stayed calmer."
+                        : "The fighter called a louder shot in the media. Attention spiked, but so did the noise around the camp.";
+
+                    await InsertDecisionMessageAsync(conn, tx, agentId, "PressDecision", "Media decision made", summary);
+                    return summary;
+                }
+                break;
+
+            case "GymOpportunity":
+                if (decision.FighterId is int fighterId5)
+                {
+                    var personality = await LoadDecisionPersonalityAsync(conn, tx, fighterId5);
+                    var bringSpecialists = string.Equals(optionKey, "BringSpecialists", StringComparison.OrdinalIgnoreCase);
+                    if (bringSpecialists)
+                    {
+                        await ExecAsync(conn, tx, @"
+UPDATE AgentProfile
+SET Money = COALESCE(Money, 0) - 2400
+WHERE Id = $agentId;", ("$agentId", agentId));
+
+                        await ExecAsync(conn, tx, @"
+INSERT INTO AgentTransactions (AgentId, TxDate, Amount, TxType, Notes)
+VALUES ($agentId, date('now'), -2400, 'GymUpgrade', 'Outside specialists brought into camp.');",
+                            ("$agentId", agentId));
+
+                        await ExecAsync(conn, tx, @"
+UPDATE FighterStates
+SET CampQuality = MIN(95, COALESCE(CampQuality, 50) + $campGain),
+    Sharpness = MIN(95, COALESCE(Sharpness, 50) + $sharpnessGain),
+    Energy = MAX(15, COALESCE(Energy, 50) - $energyCost)
+WHERE FighterId = $fighterId;",
+                            ("$fighterId", fighterId5),
+                            ("$campGain", 5 + (personality.Discipline >= 68 ? 2 : 1)),
+                            ("$sharpnessGain", 3 + (personality.Ambition >= 68 ? 2 : 1)),
+                            ("$energyCost", personality.Stability >= 70 ? 1 : 2));
+
+                        if (decision.FightId is int gymFightId)
+                        {
+                            await ExecAsync(conn, tx, @"
+UPDATE FightPreparations
+SET ManagerDecisionType = 'GymOpportunity',
+    ManagerDecisionChoice = $choice,
+    PerformanceModifier = COALESCE(PerformanceModifier, 0) + $performanceModifier,
+    RiskModifier = COALESCE(RiskModifier, 0) + $riskModifier,
+    DecisionNotes = CASE
+        WHEN COALESCE(DecisionNotes, '') = '' THEN $notes
+        ELSE DecisionNotes || ' ' || $notes
+    END,
+    LastUpdatedDate = COALESCE(LastUpdatedDate, date('now'))
+WHERE FightId = $fightId
+  AND FighterId = $fighterId;", 
+                                ("$choice", optionKey),
+                                ("$performanceModifier", personality.Discipline >= 68 ? 3 : 2),
+                                ("$riskModifier", personality.Stability >= 68 ? 0 : 1),
+                                ("$notes", "Outside specialists were brought in late to sharpen the camp."),
+                                ("$fightId", gymFightId),
+                                ("$fighterId", fighterId5));
+                        }
+                    }
+                    else
+                    {
+                        await ExecAsync(conn, tx, @"
+UPDATE FighterStates
+SET Morale = MIN(95, COALESCE(Morale, 50) + 2),
+    Energy = MIN(95, COALESCE(Energy, 50) + 1)
+WHERE FighterId = $fighterId;", ("$fighterId", fighterId5));
+                    }
+
+                    var summary = bringSpecialists
+                        ? "You paid for outside specialists. Camp quality spiked, but it cost money and added a bit more intensity."
+                        : "You kept the core routine together. The room stayed stable, and the fighter held rhythm without extra expense.";
+
+                    await InsertDecisionMessageAsync(conn, tx, agentId, "GymDecision", "Camp decision made", summary);
+                    return summary;
+                }
+                break;
         }
 
         return "Decision recorded.";
+    }
+
+    private static async Task<DecisionPersonalitySnapshot> LoadDecisionPersonalityAsync(
+        SqliteConnection conn,
+        SqliteTransaction tx,
+        int fighterId)
+    {
+        using var cmd = conn.CreateCommand();
+        cmd.Transaction = tx;
+        cmd.CommandText = @"
+SELECT
+    COALESCE(Ambition, 50),
+    COALESCE(Discipline, 50),
+    COALESCE(RiskTolerance, 50),
+    COALESCE(Stability, 50),
+    COALESCE(Showmanship, 40)
+FROM Fighters
+WHERE Id = $fighterId
+LIMIT 1;";
+        cmd.Parameters.AddWithValue("$fighterId", fighterId);
+
+        using var reader = await cmd.ExecuteReaderAsync();
+        if (!await reader.ReadAsync())
+            return new DecisionPersonalitySnapshot(50, 50, 50, 50, 40);
+
+        return new DecisionPersonalitySnapshot(
+            Convert.ToInt32(reader.GetValue(0)),
+            Convert.ToInt32(reader.GetValue(1)),
+            Convert.ToInt32(reader.GetValue(2)),
+            Convert.ToInt32(reader.GetValue(3)),
+            Convert.ToInt32(reader.GetValue(4)));
     }
 
     private async Task<IReadOnlyList<FightOfferVm>> LoadFightOffersAsync(int agentId)
@@ -453,7 +640,13 @@ SELECT co.Id,
        co.WeeksToRespond,
        co.Status,
        co.SourceType,
-       co.Notes
+       co.Notes,
+       COALESCE(f.Age, 28) AS FighterAge,
+       COALESCE(f.Popularity, 50) AS FighterPopularity,
+       COALESCE(f.ReliabilityScore, 60) AS FighterReliability,
+       COALESCE(f.Marketability, 50) AS FighterMarketability,
+       COALESCE(p.Prestige, 50) AS PromotionPrestige,
+       COALESCE(p.Budget, 0) AS PromotionBudget
 FROM ContractOffers co
 JOIN ManagedFighters mf ON mf.FighterId = co.FighterId AND mf.AgentId = $agentId AND COALESCE(mf.IsActive, 1) = 1
 JOIN Fighters f ON f.Id = co.FighterId
@@ -483,7 +676,13 @@ ORDER BY CASE WHEN co.Status = 'Pending' THEN 0 ELSE 1 END,
                     Convert.ToInt32(reader["OfferedFights"]),
                     Convert.ToInt32(reader["BasePurse"]),
                     Convert.ToInt32(reader["WinBonus"]),
-                    reader["SourceType"]?.ToString() ?? "")
+                    reader["SourceType"]?.ToString() ?? "",
+                    Convert.ToInt32(reader["FighterAge"]),
+                    Convert.ToInt32(reader["FighterPopularity"]),
+                    Convert.ToInt32(reader["FighterReliability"]),
+                    Convert.ToInt32(reader["FighterMarketability"]),
+                    Convert.ToInt32(reader["PromotionPrestige"]),
+                    Convert.ToInt32(reader["PromotionBudget"]))
             });
         }
 
@@ -531,13 +730,35 @@ ORDER BY Id DESC;";
         return items;
     }
 
-    private static string BuildContractRecommendation(int offeredFights, int basePurse, int winBonus, string sourceType)
+    private static string BuildContractRecommendation(
+        int offeredFights,
+        int basePurse,
+        int winBonus,
+        string sourceType,
+        int fighterAge,
+        int fighterPopularity,
+        int fighterReliability,
+        int fighterMarketability,
+        int promotionPrestige,
+        int promotionBudget)
     {
-        if (offeredFights >= 4)
+        if (fighterAge >= 33 && offeredFights >= 4)
             return "Security";
+
+        if (promotionPrestige >= 78 && fighterPopularity < 62 && fighterMarketability < 62)
+            return "Exposure";
 
         if (basePurse >= 12000 || winBonus >= 4500)
             return "Money";
+
+        if (fighterReliability < 52 && promotionPrestige >= 70)
+            return "Take as-is";
+
+        if (promotionBudget < 240000 && (basePurse >= 9000 || winBonus >= 3200))
+            return "Take as-is";
+
+        if (offeredFights >= 4)
+            return "Security";
 
         if (string.Equals(sourceType, "Renewal", StringComparison.OrdinalIgnoreCase))
             return "Stability";
@@ -583,4 +804,11 @@ VALUES ($agentId, $messageType, $subject, $body, date('now'), 0, 0, 0);";
         string DecisionType,
         string OptionAKey,
         string OptionBKey);
+
+    private sealed record DecisionPersonalitySnapshot(
+        int Ambition,
+        int Discipline,
+        int RiskTolerance,
+        int Stability,
+        int Showmanship);
 }

@@ -114,6 +114,9 @@ public sealed class WeeklyWorldUpdateService : IWeeklyWorldUpdateService
 
         var duePromotions = await _scheduleRepository.GetDueAsync(absoluteWeek);
         var simulatedEvents = 0;
+        WorldEcosystemServiceSqlite.AnnualWorldShiftSummary? annualShift = null;
+        var annualNewcomers = 0;
+        var annualProspectDebuts = 0;
 
         foreach (var promo in duePromotions)
         {
@@ -126,9 +129,10 @@ public sealed class WeeklyWorldUpdateService : IWeeklyWorldUpdateService
 
         if (state.CurrentYear > previousYear)
         {
-            await _worldEcosystemService.ApplyAnnualEvolutionAsync(state.CurrentYear, cancellationToken);
+            annualShift = await _worldEcosystemService.ApplyAnnualEvolutionAsync(state.CurrentYear, cancellationToken);
             _worldFighterGenerator.SetSeed(ComputeAnnualIntakeSeed(worldSeed, state.CurrentYear));
-            _worldFighterGenerator.GenerateAnnualNewcomers();
+            annualNewcomers = _worldFighterGenerator.GenerateAnnualNewcomers();
+            annualProspectDebuts = await _worldEcosystemService.PromoteAnnualProspectClassAsync(annualNewcomers, cancellationToken);
         }
 
         await CleanupStaleScheduledFightsAsync(state.CurrentDate, cancellationToken);
@@ -157,6 +161,18 @@ WHERE CreatedDate = $date
         {
             cmd.CommandText = "SELECT Name FROM Events ORDER BY Id DESC LIMIT 1;";
             headline = (await cmd.ExecuteScalarAsync(cancellationToken))?.ToString();
+        }
+
+        if (annualShift is not null)
+        {
+            await InsertAnnualWorldShiftMessageAsync(
+                state.CurrentDate,
+                state.CurrentYear,
+                annualShift,
+                annualNewcomers,
+                annualProspectDebuts,
+                cancellationToken);
+            newMessages += 1;
         }
 
         return new WeeklyWorldUpdateSummary(
@@ -235,6 +251,37 @@ END;";
             cmd.Parameters.AddWithValue("$currentDate", currentDate);
             await cmd.ExecuteNonQueryAsync(cancellationToken);
         }
+    }
+
+    private async Task InsertAnnualWorldShiftMessageAsync(
+        string currentDate,
+        int currentYear,
+        WorldEcosystemServiceSqlite.AnnualWorldShiftSummary annualShift,
+        int annualNewcomers,
+        int annualProspectDebuts,
+        CancellationToken cancellationToken)
+    {
+        using var conn = _factory.CreateConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = @"
+INSERT INTO InboxMessages (AgentId, MessageType, Subject, Body, CreatedDate, IsRead, IsArchived, IsDeleted)
+SELECT
+    ap.Id,
+    'AnnualWorldShift',
+    $subject,
+    $body,
+    $createdDate,
+    0,
+    0,
+    0
+FROM AgentProfile ap
+ORDER BY ap.Id
+LIMIT 1;";
+        cmd.Parameters.AddWithValue("$subject", $"Year {currentYear} world shift");
+        cmd.Parameters.AddWithValue("$body",
+            $"The annual reset hit the universe hard: {annualShift.Retirements} retirements, {annualNewcomers} newcomers, {annualProspectDebuts} fast-rising prospects, {annualShift.VeteranDeclines} veteran decline cases and {annualShift.DivisionsReshuffled} divisions meaningfully reshuffled.");
+        cmd.Parameters.AddWithValue("$createdDate", currentDate);
+        await cmd.ExecuteNonQueryAsync(cancellationToken);
     }
 
 }

@@ -1,0 +1,128 @@
+@page "/worldfeed"
+@rendermode InteractiveServer
+@using MMAAgent.Web.Models
+@using MMAAgent.Web.Services
+
+@inject WebWorldFeedService WorldFeedService
+
+<PageTitle>World Feed - MMA Agent</PageTitle>
+
+<div class="page-header">
+    <div>
+        <h1>World Feed</h1>
+        <p class="muted-text">Headlines, title movement and live narratives from across the MMA universe.</p>
+    </div>
+</div>
+
+@if (_error is not null)
+{
+    <div class="panel-card error-panel">@_error</div>
+}
+else if (_loading)
+{
+    <div class="panel-card">Loading world feed...</div>
+}
+else
+{
+    <div class="dashboard-live-grid">
+        <section class="panel-card" style="grid-column: span 2;">
+            <div class="table-toolbar">
+                <div class="toolbar-title">Latest Headlines</div>
+                <div class="toolbar-subtitle">@_feed.Headlines.Count items</div>
+            </div>
+
+            @if (_feed.Headlines.Count == 0)
+            {
+                <div class="muted-text">No world headlines yet.</div>
+            }
+            else
+            {
+                <div class="dashboard-list">
+                    @foreach (var item in _feed.Headlines)
+                    {
+                        <article class="dashboard-list-item world-feed-item world-feed-@item.Tone">
+                            <div class="world-feed-top">
+                                <span class="message-badge">@item.Bucket</span>
+                                @if (!string.IsNullOrWhiteSpace(item.Date))
+                                {
+                                    <span class="message-date">@item.Date</span>
+                                }
+                            </div>
+
+                            @if (!string.IsNullOrWhiteSpace(item.LinkHref))
+                            {
+                                <a class="world-feed-headline fighter-link" href="@item.LinkHref">@item.Headline</a>
+                            }
+                            else
+                            {
+                                <div class="world-feed-headline">@item.Headline</div>
+                            }
+
+                            <div class="muted-text">@item.Summary</div>
+                        </article>
+                    }
+                </div>
+            }
+        </section>
+
+        <section class="panel-card">
+            <div class="table-toolbar">
+                <div class="toolbar-title">Live Storylines</div>
+                <div class="toolbar-subtitle">@_feed.Storylines.Count items</div>
+            </div>
+
+            @if (_feed.Storylines.Count == 0)
+            {
+                <div class="muted-text">No active storylines right now.</div>
+            }
+            else
+            {
+                <div class="dashboard-list">
+                    @foreach (var item in _feed.Storylines)
+                    {
+                        <article class="dashboard-list-item world-feed-item world-feed-@item.Tone">
+                            <div class="world-feed-top">
+                                <span class="message-badge">@item.Bucket</span>
+                            </div>
+
+                            @if (!string.IsNullOrWhiteSpace(item.LinkHref))
+                            {
+                                <a class="world-feed-headline fighter-link" href="@item.LinkHref">@item.Headline</a>
+                            }
+                            else
+                            {
+                                <div class="world-feed-headline">@item.Headline</div>
+                            }
+
+                            <div class="muted-text">@item.Summary</div>
+                        </article>
+                    }
+                </div>
+            }
+        </section>
+    </div>
+}
+
+@code {
+    private WorldFeedVm _feed = new();
+    private bool _loading = true;
+    private string? _error;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            _loading = true;
+            _error = null;
+            _feed = await WorldFeedService.LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            _error = ex.ToString();
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+}

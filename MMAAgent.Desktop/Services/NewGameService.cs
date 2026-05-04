@@ -34,7 +34,7 @@ namespace MMAAgent.Desktop.Services
             _scheduleSeeder = scheduleSeeder;
         }
 
-        public string CreateAndLoadNewGame(string? saveName = null, int fighterCount = 800)
+        public string CreateAndLoadNewGame(string? saveName = null, int fighterCount = 3000)
         {
             // 1) crear save db desde plantilla
             var templateDbPath = System.IO.Path.Combine(

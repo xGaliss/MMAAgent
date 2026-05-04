@@ -7,8 +7,12 @@ public sealed record RosterFilterOptions(
 public sealed record RosterListItemVm(
     int Id,
     string Name,
+    int Age,
     string WeightClass,
     string CountryName,
+    string? CountryFlagUrl,
+    string PromotionName,
+    string Status,
     int Wins,
     int Losses,
     int Draws,

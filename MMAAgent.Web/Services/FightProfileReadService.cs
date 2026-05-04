@@ -1,6 +1,7 @@
 ﻿using Microsoft.Data.Sqlite;
 using MMAAgent.Application.Abstractions;
 using MMAAgent.Infrastructure.Persistence.Sqlite;
+using MMAAgent.Web.Helpers;
 using MMAAgent.Web.Models;
 using System.Linq;
 
@@ -65,6 +66,11 @@ SELECT
     COALESCE(f.DamageMiles, 0) AS DamageMiles,
     COALESCE(f.WeightMissCount, 0) AS WeightMissCount,
     COALESCE(f.CampWithdrawalCount, 0) AS CampWithdrawalCount,
+    COALESCE(f.Ambition, 50) AS Ambition,
+    COALESCE(f.Discipline, 50) AS Discipline,
+    COALESCE(f.RiskTolerance, 50) AS RiskTolerance,
+    COALESCE(f.Stability, 50) AS Stability,
+    COALESCE(f.Showmanship, 40) AS Showmanship,
     f.Striking,
     f.Grappling,
     f.Wrestling,
@@ -72,6 +78,7 @@ SELECT
     f.Chin,
     f.FightIQ,
     COALESCE(sk.Confidence, 40) AS ScoutConfidence,
+    COALESCE(sa.Status, '') AS ScoutAssignmentStatus,
     COALESCE(sk.EstimatedSkillMin, MAX(1, f.Skill - 15)) AS EstimatedSkillMin,
     COALESCE(sk.EstimatedSkillMax, MIN(99, f.Skill + 15)) AS EstimatedSkillMax,
     COALESCE(sk.EstimatedPotentialMin, MAX(1, f.Potential - 18)) AS EstimatedPotentialMin,
@@ -101,6 +108,17 @@ SELECT
     COALESCE(pr.RankPosition, 0) AS RankPosition,
     CASE WHEN t.ChampionFighterId = f.Id THEN 1 ELSE 0 END AS IsChampion,
     (
+        SELECT COALESCE(ofs.BaseStyle, 'All-Rounder') || ' · ' || COALESCE(ofs.TacticalStyle, 'Measured')
+        FROM Fights sf
+        JOIN Fighters op ON op.Id = CASE WHEN sf.FighterAId = f.Id THEN sf.FighterBId ELSE sf.FighterAId END
+        LEFT JOIN FighterStyles ofs ON ofs.FighterId = op.Id
+        WHERE sf.Method = 'Scheduled'
+          AND (sf.FighterAId = f.Id OR sf.FighterBId = f.Id)
+          AND COALESCE(sf.EventDate, '9999-12-31') > COALESCE((SELECT CurrentDate FROM GameState LIMIT 1), '0001-01-01')
+        ORDER BY sf.EventDate, sf.Id
+        LIMIT 1
+    ) AS ScheduledOpponentStyleSummary,
+    (
         SELECT op.FirstName || ' ' || op.LastName
         FROM Fights sf
         JOIN Fighters op ON op.Id = CASE WHEN sf.FighterAId = f.Id THEN sf.FighterBId ELSE sf.FighterAId END
@@ -129,6 +147,76 @@ SELECT
         ORDER BY sf.EventDate, sf.Id
         LIMIT 1
     ) AS ScheduledEventDate,
+    (
+        SELECT op.Striking
+        FROM Fights sf
+        JOIN Fighters op ON op.Id = CASE WHEN sf.FighterAId = f.Id THEN sf.FighterBId ELSE sf.FighterAId END
+        WHERE sf.Method = 'Scheduled'
+          AND (sf.FighterAId = f.Id OR sf.FighterBId = f.Id)
+          AND COALESCE(sf.EventDate, '9999-12-31') > COALESCE((SELECT CurrentDate FROM GameState LIMIT 1), '0001-01-01')
+        ORDER BY sf.EventDate, sf.Id
+        LIMIT 1
+    ) AS OpponentStriking,
+    (
+        SELECT op.Grappling
+        FROM Fights sf
+        JOIN Fighters op ON op.Id = CASE WHEN sf.FighterAId = f.Id THEN sf.FighterBId ELSE sf.FighterAId END
+        WHERE sf.Method = 'Scheduled'
+          AND (sf.FighterAId = f.Id OR sf.FighterBId = f.Id)
+          AND COALESCE(sf.EventDate, '9999-12-31') > COALESCE((SELECT CurrentDate FROM GameState LIMIT 1), '0001-01-01')
+        ORDER BY sf.EventDate, sf.Id
+        LIMIT 1
+    ) AS OpponentGrappling,
+    (
+        SELECT op.Wrestling
+        FROM Fights sf
+        JOIN Fighters op ON op.Id = CASE WHEN sf.FighterAId = f.Id THEN sf.FighterBId ELSE sf.FighterAId END
+        WHERE sf.Method = 'Scheduled'
+          AND (sf.FighterAId = f.Id OR sf.FighterBId = f.Id)
+          AND COALESCE(sf.EventDate, '9999-12-31') > COALESCE((SELECT CurrentDate FROM GameState LIMIT 1), '0001-01-01')
+        ORDER BY sf.EventDate, sf.Id
+        LIMIT 1
+    ) AS OpponentWrestling,
+    (
+        SELECT op.Cardio
+        FROM Fights sf
+        JOIN Fighters op ON op.Id = CASE WHEN sf.FighterAId = f.Id THEN sf.FighterBId ELSE sf.FighterAId END
+        WHERE sf.Method = 'Scheduled'
+          AND (sf.FighterAId = f.Id OR sf.FighterBId = f.Id)
+          AND COALESCE(sf.EventDate, '9999-12-31') > COALESCE((SELECT CurrentDate FROM GameState LIMIT 1), '0001-01-01')
+        ORDER BY sf.EventDate, sf.Id
+        LIMIT 1
+    ) AS OpponentCardio,
+    (
+        SELECT op.Chin
+        FROM Fights sf
+        JOIN Fighters op ON op.Id = CASE WHEN sf.FighterAId = f.Id THEN sf.FighterBId ELSE sf.FighterAId END
+        WHERE sf.Method = 'Scheduled'
+          AND (sf.FighterAId = f.Id OR sf.FighterBId = f.Id)
+          AND COALESCE(sf.EventDate, '9999-12-31') > COALESCE((SELECT CurrentDate FROM GameState LIMIT 1), '0001-01-01')
+        ORDER BY sf.EventDate, sf.Id
+        LIMIT 1
+    ) AS OpponentChin,
+    (
+        SELECT op.FightIQ
+        FROM Fights sf
+        JOIN Fighters op ON op.Id = CASE WHEN sf.FighterAId = f.Id THEN sf.FighterBId ELSE sf.FighterAId END
+        WHERE sf.Method = 'Scheduled'
+          AND (sf.FighterAId = f.Id OR sf.FighterBId = f.Id)
+          AND COALESCE(sf.EventDate, '9999-12-31') > COALESCE((SELECT CurrentDate FROM GameState LIMIT 1), '0001-01-01')
+        ORDER BY sf.EventDate, sf.Id
+        LIMIT 1
+    ) AS OpponentFightIQ,
+    (
+        SELECT COALESCE(op.WeightMissCount, 0)
+        FROM Fights sf
+        JOIN Fighters op ON op.Id = CASE WHEN sf.FighterAId = f.Id THEN sf.FighterBId ELSE sf.FighterAId END
+        WHERE sf.Method = 'Scheduled'
+          AND (sf.FighterAId = f.Id OR sf.FighterBId = f.Id)
+          AND COALESCE(sf.EventDate, '9999-12-31') > COALESCE((SELECT CurrentDate FROM GameState LIMIT 1), '0001-01-01')
+        ORDER BY sf.EventDate, sf.Id
+        LIMIT 1
+    ) AS OpponentWeightMissCount,
     (
         SELECT COUNT(*)
         FROM FightHistory fh
@@ -168,6 +256,16 @@ SELECT
     COALESCE(st.WeightCutReadiness, 55) AS WeightCutReadiness,
     COALESCE(st.InjuryRisk, 20) AS InjuryRisk,
     COALESCE(st.CurrentPhase, 'Idle') AS CurrentPhase,
+    (
+        SELECT COALESCE(fp.CampFocus, '')
+        FROM FightPreparations fp
+        JOIN Fights sf ON sf.Id = fp.FightId
+        WHERE fp.FighterId = f.Id
+          AND sf.Method = 'Scheduled'
+          AND COALESCE(sf.EventDate, '9999-12-31') > COALESCE((SELECT CurrentDate FROM GameState LIMIT 1), '0001-01-01')
+        ORDER BY sf.EventDate, sf.Id
+        LIMIT 1
+    ) AS CampFocus,
     st.NextMilestoneType,
     st.NextMilestoneDate,
     CASE
@@ -210,6 +308,10 @@ LEFT JOIN FighterStates st ON st.FighterId = f.Id
 LEFT JOIN ScoutKnowledge sk
     ON sk.FighterId = f.Id
    AND sk.AgentId = (SELECT Id FROM AgentProfile ORDER BY Id LIMIT 1)
+LEFT JOIN ScoutAssignments sa
+    ON sa.FighterId = f.Id
+   AND sa.AgentId = (SELECT Id FROM AgentProfile ORDER BY Id LIMIT 1)
+   AND sa.Status = 'InProgress'
 LEFT JOIN PromotionRankings pr
     ON pr.FighterId = f.Id
    AND pr.PromotionId = f.PromotionId
@@ -230,6 +332,30 @@ LIMIT 1;";
         int koWins = Convert.ToInt32(r["KOWins"]);
         int subWins = Convert.ToInt32(r["SubWins"]);
         int decWins = Convert.ToInt32(r["DecWins"]);
+        var scheduledOpponentStyleSummary = r["ScheduledOpponentStyleSummary"]?.ToString();
+        var campRecommendation = BuildCampRecommendation(
+            baseStyle: r["BaseStyle"]?.ToString() ?? "All-Rounder",
+            tacticalStyle: r["TacticalStyle"]?.ToString() ?? "Measured",
+            striking: Convert.ToInt32(r["Striking"]),
+            grappling: Convert.ToInt32(r["Grappling"]),
+            wrestling: Convert.ToInt32(r["Wrestling"]),
+            cardio: Convert.ToInt32(r["Cardio"]),
+            chin: Convert.ToInt32(r["Chin"]),
+            fightIq: Convert.ToInt32(r["FightIQ"]),
+            weightCutReadiness: Convert.ToInt32(r["WeightCutReadiness"]),
+            injuryRisk: Convert.ToInt32(r["InjuryRisk"]),
+            energy: Convert.ToInt32(r["Energy"]),
+            damageMiles: Convert.ToInt32(r["DamageMiles"]),
+            ownWeightMissCount: Convert.ToInt32(r["WeightMissCount"]),
+            scheduledOpponentName: r["ScheduledOpponentName"]?.ToString(),
+            scheduledOpponentStyleSummary: scheduledOpponentStyleSummary,
+            opponentStriking: ReadNullableInt(r, "OpponentStriking"),
+            opponentGrappling: ReadNullableInt(r, "OpponentGrappling"),
+            opponentWrestling: ReadNullableInt(r, "OpponentWrestling"),
+            opponentCardio: ReadNullableInt(r, "OpponentCardio"),
+            opponentChin: ReadNullableInt(r, "OpponentChin"),
+            opponentFightIq: ReadNullableInt(r, "OpponentFightIQ"),
+            opponentWeightMissCount: ReadNullableInt(r, "OpponentWeightMissCount"));
         double finishRate = wins > 0
             ? Math.Round(((double)(koWins + subWins) / wins) * 100.0, 1)
             : 0;
@@ -238,6 +364,7 @@ LIMIT 1;";
             Id: Convert.ToInt32(r["Id"]),
             Name: r["Name"]?.ToString() ?? "",
             CountryName: r["CountryName"]?.ToString() ?? "",
+            CountryFlagUrl: CountryFlagHelper.GetFlagImageUrl(r["CountryName"]?.ToString()),
             WeightClass: r["WeightClass"]?.ToString() ?? "",
             Age: Convert.ToInt32(r["Age"]),
             Wins: wins,
@@ -256,6 +383,11 @@ LIMIT 1;";
             DamageMiles: Convert.ToInt32(r["DamageMiles"]),
             WeightMissCount: Convert.ToInt32(r["WeightMissCount"]),
             CampWithdrawalCount: Convert.ToInt32(r["CampWithdrawalCount"]),
+            Ambition: Convert.ToInt32(r["Ambition"]),
+            Discipline: Convert.ToInt32(r["Discipline"]),
+            RiskTolerance: Convert.ToInt32(r["RiskTolerance"]),
+            Stability: Convert.ToInt32(r["Stability"]),
+            Showmanship: Convert.ToInt32(r["Showmanship"]),
             Striking: Convert.ToInt32(r["Striking"]),
             Grappling: Convert.ToInt32(r["Grappling"]),
             Wrestling: Convert.ToInt32(r["Wrestling"]),
@@ -263,6 +395,9 @@ LIMIT 1;";
             Chin: Convert.ToInt32(r["Chin"]),
             FightIQ: Convert.ToInt32(r["FightIQ"]),
             ScoutConfidence: Convert.ToInt32(r["ScoutConfidence"]),
+            ScoutStatus: DescribeScoutStatus(
+                Convert.ToInt32(r["ScoutConfidence"]),
+                r["ScoutAssignmentStatus"]?.ToString() ?? ""),
             EstimatedSkillMin: Convert.ToInt32(r["EstimatedSkillMin"]),
             EstimatedSkillMax: Convert.ToInt32(r["EstimatedSkillMax"]),
             EstimatedPotentialMin: Convert.ToInt32(r["EstimatedPotentialMin"]),
@@ -304,6 +439,10 @@ LIMIT 1;";
             WeightCutReadiness: Convert.ToInt32(r["WeightCutReadiness"]),
             InjuryRisk: Convert.ToInt32(r["InjuryRisk"]),
             CurrentPhase: r["CurrentPhase"]?.ToString() ?? "Idle",
+            CampFocus: string.IsNullOrWhiteSpace(r["CampFocus"]?.ToString()) ? null : r["CampFocus"]?.ToString(),
+            CampRecommendationFocus: campRecommendation?.Focus,
+            CampRecommendationReason: campRecommendation?.Reason,
+            ScheduledOpponentStyleSummary: scheduledOpponentStyleSummary,
             NextMilestoneType: r["NextMilestoneType"]?.ToString(),
             NextMilestoneDate: r["NextMilestoneDate"]?.ToString(),
             IsBooked: Convert.ToInt32(r["IsBooked"]) == 1,
@@ -318,6 +457,157 @@ LIMIT 1;";
             ScheduledEventName: r["ScheduledEventName"]?.ToString(),
             ScheduledEventDate: r["ScheduledEventDate"]?.ToString()
         );
+    }
+
+    private static string DescribeScoutStatus(int confidence, string assignmentStatus)
+    {
+        if (string.Equals(assignmentStatus, "InProgress", StringComparison.OrdinalIgnoreCase))
+            return "Scouting";
+
+        return confidence switch
+        {
+            >= 90 => "Known",
+            >= 70 => "Tracked",
+            _ => "Unscouted"
+        };
+    }
+
+    private static int? ReadNullableInt(SqliteDataReader reader, string columnName)
+        => reader[columnName] == DBNull.Value ? null : Convert.ToInt32(reader[columnName]);
+
+    // This is a staff-facing heuristic, not a hidden simulation rule.
+    // It translates matchup signals into a readable camp plan for the player.
+    private static CampRecommendation? BuildCampRecommendation(
+        string baseStyle,
+        string tacticalStyle,
+        int striking,
+        int grappling,
+        int wrestling,
+        int cardio,
+        int chin,
+        int fightIq,
+        int weightCutReadiness,
+        int injuryRisk,
+        int energy,
+        int damageMiles,
+        int ownWeightMissCount,
+        string? scheduledOpponentName,
+        string? scheduledOpponentStyleSummary,
+        int? opponentStriking,
+        int? opponentGrappling,
+        int? opponentWrestling,
+        int? opponentCardio,
+        int? opponentChin,
+        int? opponentFightIq,
+        int? opponentWeightMissCount)
+    {
+        if (string.IsNullOrWhiteSpace(scheduledOpponentName))
+            return null;
+
+        var opponentLabel = string.IsNullOrWhiteSpace(scheduledOpponentStyleSummary)
+            ? "the matchup"
+            : scheduledOpponentStyleSummary;
+
+        if (weightCutReadiness <= 42 || ownWeightMissCount >= 2)
+        {
+            return new CampRecommendation(
+                "WeightManagement",
+                $"Staff read: keep the cut clean first. Your side is the bigger risk than {scheduledOpponentName}'s look, so weight management protects the booking.");
+        }
+
+        if (injuryRisk >= 68 || energy <= 44 || damageMiles >= 48)
+        {
+            return new CampRecommendation(
+                "Recovery",
+                $"Staff read: protect the body this camp. The concern is arriving fresh enough for {scheduledOpponentName}, not squeezing out one more hard push.");
+        }
+
+        if (opponentWrestling.HasValue && opponentWrestling.Value >= 74 && opponentWrestling.Value - wrestling >= 8)
+        {
+            var focus = cardio >= 70 && cardio >= wrestling + 3 ? "Cardio" : "Wrestling";
+            var reason = focus == "Cardio"
+                ? $"{scheduledOpponentName} reads as a strong wrestling grinder ({opponentLabel}). Cardio gives you the best chance to survive pace, scrambles and late rounds."
+                : $"{scheduledOpponentName} reads as a strong wrestling grinder ({opponentLabel}). Wrestling camp is the cleanest answer to entries, clinch control and defensive wrestling.";
+
+            return new CampRecommendation(focus, $"Staff read: {reason}");
+        }
+
+        if (opponentGrappling.HasValue && opponentGrappling.Value >= 74 && opponentGrappling.Value - grappling >= 8)
+        {
+            return new CampRecommendation(
+                "Wrestling",
+                $"Staff read: {scheduledOpponentName} looks dangerous in grappling exchanges ({opponentLabel}). Wrestling focus should help with top control, scrambles and keeping the fight in safer phases.");
+        }
+
+        if (opponentCardio.HasValue && opponentCardio.Value >= 76)
+        {
+            return new CampRecommendation(
+                "Cardio",
+                $"Staff read: {scheduledOpponentName} looks built for pace ({opponentLabel}). Cardio focus helps you survive volume and keep your own work rate deep into the fight.");
+        }
+
+        if (opponentWeightMissCount.GetValueOrDefault() >= 2 && cardio >= 58)
+        {
+            return new CampRecommendation(
+                "Cardio",
+                $"Staff read: {scheduledOpponentName} has shown weight trouble before. A cardio camp gives you the best chance to weaponize pace if the opponent fades after the cut.");
+        }
+
+        if (opponentStriking.HasValue && opponentStriking.Value >= 74 && opponentStriking.Value - striking >= 9)
+        {
+            if (wrestling >= opponentWrestling.GetValueOrDefault() + 4 || grappling >= opponentGrappling.GetValueOrDefault() + 4)
+            {
+                return new CampRecommendation(
+                    "Wrestling",
+                    $"Staff read: {scheduledOpponentName} is the more dangerous striker ({opponentLabel}). Wrestling focus is the safer route to break rhythm and avoid a clean striking fight.");
+            }
+
+            var defensiveFocus = chin <= 55 || fightIq <= 56 ? "Recovery" : "Cardio";
+            var defensiveReason = defensiveFocus == "Recovery"
+                ? "Recovery helps you arrive steadier and less exposed to a bad exchange."
+                : "Cardio helps you stay disciplined and move through rounds without panic.";
+
+            return new CampRecommendation(
+                defensiveFocus,
+                $"Staff read: {scheduledOpponentName} is the sharper striker ({opponentLabel}). {defensiveReason}");
+        }
+
+        if (striking - opponentStriking.GetValueOrDefault(striking) >= 8 && striking >= 68)
+        {
+            return new CampRecommendation(
+                "Striking",
+                $"Staff read: your cleanest edge on {scheduledOpponentName} is on the feet. A striking camp should sharpen timing and let you press that advantage.");
+        }
+
+        if (((wrestling + grappling) - (opponentWrestling.GetValueOrDefault(wrestling) + opponentGrappling.GetValueOrDefault(grappling))) >= 10)
+        {
+            return new CampRecommendation(
+                "Wrestling",
+                $"Staff read: your clearest edge on {scheduledOpponentName} is control and mat work. Wrestling focus should make that path easier to force.");
+        }
+
+        if (baseStyle.Contains("Wrestler", StringComparison.OrdinalIgnoreCase) || tacticalStyle.Contains("Pressure", StringComparison.OrdinalIgnoreCase))
+        {
+            return new CampRecommendation(
+                "Wrestling",
+                $"Staff read: this matchup should still reward your natural control game. Wrestling focus keeps the camp tied to what you already do best.");
+        }
+
+        if (baseStyle.Contains("Striker", StringComparison.OrdinalIgnoreCase)
+            || baseStyle.Contains("Boxer", StringComparison.OrdinalIgnoreCase)
+            || baseStyle.Contains("Kickboxer", StringComparison.OrdinalIgnoreCase)
+            || tacticalStyle.Contains("Counter", StringComparison.OrdinalIgnoreCase))
+        {
+            return new CampRecommendation(
+                "Striking",
+                $"Staff read: no glaring danger jumps off the matchup, so the best plan is sharpening your natural striking identity before {scheduledOpponentName}.");
+        }
+
+        return new CampRecommendation(
+            cardio >= 64 ? "Cardio" : "Recovery",
+            cardio >= 64
+                ? $"Staff read: the matchup against {scheduledOpponentName} looks balanced enough that pace may decide it. Cardio is the safest broad upgrade."
+                : $"Staff read: there is no single tactical emergency here, so recovery is the steadier camp to arrive fresh and consistent.");
     }
 
     private static IReadOnlyList<string> ParseTraits(string? raw)
@@ -442,4 +732,6 @@ LIMIT $take;";
 
         return items;
     }
+
+    private sealed record CampRecommendation(string Focus, string Reason);
 }

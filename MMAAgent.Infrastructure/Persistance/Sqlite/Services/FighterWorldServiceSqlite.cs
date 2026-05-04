@@ -143,6 +143,11 @@ SELECT
     COALESCE(f.DamageMiles, 0) AS DamageMiles,
     COALESCE(f.WeightMissCount, 0) AS WeightMissCount,
     COALESCE(f.CampWithdrawalCount, 0) AS CampWithdrawalCount,
+    COALESCE(f.Ambition, 50) AS Ambition,
+    COALESCE(f.Discipline, 50) AS Discipline,
+    COALESCE(f.RiskTolerance, 50) AS RiskTolerance,
+    COALESCE(f.Stability, 50) AS Stability,
+    COALESCE(f.Showmanship, 40) AS Showmanship,
     COALESCE(f.Striking, 50) AS Striking,
     COALESCE(f.Grappling, 50) AS Grappling,
     COALESCE(f.Wrestling, 50) AS Wrestling,
@@ -255,6 +260,11 @@ ORDER BY f.Id;";
                 DamageMiles: Convert.ToInt32(reader["DamageMiles"]),
                 WeightMissCount: Convert.ToInt32(reader["WeightMissCount"]),
                 CampWithdrawalCount: Convert.ToInt32(reader["CampWithdrawalCount"]),
+                Ambition: Convert.ToInt32(reader["Ambition"]),
+                Discipline: Convert.ToInt32(reader["Discipline"]),
+                RiskTolerance: Convert.ToInt32(reader["RiskTolerance"]),
+                Stability: Convert.ToInt32(reader["Stability"]),
+                Showmanship: Convert.ToInt32(reader["Showmanship"]),
                 Striking: Convert.ToInt32(reader["Striking"]),
                 Grappling: Convert.ToInt32(reader["Grappling"]),
                 Wrestling: Convert.ToInt32(reader["Wrestling"]),
@@ -426,6 +436,7 @@ ON CONFLICT(FighterId) DO UPDATE SET
             20
             + snapshot.Popularity
             + (int)Math.Round(finishRate * 0.15)
+            + (int)Math.Round(snapshot.Showmanship * 0.22)
             + (snapshot.Age is >= 24 and <= 32 ? 6 : 0)
             - Math.Max(0, snapshot.Age - 34) * 2
             - (snapshot.DamageMiles / 3)
@@ -444,6 +455,8 @@ ON CONFLICT(FighterId) DO UPDATE SET
             50
             + (state.LastFightResult == "W" ? 12 : state.LastFightResult == "L" ? -10 : 0)
             + (snapshot.IsBooked ? 6 : 0)
+            + (snapshot.Ambition / 10)
+            - Math.Max(0, (50 - snapshot.Stability) / 8)
             - Math.Max(0, snapshot.Age - 35)
             - (snapshot.DamageMiles / 4)
             - Math.Max(snapshot.InjuryWeeksRemaining, snapshot.MedicalSuspensionWeeksRemaining) * 4
@@ -776,6 +789,15 @@ WHERE Id = $fighterId;";
         if (snapshot.Popularity >= 70 || finishRate >= 60)
             traits.Add(new FighterTraitRow("Action Magnet", Math.Max(snapshot.Popularity, (int)Math.Round(finishRate))));
 
+        if (snapshot.Showmanship >= 74)
+            traits.Add(new FighterTraitRow("Showman", snapshot.Showmanship));
+
+        if (snapshot.Discipline >= 76 && snapshot.Stability >= 70)
+            traits.Add(new FighterTraitRow("Pro's Pro", Math.Min(95, (snapshot.Discipline + snapshot.Stability) / 2)));
+
+        if (snapshot.RiskTolerance >= 74)
+            traits.Add(new FighterTraitRow("Gambles Big", snapshot.RiskTolerance));
+
         if (snapshot.Potential - snapshot.Skill >= 14)
             traits.Add(new FighterTraitRow("Blue-Chip Prospect", snapshot.Potential - snapshot.Skill + 70));
 
@@ -855,6 +877,11 @@ WHERE Id = $fighterId;";
         int DamageMiles,
         int WeightMissCount,
         int CampWithdrawalCount,
+        int Ambition,
+        int Discipline,
+        int RiskTolerance,
+        int Stability,
+        int Showmanship,
         int Striking,
         int Grappling,
         int Wrestling,

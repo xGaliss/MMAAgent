@@ -44,4 +44,26 @@ public sealed class WebFighterActionService
 
     public Task<ServiceResult> SeekFightAsync(int fighterId, CancellationToken cancellationToken = default)
         => _fightOfferGenerationService.GenerateOfferForManagedFighterAsync(fighterId, cancellationToken);
+
+    public async Task<ServiceResult> SetCampFocusAsync(int fighterId, string campFocus, CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var updated = await _bridge.SetCampFocusAsync(fighterId, campFocus, cancellationToken);
+            return updated
+                ? ServiceResult.Ok($"Camp focus switched to {FormatCampFocus(campFocus)}.")
+                : ServiceResult.Fail("No active booked camp was found for that fighter.");
+        }
+        catch (Exception ex)
+        {
+            return ServiceResult.Fail(ex.Message);
+        }
+    }
+
+    private static string FormatCampFocus(string campFocus)
+        => campFocus switch
+        {
+            "WeightManagement" => "Weight Management",
+            _ => campFocus
+        };
 }

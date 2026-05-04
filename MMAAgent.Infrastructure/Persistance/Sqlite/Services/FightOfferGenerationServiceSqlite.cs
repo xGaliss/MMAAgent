@@ -143,6 +143,8 @@ public sealed class FightOfferGenerationServiceSqlite : IFightOfferGenerationSer
         if (plan.WeeksUntilFight < Math.Max(1, plan.CampWeeksGranted)) return false;
         if (fighter.ContractFightsRemaining <= 0) return false;
         if (fighter.ContractFightsRemaining == 1 && opponent.Skill > fighter.Skill + 8) return false;
+        if (plan.IsShortNotice && fighter.RiskTolerance < 40 && fighter.Ambition < 48) return false;
+        if (plan.IsShortNotice && fighter.Discipline < 36 && fighter.Stability < 40) return false;
         return true;
     }
 
@@ -424,6 +426,11 @@ SELECT
     f.WeightClass,
     f.Skill,
     f.Popularity,
+    COALESCE(f.Ambition, 50) AS Ambition,
+    COALESCE(f.Discipline, 50) AS Discipline,
+    COALESCE(f.RiskTolerance, 50) AS RiskTolerance,
+    COALESCE(f.Stability, 50) AS Stability,
+    COALESCE(f.Showmanship, 40) AS Showmanship,
     f.PromotionId,
     pr.RankPosition,
     cq.QueueRank,
@@ -481,6 +488,11 @@ ORDER BY f.Popularity DESC, f.Skill DESC;";
                 r["WeightClass"]?.ToString() ?? "",
                 Convert.ToInt32(r["Skill"]),
                 Convert.ToInt32(r["Popularity"]),
+                Convert.ToInt32(r["Ambition"]),
+                Convert.ToInt32(r["Discipline"]),
+                Convert.ToInt32(r["RiskTolerance"]),
+                Convert.ToInt32(r["Stability"]),
+                Convert.ToInt32(r["Showmanship"]),
                 r["PromotionId"] == DBNull.Value ? null : Convert.ToInt32(r["PromotionId"]),
                 r["RankPosition"] == DBNull.Value ? null : Convert.ToInt32(r["RankPosition"]),
                 r["QueueRank"] == DBNull.Value ? null : Convert.ToInt32(r["QueueRank"]),
@@ -880,7 +892,13 @@ LIMIT 1;";
 
         var rollSeed = HashCode.Combine(absoluteWeek, promotion.PromotionId, fighter.FighterId);
         var normalized = (Math.Abs(rollSeed) % 1000) / 1000.0;
-        return normalized < ShortNoticeChance;
+        var willingnessBoost =
+            ((fighter.RiskTolerance - 50) * 0.0025)
+            + ((fighter.Ambition - 50) * 0.0018)
+            + ((fighter.Showmanship - 40) * 0.0015)
+            - ((50 - fighter.Stability) * 0.0012);
+        var threshold = Math.Clamp(ShortNoticeChance + willingnessBoost, 0.05, 0.42);
+        return normalized < threshold;
     }
 
     private sealed record PromotionSnapshot(
@@ -900,6 +918,11 @@ LIMIT 1;";
         string WeightClass,
         int Skill,
         int Popularity,
+        int Ambition,
+        int Discipline,
+        int RiskTolerance,
+        int Stability,
+        int Showmanship,
         int? PromotionId,
         int? RankPosition,
         int? ContenderQueueRank,
