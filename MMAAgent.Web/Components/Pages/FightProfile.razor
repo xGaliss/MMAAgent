@@ -6,12 +6,12 @@
 @inject WebFighterActionService FighterActionService
 @inject WebRosterService RosterService
 
-<PageTitle>Fight Profile - MMA Agent</PageTitle>
+<PageTitle>Fighter Profile - MMA Agent</PageTitle>
 
 <div class="page-header">
     <div>
-        <h1>Fight Profile</h1>
-        <p class="muted-text">Complete fighter profile and recent fight history.</p>
+        <h1>Fighter Profile</h1>
+        <p class="muted-text">Poster view, matchup read, narrative pressure and all the live decisions around this fighter.</p>
     </div>
 </div>
 
@@ -30,14 +30,20 @@ else if (_fighter is null)
 else
 {
     <div class="fight-profile-layout">
-        <section class="panel-card profile-hero">
-            <div class="profile-header">
-                <div class="profile-header-left">
+        <section class="panel-card fighter-command-hero">
+            <div class="fighter-command-layout">
+                <div class="fighter-command-main">
+                    <div class="fighter-command-kicker">Fighter HQ</div>
+
                     <div class="profile-name-row">
                         <h2 class="profile-name">@_fighter.Name</h2>
                         @if (_fighter.IsChampion)
                         {
                             <span class="champion-pill">Champion</span>
+                        }
+                        @if (_isManaged)
+                        {
+                            <span class="managed-pill">Managed</span>
                         }
                     </div>
 
@@ -50,50 +56,93 @@ else
                                   title="@_fighter.CountryName"
                                   style="@BuildFlagStyle(_fighter.CountryFlagUrl)"></span>
                         }
-                        <span>@_fighter.CountryName · @_fighter.WeightClass · Age @_fighter.Age</span>
+                        <span>@_fighter.CountryName · @_fighter.WeightClass · Age @_fighter.Age · @_fighter.CareerStage</span>
                     </div>
 
-                    <div class="profile-action-row">
+                    <div class="fighter-command-storyline">
+                        <div class="fighter-command-summary">@BuildHeadlineSummary()</div>
+                        <div class="muted-text">@BuildIdentitySummary()</div>
+                    </div>
+
+                    <div class="fighter-command-actions">
                         @if (_isManaged)
                         {
-                            <span class="managed-pill">Managed</span>
+                            @if (CanSeekFight())
+                            {
+                                <button class="btn-primary" @onclick="SeekFightAsync">Seek fight</button>
+                            }
+
+                            @if (CanAdjustCampFocus())
+                            {
+                                <a class="btn-secondary" href="#camp-focus-panel">Set camp focus</a>
+                            }
                         }
                         else
                         {
-                            <div class="profile-button-group">
-                                <button class="@GetSignButtonClass()"
-                                        @onclick="SignCurrentFighterAsync">
-                                    @GetSignButtonText()
-                                </button>
+                            <button class="@GetSignButtonClass()"
+                                    @onclick="SignCurrentFighterAsync">
+                                @GetSignButtonText()
+                            </button>
 
-                                @if (CanScout())
-                                {
-                                    <button class="btn-secondary"
-                                            disabled="@_busyScouting"
-                                            @onclick="StartScoutAsync">
-                                        Scout
-                                    </button>
-                                }
-                                else
-                                {
-                                    <span class="roster-scout-status">@_fighter.ScoutStatus</span>
-                                }
-                            </div>
+                            @if (CanScout())
+                            {
+                                <button class="btn-secondary"
+                                        disabled="@_busyScouting"
+                                        @onclick="StartScoutAsync">
+                                    Scout fighter
+                                </button>
+                            }
+                            else
+                            {
+                                <span class="roster-scout-status">@_fighter.ScoutStatus</span>
+                            }
                         }
+                    </div>
+
+                    @if (!string.IsNullOrWhiteSpace(_actionStatus))
+                    {
+                        <div class="muted-text">@_actionStatus</div>
+                    }
+
+                    <div class="fighter-hero-chip-row">
+                        <span class="message-badge">Heat: @DescribeHeat(_fighter.MediaHeat)</span>
+                        <span class="message-badge">Reliability: @DescribeReliability(_fighter.ReliabilityScore)</span>
+                        <span class="message-badge">@_fighter.BaseStyle</span>
+                        <span class="message-badge">@_fighter.TacticalStyle</span>
                     </div>
                 </div>
 
-                <div class="profile-record">
-                    <span class="record-win">@_fighter.Wins</span>
-                    <span class="record-sep">-</span>
-                    <span class="record-loss">@_fighter.Losses</span>
-                    <span class="record-sep">-</span>
-                    <span class="record-draw">@_fighter.Draws</span>
-                </div>
+                <div class="fighter-command-side">
+                    <div class="profile-record fighter-poster-record">
+                        <span class="record-win">@_fighter.Wins</span>
+                        <span class="record-sep">-</span>
+                        <span class="record-loss">@_fighter.Losses</span>
+                        <span class="record-sep">-</span>
+                        <span class="record-draw">@_fighter.Draws</span>
+                    </div>
 
+                    <div class="fighter-mini-grid">
+                        <div class="meta-box">
+                            <div class="meta-label">Popularity</div>
+                            <div class="meta-value">@_fighter.Popularity</div>
+                        </div>
+                        <div class="meta-box">
+                            <div class="meta-label">Marketability</div>
+                            <div class="meta-value">@_fighter.Marketability</div>
+                        </div>
+                        <div class="meta-box">
+                            <div class="meta-label">Momentum</div>
+                            <div class="meta-value">@_fighter.Momentum</div>
+                        </div>
+                        <div class="meta-box">
+                            <div class="meta-label">Wear</div>
+                            <div class="meta-value">@DescribeWear(_fighter.DamageMiles)</div>
+                        </div>
+                    </div>
+                </div>
             </div>
 
-            <div class="profile-meta-grid">
+            <div class="profile-meta-grid fighter-hero-meta">
                 <div class="meta-box">
                     <div class="meta-label">Promotion</div>
                     <div class="meta-value">
@@ -109,6 +158,10 @@ else
                             @(_fighter.PromotionName ?? "Free Agent")
                         }
                     </div>
+                </div>
+                <div class="meta-box">
+                    <div class="meta-label">Circuit</div>
+                    <div class="meta-value">@DescribeCircuit(_fighter.PromotionCircuitType, _fighter.CareerStage)</div>
                 </div>
                 <div class="meta-box">
                     <div class="meta-label">Rank</div>
@@ -136,6 +189,99 @@ else
                 </div>
             </div>
         </section>
+
+        <div class="dashboard-live-grid">
+            <section class="panel-card fighter-matchup-panel">
+                <div class="table-toolbar">
+                    <div class="toolbar-title">Next Matchup</div>
+                    <div class="toolbar-subtitle">Opponent, event and camp angle for the next booking.</div>
+                </div>
+
+                @if (_fighter.IsBooked)
+                {
+                    <div class="fighter-matchup-top">
+                        <div>
+                            <div class="fighter-matchup-name">
+                                @if (_fighter.ScheduledOpponentId is int opponentId)
+                                {
+                                    <a class="fighter-link" href="@($"/fighters/{opponentId}")">@(_fighter.ScheduledOpponentName ?? "TBD")</a>
+                                }
+                                else
+                                {
+                                    @(_fighter.ScheduledOpponentName ?? "TBD")
+                                }
+                            </div>
+                            <div class="muted-text">@(_fighter.ScheduledOpponentRecord ?? "Record unavailable")</div>
+                        </div>
+                        <span class="message-badge">@(_fighter.ScheduledEventDate ?? "Date TBD")</span>
+                    </div>
+
+                    <div class="dashboard-list">
+                        <div class="dashboard-list-item">
+                            <strong>Event</strong>
+                            <div class="muted-text">@(_fighter.ScheduledEventName ?? "Event TBD")</div>
+                        </div>
+                        <div class="dashboard-list-item">
+                            <strong>Opponent read</strong>
+                            <div class="muted-text">@(_fighter.ScheduledOpponentStyleSummary ?? "No strong opponent read yet.")</div>
+                        </div>
+                        <div class="dashboard-list-item">
+                            <strong>Camp focus</strong>
+                            <div class="muted-text">@DescribeCampFocus(_fighter.CampFocus)</div>
+                        </div>
+                        @if (HasCampRecommendation())
+                        {
+                            <div class="dashboard-list-item">
+                                <strong>Staff recommendation</strong>
+                                <div class="muted-text">@_fighter.CampRecommendationReason</div>
+                            </div>
+                        }
+                    </div>
+                }
+                else
+                {
+                    <div class="muted-text">No fight is booked right now. Once a bout is signed, this panel becomes your camp and matchup hub.</div>
+                }
+            </section>
+
+            <section class="panel-card fighter-story-panel">
+                <div class="table-toolbar">
+                    <div class="toolbar-title">Narrative Pressure</div>
+                    <div class="toolbar-subtitle">What the public, the division and the career arc are saying right now.</div>
+                </div>
+
+                <div class="fighter-hero-chip-row" style="margin-bottom:14px;">
+                    <span class="message-badge">Heat: @DescribeHeat(_fighter.MediaHeat)</span>
+                    <span class="message-badge">Reliability: @DescribeReliability(_fighter.ReliabilityScore)</span>
+                    <span class="message-badge">Wear: @DescribeWear(_fighter.DamageMiles)</span>
+                </div>
+
+                @if (_fighter.Storylines.Count == 0 && _fighter.LegacyTags.Count == 0)
+                {
+                    <div class="muted-text">This fighter has not built much narrative gravity yet.</div>
+                }
+                else
+                {
+                    <div class="dashboard-list">
+                        @foreach (var story in _fighter.Storylines.Take(2))
+                        {
+                            <div class="dashboard-list-item">
+                                <strong>@story.Headline</strong>
+                                <div class="muted-text">@story.Body</div>
+                            </div>
+                        }
+
+                        @foreach (var tag in _fighter.LegacyTags.Take(3))
+                        {
+                            <div class="dashboard-list-item">
+                                <strong>@FormatLegacyTag(tag.TagCode)</strong>
+                                <div class="muted-text">@tag.Summary</div>
+                            </div>
+                        }
+                    </div>
+                }
+            </section>
+        </div>
 
         <section class="panel-card">
             <div class="table-toolbar">
@@ -175,6 +321,10 @@ else
                 <div class="attribute-card"><span>Media Heat</span><strong>@DescribeHeat(_fighter.MediaHeat)</strong></div>
                 <div class="attribute-card"><span>Reliability</span><strong>@DescribeReliability(_fighter.ReliabilityScore)</strong></div>
                 <div class="attribute-card"><span>Fights Left</span><strong>@_fighter.ContractFightsRemaining / @_fighter.TotalFightsInContract</strong></div>
+                @if (string.Equals(_fighter.CareerStage, "Amateur", StringComparison.OrdinalIgnoreCase))
+                {
+                    <div class="attribute-card"><span>Amateur Record</span><strong>@($"{_fighter.AmateurWins}-{_fighter.AmateurLosses}-{_fighter.AmateurDraws}")</strong></div>
+                }
             </div>
         </section>
 
@@ -207,7 +357,7 @@ else
             </div>
         </section>
 
-        <section class="panel-card">
+        <section class="panel-card" id="camp-focus-panel">
             <div class="table-toolbar">
                 <div class="toolbar-title">Current State</div>
                 <div class="toolbar-subtitle">Internal condition presented as readable fight-week context</div>
@@ -363,6 +513,12 @@ else
                 <div class="attribute-card"><span>KO Wins</span><strong>@_fighter.KOWins</strong></div>
                 <div class="attribute-card"><span>Sub Wins</span><strong>@_fighter.SubWins</strong></div>
                 <div class="attribute-card"><span>Decision Wins</span><strong>@_fighter.DecWins</strong></div>
+                @if (string.Equals(_fighter.CareerStage, "Amateur", StringComparison.OrdinalIgnoreCase))
+                {
+                    <div class="attribute-card"><span>Amateur Wins</span><strong>@_fighter.AmateurWins</strong></div>
+                    <div class="attribute-card"><span>Amateur Losses</span><strong>@_fighter.AmateurLosses</strong></div>
+                    <div class="attribute-card"><span>Amateur Draws</span><strong>@_fighter.AmateurDraws</strong></div>
+                }
                 <div class="attribute-card"><span>Finish Rate</span><strong>@_fighter.FinishRate.ToString("0.0")%</strong></div>
                 <div class="attribute-card"><span>Title Fights</span><strong>@_fighter.TitleFightAppearances</strong></div>
                 <div class="attribute-card"><span>Main Card</span><strong>@_fighter.MainCardAppearances</strong></div>
@@ -429,6 +585,7 @@ else
     private bool _busyScouting;
     private bool _busyCampFocus;
     private string? _campFocusStatus;
+    private string? _actionStatus;
     private string? _error;
 
     protected override async Task OnParametersSetAsync()
@@ -443,6 +600,7 @@ else
             _history = result.History.ToList();
 
             _isManaged = _fighter?.IsManagedByPlayer ?? false;
+            _actionStatus = null;
         }
         catch (Exception ex)
         {
@@ -469,6 +627,7 @@ else
             }
 
             _isManaged = true;
+            _actionStatus = result.Message;
         }
         catch (Exception ex)
         {
@@ -512,6 +671,7 @@ else
             _fighter = result.Fighter;
             _history = result.History.ToList();
             _isManaged = _fighter?.IsManagedByPlayer ?? false;
+            _actionStatus = "Scout assignment started.";
         }
         catch (Exception ex)
         {
@@ -564,6 +724,29 @@ else
         return SetCampFocusAsync(_fighter.CampRecommendationFocus);
     }
 
+    private async Task SeekFightAsync()
+    {
+        try
+        {
+            if (_fighter is null || !_isManaged)
+                return;
+
+            var result = await FighterActionService.SeekFightAsync(_fighter.Id);
+            _actionStatus = result.Message;
+            if (!result.Success)
+                return;
+
+            var refreshed = await FightProfileReadService.LoadAsync(fighterId, 20);
+            _fighter = refreshed.Fighter;
+            _history = refreshed.History.ToList();
+            _isManaged = _fighter?.IsManagedByPlayer ?? false;
+        }
+        catch (Exception ex)
+        {
+            _error = ex.ToString();
+        }
+    }
+
     private bool CanScout()
     {
         if (_fighter is null || _isManaged)
@@ -580,6 +763,15 @@ else
 
         return !string.Equals(_fighter.CurrentPhase, "Fight Night", StringComparison.OrdinalIgnoreCase)
             && !string.Equals(_fighter.CurrentPhase, "Medical Suspension", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private bool CanSeekFight()
+    {
+        if (_fighter is null || !_isManaged || _fighter.IsBooked)
+            return false;
+
+        return !string.Equals(_fighter.ContractStatus, "FreeAgent", StringComparison.OrdinalIgnoreCase)
+            && _fighter.PromotionId is not null;
     }
 
     private bool HasCampRecommendation()
@@ -630,6 +822,31 @@ else
         }
 
         return "None booked";
+    }
+
+    private string BuildHeadlineSummary()
+    {
+        if (_fighter is null)
+            return string.Empty;
+
+        if (_fighter.IsChampion)
+            return $"{_fighter.Name} is carrying divisional gravity right now.";
+
+        if (_fighter.RankPosition is <= 3 and > 0)
+            return $"{_fighter.Name} is deep in the title picture and every next move matters.";
+
+        if (_fighter.IsBooked && !string.IsNullOrWhiteSpace(_fighter.ScheduledOpponentName))
+            return $"{_fighter.Name} is pointed at {_fighter.ScheduledOpponentName} and camp decisions matter now.";
+
+        return $"{_fighter.Name} is moving through the live MMA ecosystem with pressure building around the next step.";
+    }
+
+    private string BuildIdentitySummary()
+    {
+        if (_fighter is null)
+            return string.Empty;
+
+        return $"{_fighter.BaseStyle} · {_fighter.TacticalStyle} · Finish rate {_fighter.FinishRate:0.0}%";
     }
 
     private static string FormatPhase(string? phase)
@@ -774,6 +991,17 @@ else
             >= 40 => "Low-key",
             _ => "Quiet worker"
         };
+
+    private static string DescribeCircuit(string? circuitType, string? careerStage)
+    {
+        if (string.Equals(circuitType, "Amateur", StringComparison.OrdinalIgnoreCase))
+            return "Amateur";
+
+        if (string.Equals(careerStage, "Amateur", StringComparison.OrdinalIgnoreCase))
+            return "Amateur Track";
+
+        return "Professional";
+    }
 
     private static string FormatLegacyTag(string tagCode)
         => tagCode switch

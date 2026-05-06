@@ -28,17 +28,25 @@ public sealed record PromotionContenderVm(
     int QueueScore,
     string Notes);
 
+public sealed record DivisionChampionHistoryVm(
+    int FighterId,
+    string FighterName,
+    string FightDate);
+
 public sealed record PromotionDivisionPictureVm(
     string WeightClass,
     int? ChampionId,
     string ChampionName,
     IReadOnlyList<PromotionContenderVm> NextContenders,
+    PromotionContenderVm? ManagedContender,
+    IReadOnlyList<DivisionChampionHistoryVm> RecentChampions,
     string? UpcomingStakes,
     string? RivalryHeadline);
 
 public sealed record PromotionProfileVm(
     int Id,
     string Name,
+    string CircuitType,
     int Prestige,
     int Budget,
     bool IsActive,

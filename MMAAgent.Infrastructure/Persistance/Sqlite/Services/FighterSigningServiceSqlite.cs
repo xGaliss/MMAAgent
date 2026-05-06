@@ -49,6 +49,10 @@ public sealed class FighterSigningServiceSqlite : IFighterSigningService
 
             var chance = 55;
             chance += Math.Max(0, agent.Reputation / 2);
+            chance += Math.Max(0, (agent.FighterTrust - 50) / 3);
+            chance += Math.Max(0, (agent.PublicReputation - 50) / 4);
+            chance += Math.Max(0, agent.ScoutingStaffLevel * 2);
+            chance += Math.Max(0, agent.NegotiationStaffLevel * 3);
             chance -= fighter.Popularity / 3;
             chance -= fighter.Skill / 5;
             chance += fighter.Potential < 75 ? 8 : 0;

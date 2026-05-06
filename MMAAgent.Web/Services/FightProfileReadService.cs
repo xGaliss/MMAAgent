@@ -48,11 +48,15 @@ SELECT
     f.Id,
     f.FirstName || ' ' || f.LastName AS Name,
     COALESCE(c.Name,'') AS CountryName,
+    COALESCE(f.CareerStage, 'Pro') AS CareerStage,
     f.WeightClass,
     f.Age,
     f.Wins,
     f.Losses,
     f.Draws,
+    COALESCE(f.AmateurWins, 0) AS AmateurWins,
+    COALESCE(f.AmateurLosses, 0) AS AmateurLosses,
+    COALESCE(f.AmateurDraws, 0) AS AmateurDraws,
     f.KOWins,
     f.SubWins,
     f.DecWins,
@@ -98,6 +102,7 @@ SELECT
     f.ContractStatus,
     f.PromotionId,
     COALESCE(p.Name,'') AS PromotionName,
+    COALESCE(p.CircuitType, 'Professional') AS PromotionCircuitType,
     f.Salary,
     f.ContractFightsRemaining,
     f.TotalFightsInContract,
@@ -119,6 +124,16 @@ SELECT
         LIMIT 1
     ) AS ScheduledOpponentStyleSummary,
     (
+        SELECT op.Id
+        FROM Fights sf
+        JOIN Fighters op ON op.Id = CASE WHEN sf.FighterAId = f.Id THEN sf.FighterBId ELSE sf.FighterAId END
+        WHERE sf.Method = 'Scheduled'
+          AND (sf.FighterAId = f.Id OR sf.FighterBId = f.Id)
+          AND COALESCE(sf.EventDate, '9999-12-31') > COALESCE((SELECT CurrentDate FROM GameState LIMIT 1), '0001-01-01')
+        ORDER BY sf.EventDate, sf.Id
+        LIMIT 1
+    ) AS ScheduledOpponentId,
+    (
         SELECT op.FirstName || ' ' || op.LastName
         FROM Fights sf
         JOIN Fighters op ON op.Id = CASE WHEN sf.FighterAId = f.Id THEN sf.FighterBId ELSE sf.FighterAId END
@@ -128,6 +143,16 @@ SELECT
         ORDER BY sf.EventDate, sf.Id
         LIMIT 1
     ) AS ScheduledOpponentName,
+    (
+        SELECT op.Wins || '-' || op.Losses || '-' || op.Draws
+        FROM Fights sf
+        JOIN Fighters op ON op.Id = CASE WHEN sf.FighterAId = f.Id THEN sf.FighterBId ELSE sf.FighterAId END
+        WHERE sf.Method = 'Scheduled'
+          AND (sf.FighterAId = f.Id OR sf.FighterBId = f.Id)
+          AND COALESCE(sf.EventDate, '9999-12-31') > COALESCE((SELECT CurrentDate FROM GameState LIMIT 1), '0001-01-01')
+        ORDER BY sf.EventDate, sf.Id
+        LIMIT 1
+    ) AS ScheduledOpponentRecord,
     (
         SELECT e.Name
         FROM Fights sf
@@ -365,11 +390,15 @@ LIMIT 1;";
             Name: r["Name"]?.ToString() ?? "",
             CountryName: r["CountryName"]?.ToString() ?? "",
             CountryFlagUrl: CountryFlagHelper.GetFlagImageUrl(r["CountryName"]?.ToString()),
+            CareerStage: r["CareerStage"]?.ToString() ?? "Pro",
             WeightClass: r["WeightClass"]?.ToString() ?? "",
             Age: Convert.ToInt32(r["Age"]),
             Wins: wins,
             Losses: Convert.ToInt32(r["Losses"]),
             Draws: Convert.ToInt32(r["Draws"]),
+            AmateurWins: Convert.ToInt32(r["AmateurWins"]),
+            AmateurLosses: Convert.ToInt32(r["AmateurLosses"]),
+            AmateurDraws: Convert.ToInt32(r["AmateurDraws"]),
             KOWins: koWins,
             SubWins: subWins,
             DecWins: decWins,
@@ -417,6 +446,7 @@ LIMIT 1;";
             ContractStatus: r["ContractStatus"]?.ToString() ?? "",
             PromotionId: r["PromotionId"] == DBNull.Value ? null : Convert.ToInt32(r["PromotionId"]),
             PromotionName: r["PromotionName"]?.ToString(),
+            PromotionCircuitType: r["PromotionCircuitType"]?.ToString() ?? "Professional",
             Salary: Convert.ToInt32(r["Salary"]),
             ContractFightsRemaining: Convert.ToInt32(r["ContractFightsRemaining"]),
             TotalFightsInContract: Convert.ToInt32(r["TotalFightsInContract"]),
@@ -453,7 +483,9 @@ LIMIT 1;";
             Storylines: Array.Empty<FighterStorylineItem>(),
             LegacyTags: Array.Empty<FighterLegacyTagItem>(),
             LatestPrepNote: r["LatestPrepNote"]?.ToString(),
+            ScheduledOpponentId: r["ScheduledOpponentId"] == DBNull.Value ? null : Convert.ToInt32(r["ScheduledOpponentId"]),
             ScheduledOpponentName: r["ScheduledOpponentName"]?.ToString(),
+            ScheduledOpponentRecord: r["ScheduledOpponentRecord"]?.ToString(),
             ScheduledEventName: r["ScheduledEventName"]?.ToString(),
             ScheduledEventDate: r["ScheduledEventDate"]?.ToString()
         );

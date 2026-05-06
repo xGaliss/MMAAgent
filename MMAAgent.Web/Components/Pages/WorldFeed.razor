@@ -10,7 +10,7 @@
 <div class="page-header">
     <div>
         <h1>World Feed</h1>
-        <p class="muted-text">Headlines, title movement and live narratives from across the MMA universe.</p>
+        <p class="muted-text">Headlines, title movement, disruption and narrative heat from across the MMA universe.</p>
     </div>
 </div>
 
@@ -24,21 +24,33 @@ else if (_loading)
 }
 else
 {
+    <section class="panel-card dashboard-command-hero">
+        <div class="dashboard-command-copy">
+            <div class="dashboard-command-kicker">Press Room</div>
+            <h2 class="dashboard-command-title">The world is moving whether you touch it or not.</h2>
+            <div class="dashboard-command-text">Use this feed to track champions, prospects, weight chaos, rivalry heat and the late swings that make the universe feel alive.</div>
+        </div>
+        <div class="dashboard-command-side">
+            <span class="dashboard-command-chip">Headlines @_feed.Headlines.Count</span>
+            <span class="dashboard-command-chip">Storylines @_feed.Storylines.Count</span>
+        </div>
+    </section>
+
     <div class="dashboard-live-grid">
-        <section class="panel-card" style="grid-column: span 2;">
+        <section class="panel-card">
             <div class="table-toolbar">
-                <div class="toolbar-title">Latest Headlines</div>
-                <div class="toolbar-subtitle">@_feed.Headlines.Count items</div>
+                <div class="toolbar-title">Breaking Headlines</div>
+                <div class="toolbar-subtitle">@GetBreakingHeadlines().Count items</div>
             </div>
 
-            @if (_feed.Headlines.Count == 0)
+            @if (GetBreakingHeadlines().Count == 0)
             {
                 <div class="muted-text">No world headlines yet.</div>
             }
             else
             {
                 <div class="dashboard-list">
-                    @foreach (var item in _feed.Headlines)
+                    @foreach (var item in GetBreakingHeadlines())
                     {
                         <article class="dashboard-list-item world-feed-item world-feed-@item.Tone">
                             <div class="world-feed-top">
@@ -66,6 +78,46 @@ else
         </section>
 
         <section class="panel-card">
+            <div class="table-toolbar">
+                <div class="toolbar-title">Business Pressure</div>
+                <div class="toolbar-subtitle">@GetBusinessHeadlines().Count items</div>
+            </div>
+
+            @if (GetBusinessHeadlines().Count == 0)
+            {
+                <div class="muted-text">No business pressure spikes right now.</div>
+            }
+            else
+            {
+                <div class="dashboard-list">
+                    @foreach (var item in GetBusinessHeadlines())
+                    {
+                        <article class="dashboard-list-item world-feed-item world-feed-@item.Tone">
+                            <div class="world-feed-top">
+                                <span class="message-badge">@item.Bucket</span>
+                                @if (!string.IsNullOrWhiteSpace(item.Date))
+                                {
+                                    <span class="message-date">@item.Date</span>
+                                }
+                            </div>
+
+                            @if (!string.IsNullOrWhiteSpace(item.LinkHref))
+                            {
+                                <a class="world-feed-headline fighter-link" href="@item.LinkHref">@item.Headline</a>
+                            }
+                            else
+                            {
+                                <div class="world-feed-headline">@item.Headline</div>
+                            }
+
+                            <div class="muted-text">@item.Summary</div>
+                        </article>
+                    }
+                </div>
+            }
+        </section>
+
+        <section class="panel-card" style="grid-column: span 2;">
             <div class="table-toolbar">
                 <div class="toolbar-title">Live Storylines</div>
                 <div class="toolbar-subtitle">@_feed.Storylines.Count items</div>
@@ -125,4 +177,16 @@ else
             _loading = false;
         }
     }
+
+    private IReadOnlyList<WorldFeedItemVm> GetBreakingHeadlines()
+        => _feed.Headlines
+            .Where(x => x.Bucket is "Title Fight" or "Eliminator" or "Prospect Watch" or "Prospect Alert" or "Retirement")
+            .Take(10)
+            .ToArray();
+
+    private IReadOnlyList<WorldFeedItemVm> GetBusinessHeadlines()
+        => _feed.Headlines
+            .Where(x => x.Bucket is "Short Notice" or "Weight Miss" or "Year Shift")
+            .Take(10)
+            .ToArray();
 }

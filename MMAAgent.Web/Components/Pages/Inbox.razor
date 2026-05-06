@@ -1,4 +1,4 @@
-﻿@page "/inbox"
+@page "/inbox"
 @rendermode InteractiveServer
 @implements IDisposable
 @using MMAAgent.Web.Models
@@ -15,10 +15,18 @@
 <div class="page-header">
     <div>
         <h1>Inbox</h1>
-        <p class="muted-text">Messages, fight offers and contract offers for the current agent.</p>
+        <p class="muted-text">A single command inbox for messages, live decisions and negotiation traffic.</p>
     </div>
 
     <div class="button-row" style="flex-wrap:wrap;">
+        <select class="text-input" @bind="_listFilter">
+            <option value="all">All traffic</option>
+            <option value="messages">Messages</option>
+            <option value="decisions">Live decisions</option>
+            <option value="fightoffers">Fight offers</option>
+            <option value="contractoffers">Contract offers</option>
+        </select>
+
         <select class="text-input" @bind="_messageType">
             <option value="">All message types</option>
             @foreach (var item in _messageTypes)
@@ -33,10 +41,12 @@
             <option value="all">All</option>
         </select>
 
-        <button class="btn-secondary" @onclick="ReloadAsync" disabled="@_busy">Apply</button>
+        <button class="btn-secondary" @onclick="ReloadAsync" disabled="@_busy">Refresh</button>
         <button class="btn-secondary" @onclick="MarkAllReadAsync" disabled="@_busy">Mark all read</button>
         <button class="btn-secondary" @onclick="ArchiveReadAsync" disabled="@_busy">Archive read</button>
         <button class="btn-secondary" @onclick="DeleteReadAsync" disabled="@_busy">Delete read</button>
+        <button class="btn-secondary" @onclick="DeleteProcessedFightOffersAsync" disabled="@(_busy || _fightOffers.All(x => IsPending(x.Status)))">Clean fight offers</button>
+        <button class="btn-secondary" @onclick="DeleteProcessedContractOffersAsync" disabled="@(_busy || _contractOffers.All(x => IsPending(x.Status)))">Clean contract offers</button>
     </div>
 </div>
 
@@ -50,365 +60,313 @@ else if (_loading)
 }
 else
 {
-    <div class="stats-grid" style="margin-bottom:20px;">
-        <article class="stat-card">
-            <div class="stat-label">Messages</div>
-            <div class="stat-value">@_messages.Count</div>
-        </article>
-
-        <article class="stat-card">
-            <div class="stat-label">Fight Offers</div>
-            <div class="stat-value">@_fightOffers.Count</div>
-        </article>
-
-        <article class="stat-card">
-            <div class="stat-label">Contract Offers</div>
-            <div class="stat-value">@_contractOffers.Count</div>
-        </article>
-
-        <article class="stat-card">
-            <div class="stat-label">Unread Messages</div>
-            <div class="stat-value">@_messages.Count(x => !x.IsRead)</div>
-        </article>
-
-        <article class="stat-card">
-            <div class="stat-label">Live Decisions</div>
-            <div class="stat-value">@_decisions.Count</div>
-        </article>
-    </div>
-
-    <section class="panel-card" style="margin-bottom:20px;">
-        <div class="table-toolbar">
-            <div>
-                <div class="toolbar-title">Live Decisions</div>
-                <div class="toolbar-subtitle">Two-way calls that can reshape camps, money and momentum</div>
-            </div>
-        </div>
-
-        @if (_decisions.Count == 0)
-        {
-            <div class="muted-text">No active decisions right now.</div>
-        }
-        else
-        {
-            <div class="offer-list">
-                @foreach (var decision in _decisions)
-                {
-                    <div class="offer-card">
-                        <div class="offer-title">@decision.Headline</div>
-                        <div class="offer-meta">@decision.Body</div>
-
-                        @if (!string.IsNullOrWhiteSpace(decision.OptionADescription))
-                        {
-                            <div class="offer-meta">@decision.OptionALabel: @decision.OptionADescription</div>
-                        }
-
-                        @if (!string.IsNullOrWhiteSpace(decision.OptionBDescription))
-                        {
-                            <div class="offer-meta">@decision.OptionBLabel: @decision.OptionBDescription</div>
-                        }
-
-                        <div class="button-row" style="margin-top:12px;">
-                            <button class="btn-secondary"
-                                    disabled="@_busy"
-                                    @onclick="() => ResolveDecisionAsync(decision.Id, decision.OptionAKey)">
-                                @decision.OptionALabel
-                            </button>
-
-                            <button class="btn-secondary"
-                                    disabled="@_busy"
-                                    @onclick="() => ResolveDecisionAsync(decision.Id, decision.OptionBKey)">
-                                @decision.OptionBLabel
-                            </button>
-
-                            @if (decision.FighterId is int decisionFighterId)
-                            {
-                                <a class="btn-secondary" href="@($"/fighters/{decisionFighterId}")">Open fighter</a>
-                            }
-                        </div>
-                    </div>
-                }
-            </div>
-        }
-    </section>
-
-    <div class="inbox-layout">
-        <section class="panel-card">
-            <div class="table-toolbar">
+    <section class="panel-card inbox-mail-shell">
+        <aside class="inbox-mail-sidebar">
+            <div class="inbox-mail-sidebar-head">
                 <div>
-                    <div class="toolbar-title">Messages</div>
-                    <div class="toolbar-subtitle">@_messages.Count loaded</div>
+                    <div class="toolbar-title">Mailroom</div>
+                    <div class="toolbar-subtitle">@_surfaceItems.Count threads visible</div>
                 </div>
 
-                <div class="button-row">
-                    @if (_visibilityFilter != "archived")
-                    {
-                        <button class="btn-secondary"
-                                disabled="@(_busy || SelectedMessage is null)"
-                                @onclick="ArchiveSelectedAsync">
-                            Archive
-                        </button>
-
-                        <button class="btn-secondary"
-                                disabled="@(_busy || SelectedMessage is null)"
-                                @onclick="DeleteSelectedAsync">
-                            Delete
-                        </button>
-                    }
-                    else
-                    {
-                        <button class="btn-secondary"
-                                disabled="@(_busy || SelectedMessage is null)"
-                                @onclick="RestoreSelectedAsync">
-                            Restore
-                        </button>
-
-                        <button class="btn-secondary"
-                                disabled="@(_busy || SelectedMessage is null)"
-                                @onclick="DeleteSelectedAsync">
-                            Delete
-                        </button>
-                    }
+                <div class="inbox-mail-pills">
+                    <span class="message-badge">@_messages.Count(x => !x.IsRead) unread</span>
+                    <span class="message-badge">@_decisions.Count decisions</span>
                 </div>
             </div>
 
-            @if (_messages.Count == 0)
+            @if (_surfaceItems.Count == 0)
             {
-                <div class="muted-text">No messages found.</div>
+                <div class="inbox-mail-empty">
+                    <div class="toolbar-title">Quiet inbox</div>
+                    <div class="muted-text">No traffic matches the current filters.</div>
+                </div>
             }
             else
             {
-                <div class="message-list">
-                    @foreach (var msg in _messages)
+                <div class="inbox-mail-list">
+                    @foreach (var item in _surfaceItems)
                     {
                         <button type="button"
-                                class="message-item @(SelectedMessage?.Id == msg.Id ? "selected" : "") @(!msg.IsRead ? "unread" : "")"
-                                @onclick="() => SelectMessageAsync(msg)"
+                                class="inbox-mail-item @(IsSelected(item) ? "selected" : "") @(item.EmphasisClass)"
+                                @onclick="() => SelectItemAsync(item)"
                                 disabled="@_busy">
-                            <div class="message-top">
-                                <span class="message-subject">@msg.Subject</span>
-                                <span class="message-date">@msg.CreatedDate</span>
-                            </div>
-
-                            <div class="message-type-row">
-                                <span class="message-type">@msg.MessageType</span>
-                                @if (!msg.IsRead)
+                            <div class="inbox-mail-item-top">
+                                <span class="inbox-mail-item-type">@item.TypeLabel</span>
+                                @if (!string.IsNullOrWhiteSpace(item.DateLabel))
                                 {
-                                    <span class="message-badge">Unread</span>
-                                }
-                                @if (msg.IsArchived)
-                                {
-                                    <span class="message-badge">Archived</span>
+                                    <span class="message-date">@item.DateLabel</span>
                                 }
                             </div>
 
-                            <div class="message-body-preview">@msg.Body</div>
+                            <div class="inbox-mail-item-title">@item.Title</div>
+
+                            @if (!string.IsNullOrWhiteSpace(item.Subtitle))
+                            {
+                                <div class="inbox-mail-item-subtitle">@item.Subtitle</div>
+                            }
+
+                            @if (!string.IsNullOrWhiteSpace(item.Preview))
+                            {
+                                <div class="message-body-preview">@item.Preview</div>
+                            }
+
+                            <div class="inbox-mail-item-tags">
+                                @foreach (var tag in item.Tags)
+                                {
+                                    <span class="message-badge">@tag</span>
+                                }
+                            </div>
                         </button>
                     }
                 </div>
             }
-        </section>
+        </aside>
 
-        <section class="panel-card">
-            <div class="table-toolbar">
-                <div>
-                    <div class="toolbar-title">Fight Offers</div>
-                    <div class="toolbar-subtitle">@_fightOffers.Count loaded</div>
-                </div>
-
-                <div class="button-row">
-                    <button class="btn-secondary"
-                            disabled="@(_busy || _fightOffers.All(x => IsPending(x.Status)))"
-                            @onclick="DeleteProcessedFightOffersAsync">
-                        Delete processed
-                    </button>
-                </div>
-            </div>
-
-            @if (_fightOffers.Count == 0)
+        <section class="inbox-mail-reader">
+            @if (_selectedItem is null)
             {
-                <div class="muted-text">No fight offers found.</div>
-            }
-            else
-            {
-                <div class="offer-list">
-                    @foreach (var offer in _fightOffers)
-                    {
-                        <div class="offer-card">
-                            <div class="offer-title">@offer.FighterName vs @offer.OpponentName</div>
-                            <div class="offer-meta">Promotion: @offer.PromotionName</div>
-                            <div class="offer-meta">Purse: @offer.Purse · Bonus: @offer.WinBonus</div>
-                            <div class="offer-meta">Weeks until fight: @offer.WeeksUntilFight · Camp: @offer.CampWeeksOffered week(s) · Title: @(offer.IsTitleFight ? "Yes" : "No") · Eliminator: @(offer.IsTitleEliminator ? "Yes" : "No")</div>
-                            @if (offer.IsShortNotice)
-                            {
-                                <div class="offer-meta">Short notice: Yes</div>
-                            }
-                            @if (!string.IsNullOrWhiteSpace(offer.Notes))
-                            {
-                                <div class="offer-meta">Notes: @offer.Notes</div>
-                            }
-                            <div class="offer-meta">Status: @offer.Status</div>
-
-                            <div class="button-row" style="margin-top:12px;">
-                                <button class="btn-secondary"
-                                        disabled="@(_busy || !IsPending(offer.Status))"
-                                        @onclick="() => AcceptFightOfferAsync(offer.OfferId)">
-                                    Accept
-                                </button>
-
-                                <button class="btn-secondary"
-                                        disabled="@(_busy || !IsPending(offer.Status))"
-                                        @onclick="() => RejectFightOfferAsync(offer.OfferId)">
-                                    Reject
-                                </button>
-
-                                <a class="btn-secondary" href="@($"/fighters/{offer.FighterId}")">Open fighter</a>
-
-                                <button class="btn-secondary"
-                                        disabled="@_busy"
-                                        @onclick="() => DeleteFightOfferAsync(offer.OfferId)">
-                                    Delete
-                                </button>
-                            </div>
-                        </div>
-                    }
+                <div class="inbox-reader-empty">
+                    <div class="toolbar-title">Select a thread</div>
+                    <div class="muted-text">Choose a message, offer or live decision from the left to inspect it here.</div>
                 </div>
             }
-        </section>
-    </div>
-
-    <div class="inbox-layout" style="margin-top:20px;">
-        <section class="panel-card">
-            <div class="table-toolbar">
-                <div>
-                    <div class="toolbar-title">Contract Offers</div>
-                    <div class="toolbar-subtitle">@_contractOffers.Count loaded</div>
-                </div>
-
-                <div class="button-row">
-                    <button class="btn-secondary"
-                            disabled="@(_busy || _contractOffers.All(x => IsPending(x.Status)))"
-                            @onclick="DeleteProcessedContractOffersAsync">
-                        Delete processed
-                    </button>
-                </div>
-            </div>
-
-            @if (_contractOffers.Count == 0)
+            else if (_selectedItem.Kind == InboxSurfaceKind.Message && SelectedMessage is not null)
             {
-                <div class="muted-text">No contract offers found.</div>
-            }
-            else
-            {
-                <div class="offer-list">
-                    @foreach (var offer in _contractOffers)
-                    {
-                        <div class="offer-card">
-                            <div class="offer-title">@offer.FighterName · @offer.PromotionName</div>
-                            <div class="offer-meta">Source: @offer.SourceType</div>
-                            <div class="offer-meta">Fights: @offer.OfferedFights · Base purse: @offer.BasePurse · Win bonus: @offer.WinBonus</div>
-                            <div class="offer-meta">Weeks to respond: @offer.WeeksToRespond</div>
-                            <div class="offer-meta">Status: @offer.Status</div>
-
-                            @if (!string.IsNullOrWhiteSpace(offer.Notes))
-                            {
-                                <div class="offer-meta">Notes: @offer.Notes</div>
-                            }
-                            @if (!string.IsNullOrWhiteSpace(offer.Recommendation))
-                            {
-                                <div class="offer-meta">Recommended angle: @offer.Recommendation</div>
-                            }
-
-                            <div class="button-row" style="margin-top:12px;">
-                                <button class="btn-secondary"
-                                        disabled="@(_busy || !IsPending(offer.Status))"
-                                        @onclick="() => AcceptContractOfferAsync(offer.Id)">
-                                    Accept as-is
-                                </button>
-
-                                <button class="btn-secondary"
-                                        disabled="@(_busy || !IsPending(offer.Status))"
-                                        @onclick="() => AcceptContractForMoneyAsync(offer.Id)">
-                                    Push money
-                                </button>
-
-                                <button class="btn-secondary"
-                                        disabled="@(_busy || !IsPending(offer.Status))"
-                                        @onclick="() => AcceptContractForSecurityAsync(offer.Id)">
-                                    Push security
-                                </button>
-
-                                <button class="btn-secondary"
-                                        disabled="@(_busy || !IsPending(offer.Status))"
-                                        @onclick="() => AcceptContractForExposureAsync(offer.Id)">
-                                    Push exposure
-                                </button>
-
-                                <button class="btn-secondary"
-                                        disabled="@(_busy || !IsPending(offer.Status))"
-                                        @onclick="() => RejectContractOfferAsync(offer.Id)">
-                                    Reject
-                                </button>
-
-                                <a class="btn-secondary" href="@($"/fighters/{offer.FighterId}")">Open fighter</a>
-
-                                <button class="btn-secondary"
-                                        disabled="@_busy"
-                                        @onclick="() => DeleteContractOfferAsync(offer.Id)">
-                                    Delete
-                                </button>
-                            </div>
-                        </div>
-                    }
-                </div>
-            }
-        </section>
-
-        <section class="panel-card">
-            @if (SelectedMessage is not null)
-            {
-                <div class="table-toolbar">
+                <div class="inbox-reader-head">
                     <div>
                         <div class="toolbar-title">@SelectedMessage.Subject</div>
                         <div class="toolbar-subtitle">@SelectedMessage.CreatedDate · @SelectedMessage.MessageType</div>
                     </div>
 
-                    <div class="button-row">
+                    <div class="button-row" style="flex-wrap:wrap;">
                         @if (!SelectedMessage.IsRead)
                         {
-                            <button class="btn-secondary" disabled="@_busy" @onclick="MarkSelectedReadAsync">
-                                Mark read
-                            </button>
+                            <button class="btn-secondary" disabled="@_busy" @onclick="MarkSelectedReadAsync">Mark read</button>
                         }
 
                         @if (!SelectedMessage.IsArchived)
                         {
-                            <button class="btn-secondary" disabled="@_busy" @onclick="ArchiveSelectedAsync">
-                                Archive
-                            </button>
+                            <button class="btn-secondary" disabled="@_busy" @onclick="ArchiveSelectedAsync">Archive</button>
                         }
                         else
                         {
-                            <button class="btn-secondary" disabled="@_busy" @onclick="RestoreSelectedAsync">
-                                Restore
-                            </button>
+                            <button class="btn-secondary" disabled="@_busy" @onclick="RestoreSelectedAsync">Restore</button>
                         }
 
-                        <button class="btn-secondary" disabled="@_busy" @onclick="DeleteSelectedAsync">
-                            Delete
-                        </button>
+                        <button class="btn-secondary" disabled="@_busy" @onclick="DeleteSelectedAsync">Delete</button>
                     </div>
                 </div>
 
-                <div class="message-full-body">@SelectedMessage.Body</div>
+                <div class="inbox-reader-body">
+                    <div class="inbox-reader-meta-row">
+                        <span class="message-badge">@SelectedMessage.MessageType</span>
+                        @if (!SelectedMessage.IsRead)
+                        {
+                            <span class="message-badge">Unread</span>
+                        }
+                        @if (SelectedMessage.IsArchived)
+                        {
+                            <span class="message-badge">Archived</span>
+                        }
+                    </div>
+
+                    <div class="message-full-body">@SelectedMessage.Body</div>
+                </div>
             }
-            else
+            else if (_selectedItem.Kind == InboxSurfaceKind.Decision && SelectedDecision is not null)
             {
-                <div class="toolbar-title">Message Detail</div>
-                <div class="muted-text">Select a message to view details.</div>
+                <div class="inbox-reader-head">
+                    <div>
+                        <div class="toolbar-title">@SelectedDecision.Headline</div>
+                        <div class="toolbar-subtitle">@SelectedDecision.CreatedDate · @SelectedDecision.DecisionType</div>
+                    </div>
+
+                    <div class="button-row" style="flex-wrap:wrap;">
+                        @if (SelectedDecision.FighterId is int decisionFighterId)
+                        {
+                            <a class="btn-secondary" href="@($"/fighters/{decisionFighterId}")">Open fighter</a>
+                        }
+                    </div>
+                </div>
+
+                <div class="inbox-reader-body">
+                    <div class="inbox-reader-meta-row">
+                        <span class="message-badge">Live decision</span>
+                        <span class="message-badge">@SelectedDecision.DecisionType</span>
+                    </div>
+
+                    <div class="message-full-body">@SelectedDecision.Body</div>
+
+                    @if (!string.IsNullOrWhiteSpace(SelectedDecision.OptionADescription))
+                    {
+                        <div class="inbox-choice-card">
+                            <div class="inbox-choice-title">@SelectedDecision.OptionALabel</div>
+                            <div class="muted-text">@SelectedDecision.OptionADescription</div>
+                        </div>
+                    }
+
+                    @if (!string.IsNullOrWhiteSpace(SelectedDecision.OptionBDescription))
+                    {
+                        <div class="inbox-choice-card">
+                            <div class="inbox-choice-title">@SelectedDecision.OptionBLabel</div>
+                            <div class="muted-text">@SelectedDecision.OptionBDescription</div>
+                        </div>
+                    }
+
+                    <div class="button-row" style="margin-top:18px; flex-wrap:wrap;">
+                        <button class="btn-primary"
+                                disabled="@_busy"
+                                @onclick="() => ResolveDecisionAsync(SelectedDecision.Id, SelectedDecision.OptionAKey)">
+                            @SelectedDecision.OptionALabel
+                        </button>
+
+                        <button class="btn-secondary"
+                                disabled="@_busy"
+                                @onclick="() => ResolveDecisionAsync(SelectedDecision.Id, SelectedDecision.OptionBKey)">
+                            @SelectedDecision.OptionBLabel
+                        </button>
+                    </div>
+                </div>
+            }
+            else if (_selectedItem.Kind == InboxSurfaceKind.FightOffer && SelectedFightOffer is not null)
+            {
+                <div class="inbox-reader-head">
+                    <div>
+                        <div class="toolbar-title">@SelectedFightOffer.FighterName vs @SelectedFightOffer.OpponentName</div>
+                        <div class="toolbar-subtitle">@SelectedFightOffer.PromotionName · @SelectedFightOffer.Status</div>
+                    </div>
+
+                    <div class="button-row" style="flex-wrap:wrap;">
+                        <a class="btn-secondary" href="@($"/fighters/{SelectedFightOffer.FighterId}")">Open fighter</a>
+                        <button class="btn-secondary" disabled="@_busy" @onclick="() => DeleteFightOfferAsync(SelectedFightOffer.OfferId)">Delete</button>
+                    </div>
+                </div>
+
+                <div class="inbox-reader-body">
+                    <div class="inbox-reader-meta-grid">
+                        <div class="meta-box"><div class="meta-label">Promotion</div><div class="meta-value">@SelectedFightOffer.PromotionName</div></div>
+                        <div class="meta-box"><div class="meta-label">Purse</div><div class="meta-value">@SelectedFightOffer.Purse</div></div>
+                        <div class="meta-box"><div class="meta-label">Win Bonus</div><div class="meta-value">@SelectedFightOffer.WinBonus</div></div>
+                        <div class="meta-box"><div class="meta-label">Weeks Until Fight</div><div class="meta-value">@SelectedFightOffer.WeeksUntilFight</div></div>
+                        <div class="meta-box"><div class="meta-label">Camp Weeks</div><div class="meta-value">@SelectedFightOffer.CampWeeksOffered</div></div>
+                        <div class="meta-box"><div class="meta-label">Status</div><div class="meta-value">@SelectedFightOffer.Status</div></div>
+                    </div>
+
+                    <div class="inbox-reader-meta-row">
+                        @if (SelectedFightOffer.IsTitleFight)
+                        {
+                            <span class="message-badge">Title Fight</span>
+                        }
+                        @if (SelectedFightOffer.IsTitleEliminator)
+                        {
+                            <span class="message-badge">Title Eliminator</span>
+                        }
+                        @if (SelectedFightOffer.IsShortNotice)
+                        {
+                            <span class="message-badge">Short Notice</span>
+                        }
+                    </div>
+
+                    @if (!string.IsNullOrWhiteSpace(SelectedFightOffer.Notes))
+                    {
+                        <div class="message-full-body">@SelectedFightOffer.Notes</div>
+                    }
+
+                    <div class="button-row" style="margin-top:18px; flex-wrap:wrap;">
+                        <button class="btn-primary"
+                                disabled="@(_busy || !IsPending(SelectedFightOffer.Status))"
+                                @onclick="() => AcceptFightOfferAsync(SelectedFightOffer.OfferId)">
+                            Accept
+                        </button>
+
+                        <button class="btn-secondary"
+                                disabled="@(_busy || !IsPending(SelectedFightOffer.Status))"
+                                @onclick="() => RejectFightOfferAsync(SelectedFightOffer.OfferId)">
+                            Reject
+                        </button>
+                    </div>
+                </div>
+            }
+            else if (_selectedItem.Kind == InboxSurfaceKind.ContractOffer && SelectedContractOffer is not null)
+            {
+                <div class="inbox-reader-head">
+                    <div>
+                        <div class="toolbar-title">@SelectedContractOffer.FighterName · @SelectedContractOffer.PromotionName</div>
+                        <div class="toolbar-subtitle">@SelectedContractOffer.SourceType · @SelectedContractOffer.Status</div>
+                    </div>
+
+                    <div class="button-row" style="flex-wrap:wrap;">
+                        <a class="btn-secondary" href="@($"/fighters/{SelectedContractOffer.FighterId}")">Open fighter</a>
+                        <button class="btn-secondary" disabled="@_busy" @onclick="() => DeleteContractOfferAsync(SelectedContractOffer.Id)">Delete</button>
+                    </div>
+                </div>
+
+                <div class="inbox-reader-body">
+                    <div class="inbox-reader-meta-grid">
+                        <div class="meta-box"><div class="meta-label">Promotion</div><div class="meta-value">@SelectedContractOffer.PromotionName</div></div>
+                        <div class="meta-box"><div class="meta-label">Fights</div><div class="meta-value">@SelectedContractOffer.OfferedFights</div></div>
+                        <div class="meta-box"><div class="meta-label">Base Purse</div><div class="meta-value">@SelectedContractOffer.BasePurse</div></div>
+                        <div class="meta-box"><div class="meta-label">Win Bonus</div><div class="meta-value">@SelectedContractOffer.WinBonus</div></div>
+                        <div class="meta-box"><div class="meta-label">Signing Bonus</div><div class="meta-value">@SelectedContractOffer.SigningBonus</div></div>
+                        <div class="meta-box"><div class="meta-label">Exclusivity</div><div class="meta-value">@SelectedContractOffer.ExclusivityType</div></div>
+                        <div class="meta-box"><div class="meta-label">Reply Window</div><div class="meta-value">@SelectedContractOffer.WeeksToRespond week(s)</div></div>
+                        <div class="meta-box"><div class="meta-label">Status</div><div class="meta-value">@SelectedContractOffer.Status</div></div>
+                    </div>
+
+                    <div class="inbox-reader-meta-row">
+                        <span class="message-badge">@SelectedContractOffer.SourceType</span>
+                        @if (!string.IsNullOrWhiteSpace(SelectedContractOffer.Recommendation))
+                        {
+                            <span class="message-badge">Recommended: @SelectedContractOffer.Recommendation</span>
+                        }
+                    </div>
+
+                    @if (!string.IsNullOrWhiteSpace(SelectedContractOffer.Notes))
+                    {
+                        <div class="message-full-body">@SelectedContractOffer.Notes</div>
+                    }
+
+                    <div class="button-row" style="margin-top:18px; flex-wrap:wrap;">
+                        <button class="btn-primary"
+                                disabled="@(_busy || !IsPending(SelectedContractOffer.Status))"
+                                @onclick="() => AcceptContractOfferAsync(SelectedContractOffer.Id)">
+                            Accept as-is
+                        </button>
+
+                        <button class="btn-secondary"
+                                disabled="@(_busy || !IsPending(SelectedContractOffer.Status))"
+                                @onclick="() => AcceptContractForMoneyAsync(SelectedContractOffer.Id)">
+                            Push money
+                        </button>
+
+                        <button class="btn-secondary"
+                                disabled="@(_busy || !IsPending(SelectedContractOffer.Status))"
+                                @onclick="() => AcceptContractForBonusAsync(SelectedContractOffer.Id)">
+                            Push bonus
+                        </button>
+
+                        <button class="btn-secondary"
+                                disabled="@(_busy || !IsPending(SelectedContractOffer.Status))"
+                                @onclick="() => AcceptContractForSecurityAsync(SelectedContractOffer.Id)">
+                            Push security
+                        </button>
+
+                        <button class="btn-secondary"
+                                disabled="@(_busy || !IsPending(SelectedContractOffer.Status))"
+                                @onclick="() => AcceptContractForExposureAsync(SelectedContractOffer.Id)">
+                            Push exposure
+                        </button>
+
+                        <button class="btn-secondary"
+                                disabled="@(_busy || !IsPending(SelectedContractOffer.Status))"
+                                @onclick="() => RejectContractOfferAsync(SelectedContractOffer.Id)">
+                            Reject
+                        </button>
+                    </div>
+                </div>
             }
         </section>
-    </div>
+    </section>
 }
 
 @if (!string.IsNullOrWhiteSpace(_status))
@@ -423,6 +381,11 @@ else
     private List<DecisionEventVm> _decisions = new();
 
     private InboxMessageVm? SelectedMessage;
+    private FightOfferVm? SelectedFightOffer;
+    private ContractOfferVm? SelectedContractOffer;
+    private DecisionEventVm? SelectedDecision;
+    private InboxSurfaceItem? _selectedItem;
+    private List<InboxSurfaceItem> _surfaceItems = new();
 
     private bool _loading = true;
     private bool _busy;
@@ -431,6 +394,7 @@ else
 
     private string _messageType = "";
     private string _visibilityFilter = "active";
+    private string _listFilter = "all";
     private List<string> _messageTypes = new();
 
     protected override async Task OnInitializedAsync()
@@ -466,15 +430,8 @@ else
                 .OrderBy(x => x)
                 .ToList();
 
-            if (SelectedMessage is not null)
-            {
-                SelectedMessage = _messages.FirstOrDefault(x => x.Id == SelectedMessage.Id)
-                                  ?? _messages.FirstOrDefault();
-            }
-            else
-            {
-                SelectedMessage = _messages.FirstOrDefault();
-            }
+            RebuildSurfaceItems();
+            ReselectOrFallback();
 
             await InboxStatusService.RefreshAsync();
         }
@@ -489,6 +446,145 @@ else
             await InvokeAsync(StateHasChanged);
         }
     }
+
+    private void RebuildSurfaceItems()
+    {
+        var items = new List<InboxSurfaceItem>();
+
+        if (_listFilter is "all" or "decisions")
+        {
+            items.AddRange(_decisions.Select(x => new InboxSurfaceItem(
+                InboxSurfaceKind.Decision,
+                x.Id,
+                x.Headline,
+                x.DecisionType,
+                x.Body,
+                x.CreatedDate,
+                false,
+                new[] { "Live", x.DecisionType },
+                "inbox-tone-decision")));
+        }
+
+        if (_listFilter is "all" or "fightoffers")
+        {
+            items.AddRange(_fightOffers.Select(x => new InboxSurfaceItem(
+                InboxSurfaceKind.FightOffer,
+                x.OfferId,
+                $"{x.FighterName} vs {x.OpponentName}",
+                x.PromotionName,
+                BuildFightOfferPreview(x),
+                $"Fight in {x.WeeksUntilFight}w",
+                false,
+                BuildFightOfferTags(x),
+                x.IsShortNotice ? "inbox-tone-urgent" : "inbox-tone-offer")));
+        }
+
+        if (_listFilter is "all" or "contractoffers")
+        {
+            items.AddRange(_contractOffers.Select(x => new InboxSurfaceItem(
+                InboxSurfaceKind.ContractOffer,
+                x.Id,
+                $"{x.FighterName} · {x.PromotionName}",
+                x.SourceType,
+                BuildContractOfferPreview(x),
+                $"{x.WeeksToRespond}w to reply",
+                false,
+                BuildContractOfferTags(x),
+                "inbox-tone-contract")));
+        }
+
+        if (_listFilter is "all" or "messages")
+        {
+            items.AddRange(_messages.Select(x => new InboxSurfaceItem(
+                InboxSurfaceKind.Message,
+                x.Id,
+                x.Subject,
+                x.MessageType,
+                x.Body,
+                x.CreatedDate,
+                !x.IsRead,
+                BuildMessageTags(x),
+                !x.IsRead ? "inbox-tone-unread" : "inbox-tone-message")));
+        }
+
+        _surfaceItems = items
+            .OrderByDescending(x => x.Kind == InboxSurfaceKind.Decision)
+            .ThenByDescending(x => x.IsUnread)
+            .ThenByDescending(x => x.Id)
+            .ToList();
+    }
+
+    private void ReselectOrFallback()
+    {
+        if (_selectedItem is not null)
+        {
+            _selectedItem = _surfaceItems.FirstOrDefault(x => x.Kind == _selectedItem.Kind && x.Id == _selectedItem.Id);
+        }
+
+        _selectedItem ??= _surfaceItems.FirstOrDefault();
+        SyncSelectedObjects();
+    }
+
+    private void SyncSelectedObjects()
+    {
+        SelectedMessage = null;
+        SelectedFightOffer = null;
+        SelectedContractOffer = null;
+        SelectedDecision = null;
+
+        if (_selectedItem is null)
+            return;
+
+        switch (_selectedItem.Kind)
+        {
+            case InboxSurfaceKind.Message:
+                SelectedMessage = _messages.FirstOrDefault(x => x.Id == _selectedItem.Id);
+                break;
+            case InboxSurfaceKind.FightOffer:
+                SelectedFightOffer = _fightOffers.FirstOrDefault(x => x.OfferId == _selectedItem.Id);
+                break;
+            case InboxSurfaceKind.ContractOffer:
+                SelectedContractOffer = _contractOffers.FirstOrDefault(x => x.Id == _selectedItem.Id);
+                break;
+            case InboxSurfaceKind.Decision:
+                SelectedDecision = _decisions.FirstOrDefault(x => x.Id == _selectedItem.Id);
+                break;
+        }
+    }
+
+    private async Task SelectItemAsync(InboxSurfaceItem item)
+    {
+        if (_busy)
+            return;
+
+        _selectedItem = item;
+        SyncSelectedObjects();
+        _status = null;
+        _error = null;
+
+        if (item.Kind == InboxSurfaceKind.Message && SelectedMessage is not null && !SelectedMessage.IsRead)
+        {
+            try
+            {
+                _busy = true;
+                await InboxService.MarkMessageAsReadAsync(SelectedMessage.Id);
+                await ReloadAsync();
+                _selectedItem = _surfaceItems.FirstOrDefault(x => x.Kind == item.Kind && x.Id == item.Id);
+                SyncSelectedObjects();
+            }
+            catch (Exception ex)
+            {
+                _error = ex.ToString();
+            }
+            finally
+            {
+                _busy = false;
+            }
+        }
+    }
+
+    private bool IsSelected(InboxSurfaceItem item)
+        => _selectedItem is not null && _selectedItem.Kind == item.Kind && _selectedItem.Id == item.Id;
 
     private async Task MarkAllReadAsync()
     {
@@ -547,35 +643,6 @@ else
         finally
         {
             _busy = false;
-        }
-    }
-
-    private async Task SelectMessageAsync(InboxMessageVm msg)
-    {
-        if (_busy)
-            return;
-
-        SelectedMessage = msg;
-        _status = null;
-        _error = null;
-
-        if (!msg.IsRead)
-        {
-            try
-            {
-                _busy = true;
-                await InboxService.MarkMessageAsReadAsync(msg.Id);
-                await ReloadAsync();
-                SelectedMessage = _messages.FirstOrDefault(x => x.Id == msg.Id);
-            }
-            catch (Exception ex)
-            {
-                _error = ex.ToString();
-            }
-            finally
-            {
-                _busy = false;
-            }
         }
     }
 
@@ -848,6 +915,33 @@ else
         }
     }
 
+    private async Task AcceptContractForBonusAsync(int contractOfferId)
+    {
+        try
+        {
+            _busy = true;
+            _error = null;
+
+            var result = await ContractOfferResponseService.AcceptForBonusAsync(contractOfferId);
+            if (!result.Success)
+            {
+                _error = result.Message;
+                return;
+            }
+
+            _status = result.Message ?? "Contract bonus push resolved.";
+            await ReloadAsync();
+        }
+        catch (Exception ex)
+        {
+            _error = ex.ToString();
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
     private async Task AcceptContractForSecurityAsync(int contractOfferId)
     {
         try
@@ -967,6 +1061,47 @@ else
     private static bool IsPending(string? status)
         => string.Equals(status, "Pending", StringComparison.OrdinalIgnoreCase);
 
+    private static string BuildFightOfferPreview(FightOfferVm offer)
+        => $"Purse {offer.Purse} · Bonus {offer.WinBonus} · Camp {offer.CampWeeksOffered}w";
+
+    private static IReadOnlyList<string> BuildFightOfferTags(FightOfferVm offer)
+    {
+        var tags = new List<string>();
+        if (IsPending(offer.Status))
+            tags.Add("Pending");
+        if (offer.IsTitleFight)
+            tags.Add("Title");
+        if (offer.IsTitleEliminator)
+            tags.Add("Eliminator");
+        if (offer.IsShortNotice)
+            tags.Add("Short notice");
+        return tags;
+    }
+
+    private static string BuildContractOfferPreview(ContractOfferVm offer)
+        => $"{offer.OfferedFights} fights · {offer.BasePurse} base · {offer.WinBonus} win bonus · {offer.SigningBonus} signing";
+
+    private static IReadOnlyList<string> BuildContractOfferTags(ContractOfferVm offer)
+    {
+        var tags = new List<string>();
+        if (IsPending(offer.Status))
+            tags.Add("Pending");
+        tags.Add(offer.ExclusivityType);
+        if (!string.IsNullOrWhiteSpace(offer.Recommendation))
+            tags.Add(offer.Recommendation!);
+        return tags;
+    }
+
+    private static IReadOnlyList<string> BuildMessageTags(InboxMessageVm message)
+    {
+        var tags = new List<string> { message.MessageType };
+        if (!message.IsRead)
+            tags.Add("Unread");
+        if (message.IsArchived)
+            tags.Add("Archived");
+        return tags;
+    }
+
     private void HandleInboxStatusChanged()
     {
         if (_busy || _loading)
@@ -978,5 +1113,34 @@ else
     public void Dispose()
     {
         InboxStatusService.Changed -= HandleInboxStatusChanged;
+    }
+
+    private enum InboxSurfaceKind
+    {
+        Message,
+        Decision,
+        FightOffer,
+        ContractOffer
+    }
+
+    private sealed record InboxSurfaceItem(
+        InboxSurfaceKind Kind,
+        int Id,
+        string Title,
+        string Subtitle,
+        string Preview,
+        string DateLabel,
+        bool IsUnread,
+        IReadOnlyList<string> Tags,
+        string EmphasisClass)
+    {
+        public string TypeLabel => Kind switch
+        {
+            InboxSurfaceKind.Message => "Message",
+            InboxSurfaceKind.Decision => "Decision",
+            InboxSurfaceKind.FightOffer => "Fight Offer",
+            InboxSurfaceKind.ContractOffer => "Contract Offer",
+            _ => "Item"
+        };
     }
 }

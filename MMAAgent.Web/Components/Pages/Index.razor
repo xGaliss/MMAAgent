@@ -3,6 +3,7 @@
 @rendermode InteractiveServer
 @using MMAAgent.Web.Models
 @using MMAAgent.Web.Services
+@using MMAAgent.Web.Helpers
 @inject WebGameSessionService GameSession
 @inject WebMainMenuService MainMenuService
 @inject NavigationManager Navigation
@@ -13,16 +14,16 @@
     <section class="menu-hero-card">
         <div class="menu-hero-layout">
             <div class="menu-hero-copy">
-                <div class="menu-kicker">MAIN MENU</div>
-                <h1 class="menu-hero-title">Build your MMA management universe</h1>
+                <div class="menu-kicker">MMA MANAGEMENT COMMAND</div>
+                <h1 class="menu-hero-title">Build careers. Control the game.</h1>
                 <p class="menu-hero-text">
-                    Jump back into an active save or create a fresh combat world with your own agency, roster and long-term storylines.
+                    Run your agency like a fight promotion war room: build rosters, shape title pictures, manage camps, survive chaos and steer a living MMA universe.
                 </p>
 
                 <div class="menu-hero-tags">
-                    <span class="menu-hero-tag">Career Mode</span>
-                    <span class="menu-hero-tag">Living World</span>
-                    <span class="menu-hero-tag">New Save Ready</span>
+                    <span class="menu-hero-tag">Live World</span>
+                    <span class="menu-hero-tag">Fight Business</span>
+                    <span class="menu-hero-tag">Agency Command</span>
                 </div>
             </div>
 
@@ -43,23 +44,28 @@
         </div>
     </section>
 
-    <div class="menu-card-grid">
-        <section class="menu-card">
+    <div class="menu-card-grid menu-card-grid-main">
+        <section class="menu-card menu-saves-card">
             <div class="menu-card-head">
                 <div>
-                    <div class="menu-card-title">Detected Saves</div>
-                    <div class="menu-card-subtitle">Recent saves found on this machine.</div>
+                    <div class="menu-card-title">Save Bay</div>
+                    <div class="menu-card-subtitle">Continue a career, clean old slots or jump back into the last world you touched.</div>
                 </div>
                 <div class="menu-count-pill">@_saves.Count total</div>
             </div>
 
+            <div class="menu-save-quick-actions">
+                <button class="btn-secondary" @onclick="LoadConfiguredAsync" disabled="@_busy">Load configured save</button>
+                <button class="btn-secondary" @onclick="LoadLastAsync" disabled="@_busy">Load last save</button>
+            </div>
+
             @if (_saves.Count == 0)
             {
-                <div class="menu-empty-state">
+                <div class="menu-empty-state menu-empty-state-compact">
                     <div class="menu-empty-icon">+</div>
                     <div class="menu-empty-title">No local saves detected</div>
                     <div class="menu-empty-text">
-                        Create a new career on the right or load a database manually to get started.
+                        Start a new command profile on the right or reconnect to a save manually.
                     </div>
                 </div>
             }
@@ -100,64 +106,161 @@
             }
         </section>
 
-        <section class="menu-card">
+        <section class="menu-card menu-setup-card">
             <div class="menu-card-head">
                 <div>
-                    <div class="menu-card-title">New Game / Manual Load</div>
-                    <div class="menu-card-subtitle">Create a new career world or reconnect to a save file you already know.</div>
+                    <div class="menu-card-title">Career Setup</div>
+                    <div class="menu-card-subtitle">Build your manager identity first, then choose the world size and launch the save.</div>
                 </div>
-                <div class="menu-count-pill menu-count-pill-gold">Career Setup</div>
+                <div class="menu-count-pill menu-count-pill-gold">New Save</div>
             </div>
 
             <div class="form-stack">
-                <div class="menu-section-block">
-                    <div class="menu-section-title">Continue Existing Career</div>
-                    <div class="menu-section-text">Use a detected save, reopen your configured slot or point directly to a database file.</div>
-
-                    <label class="field-label">Save path</label>
-                    <input class="text-input" @bind="_loadPath" placeholder="C:\Ruta\A\Tu\Save.db" />
-
-                    <div class="button-row menu-action-wrap">
-                        <button class="btn-secondary" @onclick="LoadConfiguredAsync" disabled="@_busy">Load configured save</button>
-                        <button class="btn-secondary" @onclick="LoadLastAsync" disabled="@_busy">Load last save</button>
-                        <button class="btn-primary" @onclick="LoadByPathAsync" disabled="@_busy">Load by path</button>
+                <div class="menu-setup-steps">
+                    <div class="menu-setup-step">
+                        <span>01</span>
+                        <strong>Manager Identity</strong>
+                    </div>
+                    <div class="menu-setup-step">
+                        <span>02</span>
+                        <strong>World Setup</strong>
+                    </div>
+                    <div class="menu-setup-step">
+                        <span>03</span>
+                        <strong>Launch Career</strong>
                     </div>
                 </div>
 
                 <div class="menu-section-block menu-section-block-featured">
-                    <div class="menu-section-title">Create New Career World</div>
-                    <div class="menu-section-text">Set your save, manager identity and initial world size. Everything else will spin up from the template database.</div>
+                    <div class="menu-section-title">Manager Identity</div>
+                    <div class="menu-section-text">Choose who fronts the agency on day one. We can evolve this later into portraits, backgrounds and deeper flavor.</div>
 
-                    <div class="menu-form-grid">
-                        <div class="form-stack">
-                            <label class="field-label">Save name</label>
-                            <input class="text-input" @bind="_saveName" placeholder="MiPartida" />
-                        </div>
+                    <div class="manager-creator-grid">
+                        <section class="manager-preview-card manager-preview-card-stage">
+                            <div class="section-kicker">Career Face</div>
+                            <div class="manager-preview-top">
+                                <div class="manager-preview-avatar @BuildAvatarClass(_avatarKey)">
+                                    <span>@BuildAvatarMonogram(_avatarKey)</span>
+                                </div>
 
-                        <div class="form-stack">
-                            <label class="field-label">Fighter count</label>
-                            <input class="text-input" type="number" @bind="_fighterCount" />
-                        </div>
+                                <div>
+                                    <div class="manager-preview-name">@GetPreviewAgentName()</div>
+                                    <div class="muted-text">@GetPreviewAgencyName()</div>
+                                    <div class="muted-text inline-meta" style="margin-top:10px;">
+                                        @if (!string.IsNullOrWhiteSpace(BuildFlagUrl(_agentNationality)))
+                                        {
+                                            <span class="country-flag-image"
+                                                  role="img"
+                                                  aria-label="@($"{_agentNationality} flag")"
+                                                  title="@_agentNationality"
+                                                  style="@($"background-image:url('{BuildFlagUrl(_agentNationality)}');")"></span>
+                                        }
+                                        <span>@_agentNationality</span>
+                                        <span class="message-badge">@FormatAvatarLabel(_avatarKey)</span>
+                                    </div>
+                                </div>
+                            </div>
 
-                        <div class="form-stack">
-                            <label class="field-label">Agent name</label>
-                            <input class="text-input" @bind="_agentName" placeholder="Alejandro" />
-                        </div>
+                            <div class="manager-preview-copy">
+                                Your first impression in the business. This doesn’t change stats yet, but it gives the save a clear face and tone from the start.
+                            </div>
+                        </section>
 
-                        <div class="form-stack">
-                            <label class="field-label">Agency name</label>
-                            <input class="text-input" @bind="_agencyName" placeholder="Galiss Management" />
-                        </div>
+                        <section class="menu-section-block menu-section-block-inner">
+                            <div class="menu-form-grid">
+                                <div class="form-stack">
+                                    <label class="field-label">Agent name</label>
+                                    <input class="text-input" @bind="_agentName" placeholder="Alejandro" />
+                                </div>
+
+                                <div class="form-stack">
+                                    <label class="field-label">Agency name</label>
+                                    <input class="text-input" @bind="_agencyName" placeholder="Galiss Management" />
+                                </div>
+
+                                <div class="form-stack">
+                                    <label class="field-label">Nationality</label>
+                                    <select class="text-input" @bind="_agentNationality">
+                                        @foreach (var country in _agentNationalities)
+                                        {
+                                            <option value="@country">@country</option>
+                                        }
+                                    </select>
+                                </div>
+                            </div>
+
+                            <div class="menu-avatar-grid">
+                                @foreach (var preset in _avatarPresets)
+                                {
+                                    <button type="button"
+                                            class="manager-avatar-choice @(preset.Key == _avatarKey ? "selected" : "")"
+                                            @onclick="@(() => _avatarKey = preset.Key)">
+                                        <div class="manager-avatar-choice-mark @BuildAvatarClass(preset.Key)">
+                                            <span>@BuildAvatarMonogram(preset.Key)</span>
+                                        </div>
+                                        <div class="manager-avatar-choice-copy">
+                                            <strong>@preset.Label</strong>
+                                            <span>@preset.Description</span>
+                                        </div>
+                                    </button>
+                                }
+                            </div>
+                        </section>
                     </div>
+                </div>
 
-                    <div class="menu-create-footer">
-                        <button class="btn-primary menu-create-button" @onclick="CreateNewGameAsync" disabled="@_busy">
-                            @(_busy ? "Building world..." : "Create new game")
-                        </button>
+                <div class="menu-section-block menu-section-block-world">
+                    <div class="menu-section-title">World Setup</div>
+                    <div class="menu-section-text">Pick the save slot and how dense the first version of the world should be.</div>
 
-                        <div class="menu-active-save">
-                            <span>Active save</span>
-                            <strong>@(_currentSavePath ?? "none")</strong>
+                    <div class="menu-world-grid">
+                        <div class="menu-world-main">
+                            <div class="menu-form-grid">
+                                <div class="form-stack">
+                                    <label class="field-label">Save name</label>
+                                    <input class="text-input" @bind="_saveName" placeholder="MiPartida" />
+                                </div>
+
+                                <div class="form-stack">
+                                    <label class="field-label">Fighter count</label>
+                                    <input class="text-input" type="number" @bind="_fighterCount" />
+                                </div>
+                            </div>
+
+                            <div class="menu-create-footer">
+                                <button class="btn-primary menu-create-button" @onclick="CreateNewGameAsync" disabled="@_busy">
+                                    @(_busy ? "Building world..." : "Create new game")
+                                </button>
+
+                                <div class="menu-active-save">
+                                    <span>Active save</span>
+                                    <strong>@(_currentSavePath ?? "none")</strong>
+                                </div>
+                            </div>
+                        </div>
+
+                        <aside class="menu-world-aside">
+                            <div class="menu-world-note">
+                                <span class="section-kicker">Launch Note</span>
+                                <strong>Large worlds feel richer, but slower to read early.</strong>
+                                <p>3000 is great if you want a wide ecosystem. Use lower counts if you want faster early testing.</p>
+                            </div>
+                        </aside>
+                    </div>
+                </div>
+
+                <div class="menu-section-block menu-section-block-utility">
+                    <div class="menu-section-title">Manual Reconnect</div>
+                    <div class="menu-section-text">If a save is outside the detected folder, point directly to the database path and reopen it from here.</div>
+
+                    <div class="menu-utility-grid">
+                        <div class="form-stack">
+                            <label class="field-label">Save path</label>
+                            <input class="text-input" @bind="_loadPath" placeholder="C:\Ruta\A\Tu\Save.db" />
+                        </div>
+
+                        <div class="button-row menu-action-wrap">
+                            <button class="btn-primary" @onclick="LoadByPathAsync" disabled="@_busy">Load by path</button>
                         </div>
                     </div>
                 </div>
@@ -184,11 +287,26 @@
     private string _saveName = "MiPartida";
     private string _agentName = "";
     private string _agencyName = "";
+    private string _agentNationality = "Spain";
+    private string _avatarKey = "Promoter";
     private int _fighterCount = 3000;
     private string? _currentSavePath;
     private List<SaveCardVm> _saves = new();
     private string? _renamePath;
     private string _renameName = "";
+    private readonly string[] _agentNationalities =
+    {
+        "Spain", "USA", "Brazil", "Mexico", "Argentina", "France", "UK", "Canada", "Japan", "South Korea", "Nigeria", "Australia"
+    };
+    private readonly (string Key, string Label, string Description)[] _avatarPresets =
+    {
+        ("Promoter", "Promoter", "Press-facing operator built for hype and big stages."),
+        ("Tactician", "Tactician", "Cold planner who reads matchups and long arcs."),
+        ("Veteran", "Veteran Fighter", "Ex-fighter vibe with earned room respect."),
+        ("Corporate", "Corporate Closer", "Clean operator focused on money and leverage."),
+        ("Shark", "Deal Shark", "Aggressive closer who pushes every edge."),
+        ("Wildcard", "Wildcard", "Unpredictable operator with chaotic upside.")
+    };
 
     protected override async Task OnInitializedAsync()
     {
@@ -267,7 +385,7 @@
     {
         await RunAsync(async () =>
         {
-            var path = await GameSession.CreateNewGameAsync(_saveName, _agentName, _agencyName, _fighterCount);
+            var path = await GameSession.CreateNewGameAsync(_saveName, _agentName, _agencyName, _fighterCount, _agentNationality, _avatarKey);
             _currentSavePath = path;
             Navigation.NavigateTo("/dashboard");
         });
@@ -314,4 +432,46 @@
 
         return "..." + path[^maxLength..];
     }
+
+    private string GetPreviewAgentName()
+        => string.IsNullOrWhiteSpace(_agentName) ? "Your Manager" : _agentName.Trim();
+
+    private string GetPreviewAgencyName()
+        => string.IsNullOrWhiteSpace(_agencyName) ? "Agency not named yet" : _agencyName.Trim();
+
+    private static string? BuildFlagUrl(string? countryName)
+        => CountryFlagHelper.GetFlagImageUrl(countryName);
+
+    private static string BuildAvatarClass(string avatarKey)
+        => avatarKey switch
+        {
+            "Tactician" => "agent-avatar-tactician",
+            "Veteran" => "agent-avatar-veteran",
+            "Corporate" => "agent-avatar-corporate",
+            "Wildcard" => "agent-avatar-wildcard",
+            "Shark" => "agent-avatar-shark",
+            _ => "agent-avatar-promoter"
+        };
+
+    private static string BuildAvatarMonogram(string avatarKey)
+        => avatarKey switch
+        {
+            "Tactician" => "TC",
+            "Veteran" => "VF",
+            "Corporate" => "CP",
+            "Wildcard" => "WC",
+            "Shark" => "SH",
+            _ => "PR"
+        };
+
+    private static string FormatAvatarLabel(string avatarKey)
+        => avatarKey switch
+        {
+            "Tactician" => "Tactician",
+            "Veteran" => "Veteran Fighter",
+            "Corporate" => "Corporate Closer",
+            "Wildcard" => "Wildcard",
+            "Shark" => "Deal Shark",
+            _ => "Promoter"
+        };
 }

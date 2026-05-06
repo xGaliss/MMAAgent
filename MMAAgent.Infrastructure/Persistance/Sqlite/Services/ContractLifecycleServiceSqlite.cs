@@ -96,6 +96,8 @@ public sealed class ContractLifecycleServiceSqlite : IContractLifecycleService
                     OfferedFights: decision.OfferedFights,
                     BasePurse: decision.BasePurse,
                     WinBonus: decision.WinBonus,
+                    SigningBonus: decision.SigningBonus,
+                    ExclusivityType: decision.ExclusivityType,
                     WeeksToRespond: 2,
                     Status: "Pending",
                     SourceType: "Renewal",
@@ -109,7 +111,7 @@ public sealed class ContractLifecycleServiceSqlite : IContractLifecycleService
                     AgentId = agent.Id,
                     MessageType = "ContractOffer",
                     Subject = $"Renewal offer for {fighter.Name}",
-                    Body = $"{promotion.Name} offers {fighter.Name} a new {decision.OfferedFights}-fight deal. Base purse: {decision.BasePurse}, win bonus: {decision.WinBonus}.",
+                    Body = $"{promotion.Name} offers {fighter.Name} a new {decision.OfferedFights}-fight deal. Base purse: {decision.BasePurse}, win bonus: {decision.WinBonus}, signing bonus: {decision.SigningBonus}, exclusivity: {decision.ExclusivityType}.",
                     CreatedDate = currentDate,
                     IsRead = false
                 });
@@ -135,7 +137,7 @@ public sealed class ContractLifecycleServiceSqlite : IContractLifecycleService
                     AgentId = agent.Id,
                     MessageType = "ContractOffer",
                     Subject = $"Market offer for {fighter.Name}",
-                    Body = $"{marketOffer.PromotionName} wants to sign {fighter.Name} to a {marketOffer.OfferedFights}-fight deal. Base purse: {marketOffer.BasePurse}, win bonus: {marketOffer.WinBonus}.",
+                    Body = $"{marketOffer.PromotionName} wants to sign {fighter.Name} to a {marketOffer.OfferedFights}-fight deal. Base purse: {marketOffer.BasePurse}, win bonus: {marketOffer.WinBonus}, signing bonus: {marketOffer.SigningBonus}, exclusivity: {marketOffer.ExclusivityType}.",
                     CreatedDate = currentDate,
                     IsRead = false
                 });
@@ -197,6 +199,8 @@ public sealed class ContractLifecycleServiceSqlite : IContractLifecycleService
             OfferedFights: pitchDecision.OfferedFights,
             BasePurse: pitchDecision.BasePurse,
             WinBonus: pitchDecision.WinBonus,
+            SigningBonus: pitchDecision.SigningBonus,
+            ExclusivityType: pitchDecision.ExclusivityType,
             WeeksToRespond: 2,
             Status: "Pending",
             SourceType: "PitchAccepted",
@@ -212,7 +216,7 @@ public sealed class ContractLifecycleServiceSqlite : IContractLifecycleService
             AgentId = agent.Id,
             MessageType = "ContractOffer",
             Subject = $"Pitch accepted for {fighter.Name}",
-            Body = $"{promotion.Name} is interested in signing {fighter.Name}. {pitchDecision.OfferedFights}-fight deal, base purse {pitchDecision.BasePurse}, win bonus {pitchDecision.WinBonus}.",
+            Body = $"{promotion.Name} is interested in signing {fighter.Name}. {pitchDecision.OfferedFights}-fight deal, base purse {pitchDecision.BasePurse}, win bonus {pitchDecision.WinBonus}, signing bonus {pitchDecision.SigningBonus}, exclusivity {pitchDecision.ExclusivityType}.",
             CreatedDate = DateTime.UtcNow.ToString("yyyy-MM-dd"),
             IsRead = false
         });
@@ -370,6 +374,8 @@ WHERE Status = 'Pending'
                 OfferedFights: decision.OfferedFights,
                 BasePurse: decision.BasePurse,
                 WinBonus: decision.WinBonus,
+                SigningBonus: decision.SigningBonus,
+                ExclusivityType: decision.ExclusivityType,
                 WeeksToRespond: 2,
                 Status: "Pending",
                 SourceType: "Market",
@@ -382,7 +388,9 @@ WHERE Status = 'Pending'
                 promotion.Name,
                 decision.OfferedFights,
                 decision.BasePurse,
-                decision.WinBonus);
+                decision.WinBonus,
+                decision.SigningBonus,
+                decision.ExclusivityType);
         }
 
         return null;
@@ -414,15 +422,17 @@ WHERE Status = 'Pending'
 
         if (score < 28)
         {
-            return new RenewalDecision(false, 0, 0, 0,
+            return new RenewalDecision(false, 0, 0, 0, 0, "Exclusive",
                 $"Renewal score too low ({score}). Recent form W:{recentForm.Wins} L:{recentForm.Losses}, streak {recentForm.LossStreak}.");
         }
 
         var fights = score >= 60 ? 4 : 3;
         var basePurse = Math.Max(2500, 2500 + (fighter.Skill * 90) + (fighter.Popularity * 30));
         var winBonus = Math.Max(1000, 1200 + (fighter.Popularity * 20));
+        var signingBonus = Math.Max(0, 800 + (fighter.Popularity * 18) + (recentForm.Wins * 120));
+        var exclusivityType = promotion.Strictness >= 18 ? "Exclusive" : "Flexible";
 
-        return new RenewalDecision(true, fights, basePurse, winBonus,
+        return new RenewalDecision(true, fights, basePurse, winBonus, signingBonus, exclusivityType,
             $"Renewal approved. Score {score}. Recent form W:{recentForm.Wins} L:{recentForm.Losses}.");
     }
 
@@ -447,15 +457,17 @@ WHERE Status = 'Pending'
 
         if (score < 46)
         {
-            return new PitchDecision(false, 0, 0, 0,
+            return new PitchDecision(false, 0, 0, 0, 0, "Exclusive",
                 $"Score {score}. Promotion is not interested right now.");
         }
 
         var fights = score >= 85 ? 4 : 3;
         var basePurse = Math.Max(2000, 1800 + fighter.Skill * 80 + fighter.Popularity * 25);
         var winBonus = Math.Max(800, 900 + fighter.Popularity * 15);
+        var signingBonus = Math.Max(0, 700 + (fighter.Popularity * 15) + (recentForm.Wins * 90));
+        var exclusivityType = promotion.Strictness >= 20 ? "Exclusive" : score >= 92 ? "Open" : "Flexible";
 
-        return new PitchDecision(true, fights, basePurse, winBonus,
+        return new PitchDecision(true, fights, basePurse, winBonus, signingBonus, exclusivityType,
             $"Pitch accepted with score {score}.");
     }
 
@@ -695,12 +707,14 @@ WHERE Id = $fighterId;";
 INSERT INTO ContractOffers
 (
     FighterId, PromotionId, OfferedFights, BasePurse, WinBonus,
+    SigningBonus, ExclusivityType,
     WeeksToRespond, Status, SourceType, Notes,
     CreatedWeek, CreatedDate, RespondedDate
 )
 VALUES
 (
     $fighterId, $promotionId, $offeredFights, $basePurse, $winBonus,
+    $signingBonus, $exclusivityType,
     $weeksToRespond, $status, $sourceType, $notes,
     $createdWeek, $createdDate, $respondedDate
 );";
@@ -710,6 +724,8 @@ VALUES
         cmd.Parameters.AddWithValue("$offeredFights", offer.OfferedFights);
         cmd.Parameters.AddWithValue("$basePurse", offer.BasePurse);
         cmd.Parameters.AddWithValue("$winBonus", offer.WinBonus);
+        cmd.Parameters.AddWithValue("$signingBonus", offer.SigningBonus);
+        cmd.Parameters.AddWithValue("$exclusivityType", offer.ExclusivityType);
         cmd.Parameters.AddWithValue("$weeksToRespond", offer.WeeksToRespond);
         cmd.Parameters.AddWithValue("$status", offer.Status);
         cmd.Parameters.AddWithValue("$sourceType", offer.SourceType);
@@ -754,10 +770,12 @@ WHERE Id = $id;";
             cmd.CommandText = @"
 UPDATE Fighters
 SET PromotionId = $promotionId,
-    ContractFightsRemaining = $offeredFights
+    ContractFightsRemaining = $offeredFights,
+    ContractExclusivityType = $exclusivityType
 WHERE Id = $fighterId;";
             cmd.Parameters.AddWithValue("$promotionId", offer.PromotionId);
             cmd.Parameters.AddWithValue("$offeredFights", offer.OfferedFights);
+            cmd.Parameters.AddWithValue("$exclusivityType", offer.ExclusivityType);
             cmd.Parameters.AddWithValue("$fighterId", offer.FighterId);
             await cmd.ExecuteNonQueryAsync(cancellationToken);
         }
@@ -846,15 +864,17 @@ LIMIT 3;";
 
     private sealed record FighterBasic(int FighterId, string Name);
     private sealed record RecentForm(int Wins, int Losses, int LossStreak);
-    private sealed record RenewalDecision(bool ShouldOffer, int OfferedFights, int BasePurse, int WinBonus, string Notes);
-    private sealed record PitchDecision(bool Accepted, int OfferedFights, int BasePurse, int WinBonus, string Notes);
-    private sealed record MarketOfferCreated(string PromotionName, int OfferedFights, int BasePurse, int WinBonus);
+    private sealed record RenewalDecision(bool ShouldOffer, int OfferedFights, int BasePurse, int WinBonus, int SigningBonus, string ExclusivityType, string Notes);
+    private sealed record PitchDecision(bool Accepted, int OfferedFights, int BasePurse, int WinBonus, int SigningBonus, string ExclusivityType, string Notes);
+    private sealed record MarketOfferCreated(string PromotionName, int OfferedFights, int BasePurse, int WinBonus, int SigningBonus, string ExclusivityType);
     private sealed record ContractOfferRow(
         int FighterId,
         int PromotionId,
         int OfferedFights,
         int BasePurse,
         int WinBonus,
+        int SigningBonus,
+        string ExclusivityType,
         int WeeksToRespond,
         string Status,
         string SourceType,

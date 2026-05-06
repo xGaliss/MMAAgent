@@ -37,7 +37,8 @@ namespace MMAAgent.Infrastructure.Persistence.Sqlite.Services
             using (var cmd = conn.CreateCommand())
             {
                 cmd.CommandText = @"
-SELECT Id, Name, MinSkillToSign, MinPopularityToSign, Prestige, Budget, IsActive
+SELECT Id, Name, MinSkillToSign, MinPopularityToSign, Prestige, Budget, IsActive,
+       COALESCE(CircuitType, 'Professional') AS CircuitType
 FROM Promotions
 WHERE IsActive = 1
 ORDER BY Prestige DESC;";
@@ -49,12 +50,13 @@ ORDER BY Prestige DESC;";
                         Id = Convert.ToInt32(r["Id"]),
                         Name = r["Name"]?.ToString() ?? "",
                         MinSkillToSign = Convert.ToInt32(r["MinSkillToSign"]),
-                        MinPopularityToSign = Convert.ToInt32(r["MinPopularityToSign"]),
-                        Prestige = Convert.ToInt32(r["Prestige"]),
-                        Budget = Convert.ToInt32(r["Budget"]),
-                        IsActive = Convert.ToInt32(r["IsActive"])
-                    });
-                }
+                    MinPopularityToSign = Convert.ToInt32(r["MinPopularityToSign"]),
+                    Prestige = Convert.ToInt32(r["Prestige"]),
+                    Budget = Convert.ToInt32(r["Budget"]),
+                    IsActive = Convert.ToInt32(r["IsActive"]),
+                    CircuitType = r["CircuitType"]?.ToString() ?? "Professional"
+                });
+            }
             }
 
             if (promotions.Count == 0)
@@ -65,7 +67,8 @@ ORDER BY Prestige DESC;";
             using (var cmd = conn.CreateCommand())
             {
                 cmd.CommandText = @"
-SELECT Id, Skill, Popularity
+SELECT Id, Skill, Popularity, Age, COALESCE(CareerStage, 'Pro') AS CareerStage,
+       COALESCE(Wins, 0) + COALESCE(Losses, 0) + COALESCE(Draws, 0) AS TotalFights
 FROM Fighters
 WHERE PromotionId IS NULL OR ContractStatus = 'FreeAgent';";
                 using var r = await cmd.ExecuteReaderAsync();
@@ -75,7 +78,10 @@ WHERE PromotionId IS NULL OR ContractStatus = 'FreeAgent';";
                     {
                         Id = Convert.ToInt32(r["Id"]),
                         Skill = Convert.ToInt32(r["Skill"]),
-                        Popularity = Convert.ToInt32(r["Popularity"])
+                        Popularity = Convert.ToInt32(r["Popularity"]),
+                        Age = Convert.ToInt32(r["Age"]),
+                        CareerStage = r["CareerStage"]?.ToString() ?? "Pro",
+                        TotalFights = Convert.ToInt32(r["TotalFights"])
                     });
                 }
             }
@@ -87,16 +93,24 @@ WHERE PromotionId IS NULL OR ContractStatus = 'FreeAgent';";
                 foreach (var f in freeAgents)
                 {
                     bool didSign = false;
+                    var targetCircuit = IsAmateurTrackFighter(f) ? "Amateur" : "Professional";
 
                     foreach (var p in promotions)
                     {
+                        if (!string.Equals(p.CircuitType, targetCircuit, StringComparison.OrdinalIgnoreCase))
+                            continue;
+
                         if (!MeetsRequirements(f, p)) continue;
 
                         double chance = ComputeSignChance(p);
                         if (_rng.NextDouble() <= chance)
                         {
-                            int fights = _rng.Next(MinContractFights, MaxContractFights + 1);
-                            int salary = ComputeSalary(f.Skill, f.Popularity, p.Prestige, p.Budget);
+                            int fights = string.Equals(p.CircuitType, "Amateur", StringComparison.OrdinalIgnoreCase)
+                                ? _rng.Next(2, 5)
+                                : _rng.Next(MinContractFights, MaxContractFights + 1);
+                            int salary = string.Equals(p.CircuitType, "Amateur", StringComparison.OrdinalIgnoreCase)
+                                ? ComputeAmateurStipend(f.Skill, f.Popularity)
+                                : ComputeSalary(f.Skill, f.Popularity, p.Prestige, p.Budget);
 
                             using var cmd = conn.CreateCommand();
                             cmd.Transaction = tx;
@@ -106,12 +120,13 @@ SET PromotionId = $pid,
     Salary = $salary,
     TotalFightsInContract = $fights,
     ContractFightsRemaining = $fights,
-    ContractStatus = 'Active',
+    ContractStatus = $contractStatus,
     NegotiationTurnsRemaining = 0
 WHERE Id = $fid;";
                             cmd.Parameters.AddWithValue("$pid", p.Id);
                             cmd.Parameters.AddWithValue("$salary", salary);
                             cmd.Parameters.AddWithValue("$fights", fights);
+                            cmd.Parameters.AddWithValue("$contractStatus", string.Equals(p.CircuitType, "Amateur", StringComparison.OrdinalIgnoreCase) ? "Amateur" : "Active");
                             cmd.Parameters.AddWithValue("$fid", f.Id);
                             await cmd.ExecuteNonQueryAsync();
 
@@ -193,14 +208,21 @@ WHERE PromotionId = $promotionId
                     if (currentCount >= targetCount)
                         break;
 
+                    if (!string.Equals(promotion.CircuitType, IsAmateurTrackFighter(fighter) ? "Amateur" : "Professional", StringComparison.OrdinalIgnoreCase))
+                        continue;
+
                     if (!MeetsRequirements(fighter, promotion) &&
                         !MeetsRelaxedRequirements(fighter, promotion, currentCount, targetCount))
                     {
                         continue;
                     }
 
-                    var fights = _rng.Next(MinContractFights, MaxContractFights + 1);
-                    var salary = ComputeSalary(fighter.Skill, fighter.Popularity, promotion.Prestige, promotion.Budget);
+                    var fights = string.Equals(promotion.CircuitType, "Amateur", StringComparison.OrdinalIgnoreCase)
+                        ? _rng.Next(2, 5)
+                        : _rng.Next(MinContractFights, MaxContractFights + 1);
+                    var salary = string.Equals(promotion.CircuitType, "Amateur", StringComparison.OrdinalIgnoreCase)
+                        ? ComputeAmateurStipend(fighter.Skill, fighter.Popularity)
+                        : ComputeSalary(fighter.Skill, fighter.Popularity, promotion.Prestige, promotion.Budget);
 
                     using var cmd = conn.CreateCommand();
                     cmd.Transaction = tx;
@@ -210,12 +232,13 @@ SET PromotionId = $pid,
     Salary = $salary,
     TotalFightsInContract = $fights,
     ContractFightsRemaining = $fights,
-    ContractStatus = 'Active',
+    ContractStatus = $contractStatus,
     NegotiationTurnsRemaining = 0
 WHERE Id = $fid;";
                     cmd.Parameters.AddWithValue("$pid", promotion.Id);
                     cmd.Parameters.AddWithValue("$salary", salary);
                     cmd.Parameters.AddWithValue("$fights", fights);
+                    cmd.Parameters.AddWithValue("$contractStatus", string.Equals(promotion.CircuitType, "Amateur", StringComparison.OrdinalIgnoreCase) ? "Amateur" : "Active");
                     cmd.Parameters.AddWithValue("$fid", fighter.Id);
                     await cmd.ExecuteNonQueryAsync(cancellationToken);
 
@@ -235,17 +258,33 @@ WHERE Id = $fid;";
         }
 
         private bool MeetsRequirements(FighterRow f, PromotionRow p)
-            => f.Skill >= p.MinSkillToSign && f.Popularity >= p.MinPopularityToSign;
+        {
+            if (string.Equals(p.CircuitType, "Amateur", StringComparison.OrdinalIgnoreCase))
+            {
+                return IsAmateurTrackFighter(f)
+                       && f.Skill <= Math.Max(72, p.MinSkillToSign + 24)
+                       && f.Popularity <= Math.Max(65, p.MinPopularityToSign + 24);
+            }
+
+            return f.Skill >= p.MinSkillToSign && f.Popularity >= p.MinPopularityToSign;
+        }
 
         private static bool MeetsRelaxedRequirements(FighterRow f, PromotionRow p, int currentCount, int targetCount)
         {
             if (currentCount >= Math.Max(2, targetCount / 2))
                 return false;
 
+            if (string.Equals(p.CircuitType, "Amateur", StringComparison.OrdinalIgnoreCase))
+                return IsAmateurTrackFighter(f) && f.Skill <= Math.Max(74, p.MinSkillToSign + 28);
+
             var relaxedSkill = Math.Max(0, p.MinSkillToSign - 12);
             var relaxedPopularity = Math.Max(0, p.MinPopularityToSign - 12);
             return f.Skill >= relaxedSkill && f.Popularity >= relaxedPopularity;
         }
+
+        private static bool IsAmateurTrackFighter(FighterRow fighter)
+            => string.Equals(fighter.CareerStage, "Amateur", StringComparison.OrdinalIgnoreCase)
+               || (fighter.Age <= 23 && fighter.TotalFights <= 8 && fighter.Skill <= 63);
 
         private double ComputeSignChance(PromotionRow p)
         {
@@ -276,6 +315,13 @@ WHERE Id = $fid;";
             return Math.Max(MinSalary, Math.Min(MaxSalary, salary));
         }
 
+        private int ComputeAmateurStipend(int skill, int popularity)
+        {
+            var baseStipend = 150 + Math.Max(0, skill - 35) * 18 + Math.Max(0, popularity - 25) * 12;
+            var noise = 0.9 + (_rng.NextDouble() * 0.25);
+            return Math.Max(0, (int)Math.Round(baseStipend * noise));
+        }
+
         private sealed class PromotionRow
         {
             public int Id { get; set; }
@@ -285,6 +331,7 @@ WHERE Id = $fid;";
             public int Prestige { get; set; }
             public int Budget { get; set; }
             public int IsActive { get; set; }
+            public string CircuitType { get; set; } = "Professional";
         }
 
         private sealed class FighterRow
@@ -292,6 +339,9 @@ WHERE Id = $fid;";
             public int Id { get; set; }
             public int Skill { get; set; }
             public int Popularity { get; set; }
+            public int Age { get; set; }
+            public int TotalFights { get; set; }
+            public string CareerStage { get; set; } = "Pro";
             public string WeightClass { get; set; } = "";
         }
 
@@ -323,7 +373,8 @@ WHERE Id = $fid;";
             var promotions = new List<PromotionRow>();
             using var cmd = conn.CreateCommand();
             cmd.CommandText = @"
-SELECT Id, Name, MinSkillToSign, MinPopularityToSign, Prestige, Budget, IsActive
+SELECT Id, Name, MinSkillToSign, MinPopularityToSign, Prestige, Budget, IsActive,
+       COALESCE(CircuitType, 'Professional') AS CircuitType
 FROM Promotions
 WHERE IsActive = 1
 ORDER BY Prestige DESC;";
@@ -338,8 +389,9 @@ ORDER BY Prestige DESC;";
                     MinPopularityToSign = Convert.ToInt32(r["MinPopularityToSign"]),
                     Prestige = Convert.ToInt32(r["Prestige"]),
                     Budget = Convert.ToInt32(r["Budget"]),
-                    IsActive = Convert.ToInt32(r["IsActive"])
-                });
+                        IsActive = Convert.ToInt32(r["IsActive"]),
+                        CircuitType = r["CircuitType"]?.ToString() ?? "Professional"
+                    });
             }
 
             return promotions;
@@ -378,11 +430,21 @@ ORDER BY pwc.PromotionId, pwc.WeightClass;";
             using var cmd = conn.CreateCommand();
             cmd.Transaction = tx;
             cmd.CommandText = @"
-SELECT Id, Skill, Popularity, WeightClass
+SELECT Id, Skill, Popularity, WeightClass, Age, COALESCE(CareerStage, 'Pro') AS CareerStage,
+       COALESCE(Wins, 0) + COALESCE(Losses, 0) + COALESCE(Draws, 0) AS TotalFights
 FROM Fighters
 WHERE (PromotionId IS NULL OR ContractStatus = 'FreeAgent')
   AND Retired = 0
   AND WeightClass = $weightClass
+  AND NOT EXISTS
+  (
+      SELECT 1
+      FROM AmateurProspectWatchlist apw
+      WHERE apw.FighterId = Fighters.Id
+        AND apw.AgentId = (SELECT Id FROM AgentProfile ORDER BY Id LIMIT 1)
+        AND COALESCE(Fighters.CareerStage, 'Pro') = 'Pro'
+        AND (COALESCE(Fighters.AmateurWins, 0) + COALESCE(Fighters.AmateurLosses, 0) + COALESCE(Fighters.AmateurDraws, 0)) > 0
+  )
 ORDER BY (Skill * 0.75 + Popularity * 0.25) DESC, Id;";
             cmd.Parameters.AddWithValue("$weightClass", weightClass);
 
@@ -394,6 +456,9 @@ ORDER BY (Skill * 0.75 + Popularity * 0.25) DESC, Id;";
                     Id = Convert.ToInt32(r["Id"]),
                     Skill = Convert.ToInt32(r["Skill"]),
                     Popularity = Convert.ToInt32(r["Popularity"]),
+                    Age = Convert.ToInt32(r["Age"]),
+                    CareerStage = r["CareerStage"]?.ToString() ?? "Pro",
+                    TotalFights = Convert.ToInt32(r["TotalFights"]),
                     WeightClass = r["WeightClass"]?.ToString() ?? ""
                 });
             }
@@ -486,6 +551,20 @@ VALUES ($promotionId, $weightClass, $rankPosition, $fighterId);";
                     insertRankingCmd.Parameters.AddWithValue("$fighterId", fighters[i]);
                     await insertRankingCmd.ExecuteNonQueryAsync(cancellationToken);
                 }
+            }
+
+            if (hasRanking != 1)
+            {
+                using var clearTitlesCmd = conn.CreateCommand();
+                clearTitlesCmd.Transaction = tx;
+                clearTitlesCmd.CommandText = @"
+DELETE FROM Titles
+WHERE PromotionId = $promotionId
+  AND WeightClass = $weightClass;";
+                clearTitlesCmd.Parameters.AddWithValue("$promotionId", promotionId);
+                clearTitlesCmd.Parameters.AddWithValue("$weightClass", weightClass);
+                await clearTitlesCmd.ExecuteNonQueryAsync(cancellationToken);
+                return;
             }
 
             var currentChampionId = await ScalarIntAsync(conn, tx, @"

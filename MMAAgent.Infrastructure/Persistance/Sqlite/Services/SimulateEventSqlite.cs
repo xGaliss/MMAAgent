@@ -346,10 +346,41 @@ WHERE PromotionId = $p;",
 
             foreach (var division in divisions)
             {
-                if (division.GetInt("HasRanking") != 1)
-                    continue;
-
                 var weightClass = division.GetString("WeightClass");
+                if (division.GetInt("HasRanking") != 1)
+                {
+                    var openPool = await LoadEligibleOpenDivisionAsync(conn, tx, promotionId, weightClass);
+                    if (openPool.Count < 2)
+                        continue;
+
+                    var openRemaining = openPool
+                        .Where(x => !fightersAlreadyUsed.Contains(x.FighterId))
+                        .ToList();
+
+                    var maxOpenPairs = isMajorEvent ? 3 : 2;
+                    for (var i = 0; i + 1 < openRemaining.Count && maxOpenPairs > 0; i += 2, maxOpenPairs--)
+                    {
+                        var fighterA = openRemaining[i];
+                        var fighterB = openRemaining[i + 1];
+                        if (fighterA.FighterId == fighterB.FighterId)
+                            continue;
+
+                        candidates.Add(CreatePlannedBout(
+                            null,
+                            fighterA.FighterId,
+                            fighterB.FighterId,
+                            weightClass,
+                            false,
+                            false,
+                            fighterA.Skill,
+                            fighterA.Popularity,
+                            fighterB.Skill,
+                            fighterB.Popularity));
+                    }
+
+                    continue;
+                }
+
                 var ranked = await LoadEligibleRankedDivisionAsync(conn, tx, promotionId, weightClass);
                 if (ranked.Count < 2)
                     continue;
@@ -452,6 +483,48 @@ WHERE FighterId = $fid
             }
 
             return candidates;
+        }
+
+        private static async Task<List<RankedFighter>> LoadEligibleOpenDivisionAsync(
+            SqliteConnection conn,
+            SqliteTransaction tx,
+            int promotionId,
+            string weightClass)
+        {
+            using var cmd = conn.CreateCommand();
+            cmd.Transaction = tx;
+            cmd.CommandText = @"
+SELECT
+    f.Id AS FighterId,
+    0 AS RankPosition,
+    NULL AS QueueRank,
+    f.Skill,
+    f.Popularity
+FROM Fighters f
+WHERE f.PromotionId = $promotionId
+  AND f.WeightClass = $weightClass
+  AND f.Retired = 0
+  AND COALESCE(f.IsBooked, 0) = 0
+ORDER BY ABS(COALESCE(f.Wins, 0) - COALESCE(f.Losses, 0)) ASC,
+         COALESCE(f.Skill, 50) DESC,
+         COALESCE(f.Popularity, 50) DESC,
+         f.Id;";
+            cmd.Parameters.AddWithValue("$promotionId", promotionId);
+            cmd.Parameters.AddWithValue("$weightClass", weightClass);
+
+            var list = new List<RankedFighter>();
+            using var reader = await cmd.ExecuteReaderAsync();
+            while (await reader.ReadAsync())
+            {
+                list.Add(new RankedFighter(
+                    Convert.ToInt32(reader["FighterId"]),
+                    Convert.ToInt32(reader["RankPosition"]),
+                    reader["QueueRank"] == DBNull.Value ? null : Convert.ToInt32(reader["QueueRank"]),
+                    Convert.ToInt32(reader["Skill"]),
+                    Convert.ToInt32(reader["Popularity"])));
+            }
+
+            return list;
         }
 
         private static async Task<List<PlannedBout>> LoadScheduledBoutsAsync(SqliteConnection conn, SqliteTransaction tx, int eventId)
@@ -769,6 +842,22 @@ WHERE Id = $id;",
 
         private static async Task RebuildDivisionRankingsAndEnsureTitleAsync(SqliteConnection conn, SqliteTransaction tx, int promotionId, string weightClass, int rankingSize)
         {
+            var hasRanking = await ScalarIntAsync(conn, tx, @"
+SELECT COALESCE(HasRanking, 0)
+FROM PromotionWeightClasses
+WHERE PromotionId = $p
+  AND WeightClass = $wc
+LIMIT 1;",
+                ("$p", promotionId),
+                ("$wc", weightClass));
+
+            if (hasRanking != 1)
+            {
+                await ExecAsync(conn, tx, "DELETE FROM PromotionRankings WHERE PromotionId = $p AND WeightClass = $wc;", ("$p", promotionId), ("$wc", weightClass));
+                await ExecAsync(conn, tx, "DELETE FROM Titles WHERE PromotionId = $p AND WeightClass = $wc;", ("$p", promotionId), ("$wc", weightClass));
+                return;
+            }
+
             await ExecAsync(conn, tx, "DELETE FROM PromotionRankings WHERE PromotionId = $p AND WeightClass = $wc;", ("$p", promotionId), ("$wc", weightClass));
 
             var topFighters = await QueryAsync(conn, tx, @"

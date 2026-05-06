@@ -20,6 +20,11 @@ public sealed class WebWorldFeedService
         var headlines = new List<WorldFeedItemVm>();
         headlines.AddRange(await LoadTitleFightHeadlinesAsync(conn));
         headlines.AddRange(await LoadEliminatorHeadlinesAsync(conn));
+        headlines.AddRange(await LoadShortNoticeHeadlinesAsync(conn));
+        headlines.AddRange(await LoadWeightMissHeadlinesAsync(conn));
+        headlines.AddRange(await LoadRetirementHeadlinesAsync(conn));
+        headlines.AddRange(await LoadProspectHeadlinesAsync(conn));
+        headlines.AddRange(await LoadProspectAlertHeadlinesAsync(conn));
         headlines.AddRange(await LoadAnnualShiftHeadlinesAsync(conn));
 
         var orderedHeadlines = headlines
@@ -80,6 +85,173 @@ LIMIT 8;";
                 Date: reader["FeedDate"]?.ToString() ?? "",
                 Tone: "gold",
                 LinkHref: $"/fighters/{winnerId}"));
+        }
+
+        return items;
+    }
+
+    private static async Task<IReadOnlyList<WorldFeedItemVm>> LoadShortNoticeHeadlinesAsync(SqliteConnection conn)
+    {
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = @"
+SELECT
+    COALESCE(f.EventDate, '') AS FeedDate,
+    (fa.FirstName || ' ' || fa.LastName) AS FighterAName,
+    (fb.FirstName || ' ' || fb.LastName) AS FighterBName,
+    COALESCE(f.Method, 'DEC') AS Method,
+    COALESCE(p.Name, 'Promotion') AS PromotionName,
+    COALESCE(e.Name, '') AS EventName,
+    f.WinnerId
+FROM Fights f
+JOIN Fighters fa ON fa.Id = f.FighterAId
+JOIN Fighters fb ON fb.Id = f.FighterBId
+LEFT JOIN Events e ON e.Id = f.EventId
+LEFT JOIN Promotions p ON p.Id = e.PromotionId
+WHERE COALESCE(f.IsShortNotice, 0) = 1
+  AND COALESCE(f.Method, 'Scheduled') <> 'Scheduled'
+ORDER BY f.Id DESC
+LIMIT 6;";
+
+        var items = new List<WorldFeedItemVm>();
+        using var reader = await cmd.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+        {
+            var fighterA = reader["FighterAName"]?.ToString() ?? "Fighter A";
+            var fighterB = reader["FighterBName"]?.ToString() ?? "Fighter B";
+            var eventName = reader["EventName"]?.ToString();
+            var promotion = reader["PromotionName"]?.ToString() ?? "Promotion";
+            var method = reader["Method"]?.ToString() ?? "DEC";
+            var winnerId = reader["WinnerId"] == DBNull.Value ? 0 : Convert.ToInt32(reader["WinnerId"]);
+
+            items.Add(new WorldFeedItemVm(
+                Bucket: "Short Notice",
+                Headline: $"{fighterA} vs {fighterB} held together on short notice",
+                Summary: string.IsNullOrWhiteSpace(eventName)
+                    ? $"The bout still happened in {promotion} and ended via {method}."
+                    : $"The matchup survived late chaos at {eventName} ({promotion}) and still ended via {method}.",
+                Date: reader["FeedDate"]?.ToString() ?? "",
+                Tone: "warn",
+                LinkHref: winnerId > 0 ? $"/fighters/{winnerId}" : null));
+        }
+
+        return items;
+    }
+
+    private static async Task<IReadOnlyList<WorldFeedItemVm>> LoadWeightMissHeadlinesAsync(SqliteConnection conn)
+    {
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = @"
+SELECT
+    COALESCE(f.EventDate, '') AS FeedDate,
+    (fa.FirstName || ' ' || fa.LastName) AS FighterAName,
+    (fb.FirstName || ' ' || fb.LastName) AS FighterBName,
+    COALESCE(f.WeightClass, 'Division') AS WeightClass,
+    COALESCE(p.Name, 'Promotion') AS PromotionName,
+    COALESCE(e.Name, '') AS EventName,
+    COALESCE(fpa.WeighInOutcome, '') AS FighterAWeighInOutcome,
+    COALESCE(fpb.WeighInOutcome, '') AS FighterBWeighInOutcome
+FROM Fights f
+JOIN Fighters fa ON fa.Id = f.FighterAId
+JOIN Fighters fb ON fb.Id = f.FighterBId
+LEFT JOIN Events e ON e.Id = f.EventId
+LEFT JOIN Promotions p ON p.Id = e.PromotionId
+LEFT JOIN FightPreparations fpa ON fpa.FightId = f.Id AND fpa.FighterId = f.FighterAId
+LEFT JOIN FightPreparations fpb ON fpb.FightId = f.Id AND fpb.FighterId = f.FighterBId
+WHERE COALESCE(f.Method, 'Scheduled') <> 'Scheduled'
+  AND (
+       COALESCE(fpa.WeighInOutcome, '') = 'MissedWeight'
+    OR COALESCE(fpb.WeighInOutcome, '') = 'MissedWeight'
+  )
+ORDER BY f.Id DESC
+LIMIT 6;";
+
+        var items = new List<WorldFeedItemVm>();
+        using var reader = await cmd.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+        {
+            var fighterA = reader["FighterAName"]?.ToString() ?? "Fighter A";
+            var fighterB = reader["FighterBName"]?.ToString() ?? "Fighter B";
+            var culprit = string.Equals(reader["FighterAWeighInOutcome"]?.ToString(), "MissedWeight", StringComparison.OrdinalIgnoreCase)
+                ? fighterA
+                : fighterB;
+            var eventName = reader["EventName"]?.ToString();
+            var promotion = reader["PromotionName"]?.ToString() ?? "Promotion";
+            var weightClass = reader["WeightClass"]?.ToString() ?? "Division";
+
+            items.Add(new WorldFeedItemVm(
+                Bucket: "Weight Miss",
+                Headline: $"{culprit} missed weight in {weightClass}",
+                Summary: string.IsNullOrWhiteSpace(eventName)
+                    ? $"The cut went wrong in {promotion}, adding pressure around future bookings."
+                    : $"The cut went wrong at {eventName} ({promotion}), adding pressure around future bookings.",
+                Date: reader["FeedDate"]?.ToString() ?? "",
+                Tone: "danger",
+                LinkHref: null));
+        }
+
+        return items;
+    }
+
+    private static async Task<IReadOnlyList<WorldFeedItemVm>> LoadRetirementHeadlinesAsync(SqliteConnection conn)
+    {
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = @"
+SELECT
+    (FirstName || ' ' || LastName) AS FighterName,
+    COALESCE(WeightClass, 'Division') AS WeightClass,
+    COALESCE(Popularity, 0) AS Popularity,
+    Id
+FROM Fighters
+WHERE COALESCE(Retired, 0) = 1
+ORDER BY COALESCE(Popularity, 0) DESC, COALESCE(Wins, 0) DESC, Id DESC
+LIMIT 4;";
+
+        var items = new List<WorldFeedItemVm>();
+        using var reader = await cmd.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+        {
+            var fighterName = reader["FighterName"]?.ToString() ?? "Retired fighter";
+            var weightClass = reader["WeightClass"]?.ToString() ?? "Division";
+            var fighterId = Convert.ToInt32(reader["Id"]);
+
+            items.Add(new WorldFeedItemVm(
+                Bucket: "Retirement",
+                Headline: $"{fighterName} has stepped away",
+                Summary: $"{fighterName} is now out of the active picture at {weightClass}, leaving space for the division to shift.",
+                Date: string.Empty,
+                Tone: "neutral",
+                LinkHref: $"/fighters/{fighterId}"));
+        }
+
+        return items;
+    }
+
+    private static async Task<IReadOnlyList<WorldFeedItemVm>> LoadProspectHeadlinesAsync(SqliteConnection conn)
+    {
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = @"
+SELECT
+    COALESCE(s.Headline, 'Prospect surge') AS Headline,
+    COALESCE(s.Body, '') AS Body,
+    s.EntityId
+FROM Storylines s
+WHERE COALESCE(s.Status, 'Active') = 'Active'
+  AND s.StoryType IN ('ProspectSurge', 'LateCareerRun')
+ORDER BY COALESCE(s.Intensity, 0) DESC, s.Id DESC
+LIMIT 6;";
+
+        var items = new List<WorldFeedItemVm>();
+        using var reader = await cmd.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+        {
+            var entityId = reader["EntityId"] == DBNull.Value ? 0 : Convert.ToInt32(reader["EntityId"]);
+            items.Add(new WorldFeedItemVm(
+                Bucket: "Prospect Watch",
+                Headline: reader["Headline"]?.ToString() ?? "Prospect surge",
+                Summary: reader["Body"]?.ToString() ?? "",
+                Date: string.Empty,
+                Tone: "gold",
+                LinkHref: entityId > 0 ? $"/fighters/{entityId}" : null));
         }
 
         return items;
@@ -153,6 +325,36 @@ LIMIT 4;";
                 Date: reader["FeedDate"]?.ToString() ?? "",
                 Tone: "danger",
                 LinkHref: "/inbox"));
+        }
+
+        return items;
+    }
+
+    private static async Task<IReadOnlyList<WorldFeedItemVm>> LoadProspectAlertHeadlinesAsync(SqliteConnection conn)
+    {
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = @"
+SELECT
+    COALESCE(CreatedDate, '') AS FeedDate,
+    COALESCE(Subject, 'Prospect movement') AS Subject,
+    COALESCE(Body, '') AS Body
+FROM InboxMessages
+WHERE MessageType = 'ProspectWatchAlert'
+  AND COALESCE(IsDeleted, 0) = 0
+ORDER BY Id DESC
+LIMIT 6;";
+
+        var items = new List<WorldFeedItemVm>();
+        using var reader = await cmd.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+        {
+            items.Add(new WorldFeedItemVm(
+                Bucket: "Prospect Alert",
+                Headline: reader["Subject"]?.ToString() ?? "Prospect movement",
+                Summary: reader["Body"]?.ToString() ?? "",
+                Date: reader["FeedDate"]?.ToString() ?? "",
+                Tone: "gold",
+                LinkHref: "/prospects"));
         }
 
         return items;

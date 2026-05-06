@@ -53,7 +53,10 @@ namespace MMAAgent.Infrastructure.Persistence.Sqlite.Services
             {
                 foreach (var cfg in configs)
                 {
-                    int take = (cfg.HasRanking == 1 ? Math.Max(1, cfg.RankingSize) : 1);
+                    if (cfg.HasRanking != 1)
+                        continue;
+
+                    int take = Math.Max(1, cfg.RankingSize);
 
                     var fighters = new List<int>();
                     using (var cmd = conn.CreateCommand())

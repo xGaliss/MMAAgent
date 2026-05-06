@@ -77,6 +77,7 @@ builder.Services.AddScoped<WebMyFightersService>();
 builder.Services.AddScoped<WebMainMenuService>();
 builder.Services.AddScoped<WebDashboardFeedService>();
 builder.Services.AddScoped<WebWorldFeedService>();
+builder.Services.AddScoped<WebProspectPipelineService>();
 builder.Services.AddScoped<WebWeeklySummaryService>();
 builder.Services.AddScoped<InboxStatusService>();
 builder.Services.AddScoped<HighlightNotificationService>();
@@ -89,6 +90,7 @@ builder.Services.AddScoped<IWeeklyWorldUpdateService, WeeklyWorldUpdateService>(
 
 builder.Services.AddScoped<SqliteActionBridge>();
 builder.Services.AddScoped<WebFighterActionService>();
+builder.Services.AddScoped<WebDivisionActionService>();
 builder.Services.AddScoped<IEventSimulator, SimulateEventSqlite>();
 builder.Services.AddScoped<IPromotionEventScheduleRepository, SqlitePromotionEventScheduleRepository>();
 builder.Services.AddScoped<IWeeklyWorldUpdateService, WeeklyWorldUpdateService>();

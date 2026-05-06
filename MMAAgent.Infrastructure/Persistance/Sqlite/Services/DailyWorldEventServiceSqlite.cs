@@ -26,21 +26,21 @@ public sealed class DailyWorldEventServiceSqlite : IDailyWorldEventService
         var agentId = await LoadAgentIdAsync(conn, tx, cancellationToken);
         var investmentLevels = agentId.HasValue
             ? await LoadAgentInvestmentLevelsAsync(conn, tx, agentId.Value, cancellationToken)
-            : (CampInvestmentLevel: 1, MedicalInvestmentLevel: 1);
+            : (CampInvestmentLevel: 1, MedicalInvestmentLevel: 1, ScoutingStaffLevel: 1, MediaStaffLevel: 1, NegotiationStaffLevel: 1, PerformanceStaffLevel: 1);
 
         await CleanupOrphanPreparationsAsync(conn, tx, cancellationToken);
         await EnsurePreparationRowsAsync(conn, tx, currentDate, cancellationToken);
 
-        var campUpdates = await ProcessCampStartsAsync(conn, tx, currentDate, agentId, investmentLevels.CampInvestmentLevel, investmentLevels.MedicalInvestmentLevel, cancellationToken);
+        var campUpdates = await ProcessCampStartsAsync(conn, tx, currentDate, agentId, investmentLevels.CampInvestmentLevel, investmentLevels.MedicalInvestmentLevel, investmentLevels.PerformanceStaffLevel, cancellationToken);
         var fightWeekUpdates = await ProcessFightWeekAsync(conn, tx, currentDate, agentId, cancellationToken);
-        var weighInUpdates = await ProcessWeighInsAsync(conn, tx, currentDate, agentId, investmentLevels.CampInvestmentLevel, investmentLevels.MedicalInvestmentLevel, cancellationToken);
+        var weighInUpdates = await ProcessWeighInsAsync(conn, tx, currentDate, agentId, investmentLevels.CampInvestmentLevel, investmentLevels.MedicalInvestmentLevel, investmentLevels.PerformanceStaffLevel, cancellationToken);
         var aftermathUpdates = await ProcessAftermathAsync(conn, tx, currentDate, agentId, cancellationToken);
         if (agentId.HasValue)
         {
-            await ProcessScoutAssignmentsAsync(conn, tx, currentDate, agentId.Value, cancellationToken);
-            await ProcessCommercialOpportunitiesAsync(conn, tx, currentDate, agentId.Value, cancellationToken);
-            await ProcessMediaOpportunitiesAsync(conn, tx, currentDate, agentId.Value, cancellationToken);
-            await ProcessGymOpportunitiesAsync(conn, tx, currentDate, agentId.Value, cancellationToken);
+            await ProcessScoutAssignmentsAsync(conn, tx, currentDate, agentId.Value, investmentLevels.ScoutingStaffLevel, cancellationToken);
+            await ProcessCommercialOpportunitiesAsync(conn, tx, currentDate, agentId.Value, investmentLevels.MediaStaffLevel, cancellationToken);
+            await ProcessMediaOpportunitiesAsync(conn, tx, currentDate, agentId.Value, investmentLevels.MediaStaffLevel, cancellationToken);
+            await ProcessGymOpportunitiesAsync(conn, tx, currentDate, agentId.Value, investmentLevels.PerformanceStaffLevel, cancellationToken);
         }
 
         tx.Commit();
@@ -130,6 +130,7 @@ WHERE f.Method = 'Scheduled'
         int? agentId,
         int campInvestmentLevel,
         int medicalInvestmentLevel,
+        int performanceStaffLevel,
         CancellationToken cancellationToken)
     {
         var updates = 0;
@@ -189,6 +190,7 @@ ORDER BY f.EventDate, fp.FightId;";
                 string.Equals(reader["EventTier"]?.ToString(), "Major", StringComparison.OrdinalIgnoreCase),
                 campInvestmentLevel,
                 medicalInvestmentLevel,
+                performanceStaffLevel,
                 campFocus);
 
             var notes = outcome switch
@@ -463,6 +465,7 @@ WHERE FightId = $fightId
         int? agentId,
         int campInvestmentLevel,
         int medicalInvestmentLevel,
+        int performanceStaffLevel,
         CancellationToken cancellationToken)
     {
         var updates = 0;
@@ -472,6 +475,7 @@ WHERE FightId = $fightId
 SELECT
     fp.FightId,
     fp.FighterId,
+    COALESCE(p.Id, 0) AS PromotionId,
     me.Cardio,
     me.FightIQ,
     me.Popularity,
@@ -509,6 +513,7 @@ ORDER BY f.EventDate, fp.FightId;";
                 reader["CampOutcome"]?.ToString() ?? "",
                 campInvestmentLevel,
                 medicalInvestmentLevel,
+                performanceStaffLevel,
                 reader["CampFocus"]?.ToString() ?? "");
 
             var notes = outcome switch
@@ -557,6 +562,23 @@ WHERE FightId = $fightId
                     $"{fighterName} heads into {eventName} vs {opponentName} at {promotionName}. {notes}",
                     currentDate,
                     cancellationToken);
+
+                var promotionId = Convert.ToInt32(reader["PromotionId"]);
+                if (promotionId > 0 && (string.Equals(outcome, "MissedWeight", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(outcome, "ToughCut", StringComparison.OrdinalIgnoreCase)))
+                {
+                    await UpsertPromotionRelationAsync(
+                        conn,
+                        tx,
+                        agentId.Value,
+                        promotionId,
+                        string.Equals(outcome, "MissedWeight", StringComparison.OrdinalIgnoreCase) ? -4 : -1,
+                        currentDate,
+                        string.Equals(outcome, "MissedWeight", StringComparison.OrdinalIgnoreCase)
+                            ? "A managed fighter missed weight and hurt trust with this promotion."
+                            : "A managed fighter had a rough cut heading into fight week.",
+                        cancellationToken);
+                }
 
                 if (string.Equals(outcome, "ToughCut", StringComparison.OrdinalIgnoreCase)
                     || string.Equals(outcome, "MissedWeight", StringComparison.OrdinalIgnoreCase))
@@ -991,6 +1013,7 @@ VALUES
         SqliteTransaction tx,
         string currentDate,
         int agentId,
+        int scoutingStaffLevel,
         CancellationToken cancellationToken)
     {
         var completedAssignments = new List<(int FighterId, string Focus)>();
@@ -1000,10 +1023,11 @@ VALUES
             cmd.Transaction = tx;
             cmd.CommandText = @"
 UPDATE ScoutAssignments
-SET ProgressDays = COALESCE(ProgressDays, 0) + 1
+SET ProgressDays = COALESCE(ProgressDays, 0) + $progressGain
 WHERE AgentId = $agentId
   AND Status = 'InProgress';";
             cmd.Parameters.AddWithValue("$agentId", agentId);
+            cmd.Parameters.AddWithValue("$progressGain", Math.Max(1, 1 + scoutingStaffLevel));
             await cmd.ExecuteNonQueryAsync(cancellationToken);
         }
 
@@ -1059,6 +1083,7 @@ WHERE AgentId = $agentId
         SqliteTransaction tx,
         string currentDate,
         int agentId,
+        int mediaStaffLevel,
         CancellationToken cancellationToken)
     {
         using var cmd = conn.CreateCommand();
@@ -1096,8 +1121,23 @@ LIMIT 1;";
         var style = reader["Style"]?.ToString() ?? "Well Rounded";
         var showmanship = Convert.ToInt32(reader["Showmanship"]);
         var marketability = Convert.ToInt32(reader["Marketability"]);
+
+        if (await HasRecentDecisionAsync(
+                conn,
+                tx,
+                agentId,
+                fighterId,
+                null,
+                "SponsorSpotlight",
+                currentDate,
+                35,
+                cancellationToken))
+        {
+            return;
+        }
+
         var triggerSeed = Math.Abs(HashCode.Combine(fighterId, currentDate, "SponsorSpotlight")) % 7;
-        if (triggerSeed > (showmanship >= 72 || marketability >= 70 ? 1 : 0))
+        if (triggerSeed > (showmanship >= 72 || marketability >= 70 ? 1 + mediaStaffLevel : mediaStaffLevel > 1 ? 1 : 0))
             return;
 
         var body = BuildCommercialOpportunityBody(fighterName, style, showmanship);
@@ -1130,6 +1170,7 @@ LIMIT 1;";
         SqliteTransaction tx,
         string currentDate,
         int agentId,
+        int mediaStaffLevel,
         CancellationToken cancellationToken)
     {
         using var cmd = conn.CreateCommand();
@@ -1170,8 +1211,23 @@ LIMIT 1;";
         var style = reader["Style"]?.ToString() ?? "Well Rounded";
         var showmanship = Convert.ToInt32(reader["Showmanship"]);
         var stability = Convert.ToInt32(reader["Stability"]);
+
+        if (await HasRecentDecisionAsync(
+                conn,
+                tx,
+                agentId,
+                fighterId,
+                null,
+                "PressInterview",
+                currentDate,
+                28,
+                cancellationToken))
+        {
+            return;
+        }
+
         var triggerSeed = Math.Abs(HashCode.Combine(fighterId, currentDate, "PressInterview")) % 8;
-        if (triggerSeed > (showmanship >= 70 ? 1 : stability >= 68 ? 0 : 0))
+        if (triggerSeed > (showmanship >= 70 ? 1 + mediaStaffLevel : stability >= 68 ? mediaStaffLevel : Math.Max(0, mediaStaffLevel - 1)))
             return;
 
         var body = BuildMediaOpportunityBody(fighterName, style, isBooked, showmanship, stability);
@@ -1202,6 +1258,7 @@ LIMIT 1;";
         SqliteTransaction tx,
         string currentDate,
         int agentId,
+        int performanceStaffLevel,
         CancellationToken cancellationToken)
     {
         using var cmd = conn.CreateCommand();
@@ -1250,8 +1307,23 @@ LIMIT 1;";
         var style = reader["Style"]?.ToString() ?? "Well Rounded";
         var discipline = Convert.ToInt32(reader["Discipline"]);
         var riskTolerance = Convert.ToInt32(reader["RiskTolerance"]);
+
+        if (await HasRecentDecisionAsync(
+                conn,
+                tx,
+                agentId,
+                fighterId,
+                fightId,
+                "GymOpportunity",
+                currentDate,
+                18,
+                cancellationToken))
+        {
+            return;
+        }
+
         var triggerSeed = Math.Abs(HashCode.Combine(fightId, currentDate, "GymOpportunity")) % 7;
-        if (triggerSeed > (discipline >= 70 ? 1 : riskTolerance >= 70 ? 0 : 0))
+        if (triggerSeed > (discipline >= 70 ? 1 + performanceStaffLevel : riskTolerance >= 70 ? performanceStaffLevel : Math.Max(0, performanceStaffLevel - 1)))
             return;
 
         var body = BuildGymOpportunityBody(fighterName, eventName, style);
@@ -1331,6 +1403,39 @@ LIMIT 1;";
             "Submission Hunter" or "Scrambler" => "Bring grappling coaches",
             _ => "Bring specialists"
         };
+
+    private static async Task<bool> HasRecentDecisionAsync(
+        SqliteConnection conn,
+        SqliteTransaction tx,
+        int agentId,
+        int? fighterId,
+        int? fightId,
+        string decisionType,
+        string currentDate,
+        int cooldownDays,
+        CancellationToken cancellationToken)
+    {
+        using var cmd = conn.CreateCommand();
+        cmd.Transaction = tx;
+        cmd.CommandText = @"
+SELECT 1
+FROM DecisionEvents
+WHERE AgentId = $agentId
+  AND DecisionType = $decisionType
+  AND ($fighterId IS NULL OR FighterId = $fighterId)
+  AND ($fightId IS NULL OR FightId = $fightId)
+  AND date(COALESCE(ResolvedDate, CreatedDate)) >= date($currentDate, '-' || $cooldownDays || ' day')
+LIMIT 1;";
+        cmd.Parameters.AddWithValue("$agentId", agentId);
+        cmd.Parameters.AddWithValue("$decisionType", decisionType);
+        cmd.Parameters.AddWithValue("$fighterId", fighterId.HasValue ? fighterId.Value : DBNull.Value);
+        cmd.Parameters.AddWithValue("$fightId", fightId.HasValue ? fightId.Value : DBNull.Value);
+        cmd.Parameters.AddWithValue("$currentDate", currentDate);
+        cmd.Parameters.AddWithValue("$cooldownDays", cooldownDays);
+
+        var result = await cmd.ExecuteScalarAsync(cancellationToken);
+        return result is not null && result != DBNull.Value;
+    }
 
     private static async Task<ReplacementCandidate?> FindEmergencyReplacementAsync(
         SqliteConnection conn,
@@ -1433,6 +1538,48 @@ LIMIT 1;";
         cmd.CommandText = "SELECT COUNT(*) FROM FightOffers WHERE FighterId = $fighterId AND Status = 'Pending';";
         cmd.Parameters.AddWithValue("$fighterId", fighterId);
         return Convert.ToInt32(await cmd.ExecuteScalarAsync(cancellationToken)) > 0;
+    }
+
+    private static async Task UpsertPromotionRelationAsync(
+        SqliteConnection conn,
+        SqliteTransaction tx,
+        int agentId,
+        int promotionId,
+        int delta,
+        string currentDate,
+        string notes,
+        CancellationToken cancellationToken)
+    {
+        using var cmd = conn.CreateCommand();
+        cmd.Transaction = tx;
+        cmd.CommandText = @"
+INSERT INTO AgentPromotionRelations
+(
+    AgentId,
+    PromotionId,
+    RelationshipScore,
+    LastUpdatedDate,
+    Notes
+)
+VALUES
+(
+    $agentId,
+    $promotionId,
+    MIN(99, MAX(15, 50 + $delta)),
+    $currentDate,
+    $notes
+)
+ON CONFLICT(AgentId, PromotionId)
+DO UPDATE SET
+    RelationshipScore = MIN(99, MAX(15, COALESCE(AgentPromotionRelations.RelationshipScore, 50) + $delta)),
+    LastUpdatedDate = $currentDate,
+    Notes = $notes;";
+        cmd.Parameters.AddWithValue("$agentId", agentId);
+        cmd.Parameters.AddWithValue("$promotionId", promotionId);
+        cmd.Parameters.AddWithValue("$delta", delta);
+        cmd.Parameters.AddWithValue("$currentDate", currentDate);
+        cmd.Parameters.AddWithValue("$notes", notes);
+        await cmd.ExecuteNonQueryAsync(cancellationToken);
     }
 
     private static int ComputeEmergencyMoney(int baseAmount)
@@ -1627,11 +1774,13 @@ WHERE Id = $fighterId;", cancellationToken,
         bool isMajorEvent,
         int campInvestmentLevel,
         int medicalInvestmentLevel,
+        int performanceStaffLevel,
         string campFocus)
     {
         var prepScore = ((cardio + fightIq + potential) / 3)
             + (campInvestmentLevel * 4)
-            + (medicalInvestmentLevel * 2);
+            + (medicalInvestmentLevel * 2)
+            + (performanceStaffLevel * 3);
         prepScore += campFocus switch
         {
             "Cardio" => 5,
@@ -1645,13 +1794,13 @@ WHERE Id = $fighterId;", cancellationToken,
         var shortCamp = campWeeks <= 2;
         var roll = CreateDeterministicRandom(fightId, fighterId, "Camp").Next(100);
 
-        var excellentThreshold = (prepScore >= 74 ? 28 : prepScore >= 62 ? 18 : 10) + (campInvestmentLevel * 5);
-        var disruptedThreshold = (shortCamp ? 30 : premiumCamp ? 20 : 24) - (campInvestmentLevel * 4);
-        var campInjuryThreshold = (prepScore >= 72 ? 2 : prepScore >= 60 ? 4 : 6) - medicalInvestmentLevel;
+        var excellentThreshold = (prepScore >= 74 ? 28 : prepScore >= 62 ? 18 : 10) + (campInvestmentLevel * 5) + (performanceStaffLevel * 3);
+        var disruptedThreshold = (shortCamp ? 30 : premiumCamp ? 20 : 24) - (campInvestmentLevel * 4) - (performanceStaffLevel * 2);
+        var campInjuryThreshold = (prepScore >= 72 ? 2 : prepScore >= 60 ? 4 : 6) - medicalInvestmentLevel - (performanceStaffLevel > 1 ? 1 : 0);
         if (shortCamp)
             campInjuryThreshold += 1;
 
-        var injuryThreshold = (shortCamp ? 10 : 6) - medicalInvestmentLevel;
+        var injuryThreshold = (shortCamp ? 10 : 6) - medicalInvestmentLevel - (performanceStaffLevel > 1 ? 1 : 0);
 
         switch (campFocus)
         {
@@ -1758,11 +1907,13 @@ WHERE Id = $fighterId;", cancellationToken,
         string campOutcome,
         int campInvestmentLevel,
         int medicalInvestmentLevel,
+        int performanceStaffLevel,
         string campFocus)
     {
         var cutScore = ((cardio * 2 + fightIq + popularity) / 4)
             + (campInvestmentLevel * 3)
-            + (medicalInvestmentLevel * 4);
+            + (medicalInvestmentLevel * 4)
+            + (performanceStaffLevel * 3);
         cutScore += campFocus switch
         {
             "WeightManagement" => 14,
@@ -1787,8 +1938,8 @@ WHERE Id = $fighterId;", cancellationToken,
             _ => 0
         };
 
-        var missWeightThreshold = (cutScore >= 72 ? 4 : cutScore >= 60 ? 8 : 14) - medicalInvestmentLevel - (campInvestmentLevel > 1 ? 1 : 0);
-        var toughCutThreshold = (cutScore >= 72 ? 16 : cutScore >= 60 ? 24 : 32) - (campInvestmentLevel * 3);
+        var missWeightThreshold = (cutScore >= 72 ? 4 : cutScore >= 60 ? 8 : 14) - medicalInvestmentLevel - (campInvestmentLevel > 1 ? 1 : 0) - (performanceStaffLevel > 1 ? 1 : 0);
+        var toughCutThreshold = (cutScore >= 72 ? 16 : cutScore >= 60 ? 24 : 32) - (campInvestmentLevel * 3) - (performanceStaffLevel * 2);
         var adjustedRoll = roll + penalty;
 
         missWeightThreshold = Math.Clamp(missWeightThreshold, 2, 16);
@@ -1966,7 +2117,7 @@ VALUES
         await cmd.ExecuteNonQueryAsync(cancellationToken);
     }
 
-    private static async Task<(int CampInvestmentLevel, int MedicalInvestmentLevel)> LoadAgentInvestmentLevelsAsync(
+    private static async Task<(int CampInvestmentLevel, int MedicalInvestmentLevel, int ScoutingStaffLevel, int MediaStaffLevel, int NegotiationStaffLevel, int PerformanceStaffLevel)> LoadAgentInvestmentLevelsAsync(
         SqliteConnection conn,
         SqliteTransaction tx,
         int agentId,
@@ -1977,7 +2128,11 @@ VALUES
         cmd.CommandText = @"
 SELECT
     COALESCE(CampInvestmentLevel, 1) AS CampInvestmentLevel,
-    COALESCE(MedicalInvestmentLevel, 1) AS MedicalInvestmentLevel
+    COALESCE(MedicalInvestmentLevel, 1) AS MedicalInvestmentLevel,
+    COALESCE(ScoutingStaffLevel, 1) AS ScoutingStaffLevel,
+    COALESCE(MediaStaffLevel, 1) AS MediaStaffLevel,
+    COALESCE(NegotiationStaffLevel, 1) AS NegotiationStaffLevel,
+    COALESCE(PerformanceStaffLevel, 1) AS PerformanceStaffLevel
 FROM AgentProfile
 WHERE Id = $agentId
 LIMIT 1;";
@@ -1985,11 +2140,15 @@ LIMIT 1;";
 
         using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
         if (!await reader.ReadAsync(cancellationToken))
-            return (1, 1);
+            return (1, 1, 1, 1, 1, 1);
 
         return (
             Math.Clamp(Convert.ToInt32(reader["CampInvestmentLevel"]), 0, 2),
-            Math.Clamp(Convert.ToInt32(reader["MedicalInvestmentLevel"]), 0, 2));
+            Math.Clamp(Convert.ToInt32(reader["MedicalInvestmentLevel"]), 0, 2),
+            Math.Clamp(Convert.ToInt32(reader["ScoutingStaffLevel"]), 0, 2),
+            Math.Clamp(Convert.ToInt32(reader["MediaStaffLevel"]), 0, 2),
+            Math.Clamp(Convert.ToInt32(reader["NegotiationStaffLevel"]), 0, 2),
+            Math.Clamp(Convert.ToInt32(reader["PerformanceStaffLevel"]), 0, 2));
     }
 
     private static async Task<string> LoadCurrentDateAsync(SqliteConnection conn, SqliteTransaction tx, CancellationToken cancellationToken)

@@ -5,6 +5,18 @@ namespace MMAAgent.Infrastructure.Persistence.Sqlite.Services;
 
 public sealed class CareerSchemaPreparationService
 {
+    private static readonly string[] StandardWeightClasses =
+    {
+        "Flyweight",
+        "Bantamweight",
+        "Featherweight",
+        "Lightweight",
+        "Welterweight",
+        "Middleweight",
+        "LightHeavyweight",
+        "Heavyweight"
+    };
+
     private readonly SqliteConnectionFactory _factory;
 
     public CareerSchemaPreparationService(SqliteConnectionFactory factory)
@@ -24,6 +36,7 @@ public sealed class CareerSchemaPreparationService
         await EnsureEventColumnsAsync(conn, cancellationToken);
         await EnsureFightColumnsAsync(conn, cancellationToken);
         await EnsureFightOfferColumnsAsync(conn, cancellationToken);
+        await EnsureContractOfferColumnsAsync(conn, cancellationToken);
         await EnsureFightHistoryColumnsAsync(conn, cancellationToken);
         await EnsureFightPreparationTablesAsync(conn, cancellationToken);
         await EnsureFighterWorldTablesAsync(conn, cancellationToken);
@@ -33,6 +46,8 @@ public sealed class CareerSchemaPreparationService
 
     private static async Task EnsurePromotionConfigurationAsync(SqliteConnection conn, CancellationToken cancellationToken)
     {
+        await EnsureColumnAsync(conn, "Promotions", "CircuitType", "TEXT NOT NULL DEFAULT 'Professional'", cancellationToken);
+        await EnsureColumnAsync(conn, "Promotions", "ParentPromotionId", "INTEGER NULL", cancellationToken);
         await EnsureColumnAsync(conn, "Promotions", "TitleFightIntervalWeeks", "INTEGER NOT NULL DEFAULT 6", cancellationToken);
         await EnsureColumnAsync(conn, "Promotions", "MajorEventIntervalWeeks", "INTEGER NOT NULL DEFAULT 6", cancellationToken);
         await EnsureColumnAsync(conn, "Promotions", "EarlyPrelimFightCount", "INTEGER NOT NULL DEFAULT 0", cancellationToken);
@@ -95,13 +110,25 @@ SET TitleFightIntervalWeeks = CASE
         WHEN Prestige >= 90 THEN 2
         WHEN Prestige >= 75 THEN 2
         ELSE 3
-    END;", cancellationToken);
+    END,
+    CircuitType = COALESCE(NULLIF(CircuitType, ''), 'Professional');", cancellationToken);
+
+        await EnsureAmateurPromotionsAsync(conn, cancellationToken);
     }
 
     private static async Task EnsureAgentConfigurationAsync(SqliteConnection conn, CancellationToken cancellationToken)
     {
+        await EnsureColumnAsync(conn, "AgentProfile", "Nationality", "TEXT NULL", cancellationToken);
+        await EnsureColumnAsync(conn, "AgentProfile", "AvatarKey", "TEXT NULL", cancellationToken);
         await EnsureColumnAsync(conn, "AgentProfile", "CampInvestmentLevel", "INTEGER NOT NULL DEFAULT 1", cancellationToken);
         await EnsureColumnAsync(conn, "AgentProfile", "MedicalInvestmentLevel", "INTEGER NOT NULL DEFAULT 1", cancellationToken);
+        await EnsureColumnAsync(conn, "AgentProfile", "PublicReputation", "INTEGER NOT NULL DEFAULT 50", cancellationToken);
+        await EnsureColumnAsync(conn, "AgentProfile", "FighterTrust", "INTEGER NOT NULL DEFAULT 50", cancellationToken);
+        await EnsureColumnAsync(conn, "AgentProfile", "PromotionLeverage", "INTEGER NOT NULL DEFAULT 50", cancellationToken);
+        await EnsureColumnAsync(conn, "AgentProfile", "ScoutingStaffLevel", "INTEGER NOT NULL DEFAULT 1", cancellationToken);
+        await EnsureColumnAsync(conn, "AgentProfile", "MediaStaffLevel", "INTEGER NOT NULL DEFAULT 1", cancellationToken);
+        await EnsureColumnAsync(conn, "AgentProfile", "NegotiationStaffLevel", "INTEGER NOT NULL DEFAULT 1", cancellationToken);
+        await EnsureColumnAsync(conn, "AgentProfile", "PerformanceStaffLevel", "INTEGER NOT NULL DEFAULT 1", cancellationToken);
 
         await ExecAsync(conn, @"
 UPDATE AgentProfile
@@ -109,6 +136,31 @@ SET CampInvestmentLevel = CASE
         WHEN COALESCE(CampInvestmentLevel, -1) < 0 THEN 0
         WHEN COALESCE(CampInvestmentLevel, 1) > 2 THEN 2
         ELSE COALESCE(CampInvestmentLevel, 1)
+    END,
+    Nationality = COALESCE(NULLIF(Nationality, ''), 'Spain'),
+    AvatarKey = COALESCE(NULLIF(AvatarKey, ''), 'Promoter'),
+    PublicReputation = MIN(99, MAX(15, COALESCE(PublicReputation, 50))),
+    FighterTrust = MIN(99, MAX(15, COALESCE(FighterTrust, 50))),
+    PromotionLeverage = MIN(99, MAX(15, COALESCE(PromotionLeverage, 50))),
+    ScoutingStaffLevel = CASE
+        WHEN COALESCE(ScoutingStaffLevel, -1) < 0 THEN 0
+        WHEN COALESCE(ScoutingStaffLevel, 1) > 2 THEN 2
+        ELSE COALESCE(ScoutingStaffLevel, 1)
+    END,
+    MediaStaffLevel = CASE
+        WHEN COALESCE(MediaStaffLevel, -1) < 0 THEN 0
+        WHEN COALESCE(MediaStaffLevel, 1) > 2 THEN 2
+        ELSE COALESCE(MediaStaffLevel, 1)
+    END,
+    NegotiationStaffLevel = CASE
+        WHEN COALESCE(NegotiationStaffLevel, -1) < 0 THEN 0
+        WHEN COALESCE(NegotiationStaffLevel, 1) > 2 THEN 2
+        ELSE COALESCE(NegotiationStaffLevel, 1)
+    END,
+    PerformanceStaffLevel = CASE
+        WHEN COALESCE(PerformanceStaffLevel, -1) < 0 THEN 0
+        WHEN COALESCE(PerformanceStaffLevel, 1) > 2 THEN 2
+        ELSE COALESCE(PerformanceStaffLevel, 1)
     END,
     MedicalInvestmentLevel = CASE
         WHEN COALESCE(MedicalInvestmentLevel, -1) < 0 THEN 0
@@ -145,6 +197,10 @@ CREATE TABLE IF NOT EXISTS CountryCultureWeights
 
     private static async Task EnsureFighterWorldColumnsAsync(SqliteConnection conn, CancellationToken cancellationToken)
     {
+        await EnsureColumnAsync(conn, "Fighters", "CareerStage", "TEXT NOT NULL DEFAULT 'Pro'", cancellationToken);
+        await EnsureColumnAsync(conn, "Fighters", "AmateurWins", "INTEGER NOT NULL DEFAULT 0", cancellationToken);
+        await EnsureColumnAsync(conn, "Fighters", "AmateurLosses", "INTEGER NOT NULL DEFAULT 0", cancellationToken);
+        await EnsureColumnAsync(conn, "Fighters", "AmateurDraws", "INTEGER NOT NULL DEFAULT 0", cancellationToken);
         await EnsureColumnAsync(conn, "Fighters", "Marketability", "INTEGER NOT NULL DEFAULT 50", cancellationToken);
         await EnsureColumnAsync(conn, "Fighters", "Momentum", "INTEGER NOT NULL DEFAULT 50", cancellationToken);
         await EnsureColumnAsync(conn, "Fighters", "WeightMissCount", "INTEGER NOT NULL DEFAULT 0", cancellationToken);
@@ -209,10 +265,132 @@ SET Marketability = CASE
         WHEN COALESCE(Showmanship, 0) <= 0 THEN 40
         ELSE Showmanship
     END,
+    CareerStage = CASE
+        WHEN COALESCE(NULLIF(CareerStage, ''), '') <> '' THEN CareerStage
+        WHEN COALESCE(Age, 18) <= 23
+         AND (COALESCE(Wins, 0) + COALESCE(Losses, 0) + COALESCE(Draws, 0)) <= 8
+         AND COALESCE(Skill, 50) <= 63
+            THEN 'Amateur'
+        ELSE 'Pro'
+    END,
+    AmateurWins = CASE
+        WHEN COALESCE(AmateurWins, 0) > 0 THEN AmateurWins
+        WHEN COALESCE(CareerStage, 'Pro') = 'Amateur' THEN COALESCE(Wins, 0)
+        ELSE 0
+    END,
+    AmateurLosses = CASE
+        WHEN COALESCE(AmateurLosses, 0) > 0 THEN AmateurLosses
+        WHEN COALESCE(CareerStage, 'Pro') = 'Amateur' THEN COALESCE(Losses, 0)
+        ELSE 0
+    END,
+    AmateurDraws = CASE
+        WHEN COALESCE(AmateurDraws, 0) > 0 THEN AmateurDraws
+        WHEN COALESCE(CareerStage, 'Pro') = 'Amateur' THEN COALESCE(Draws, 0)
+        ELSE 0
+    END,
     LastAgedYear = CASE
         WHEN COALESCE(LastAgedYear, 0) <= 0 THEN 2026
         ELSE LastAgedYear
     END;", cancellationToken);
+    }
+
+    private static async Task EnsureAmateurPromotionsAsync(SqliteConnection conn, CancellationToken cancellationToken)
+    {
+        var definitions = new[]
+        {
+            new AmateurPromotionSeed("MMA Futures League", 24, 22, 2, 34, 18),
+            new AmateurPromotionSeed("Iberian Amateur Combat", 22, 20, 2, 32, 16),
+            new AmateurPromotionSeed("Nordic Cage Path", 21, 18, 3, 33, 16),
+            new AmateurPromotionSeed("Pan American Amateur Series", 23, 24, 2, 35, 18)
+        };
+
+        foreach (var definition in definitions)
+        {
+            var exists = await ScalarIntAsync(
+                conn,
+                "SELECT COUNT(*) FROM Promotions WHERE Name = $name LIMIT 1;",
+                cancellationToken,
+                ("$name", definition.Name));
+
+            if (exists <= 0)
+            {
+                using var insertPromotion = conn.CreateCommand();
+                insertPromotion.CommandText = @"
+INSERT INTO Promotions
+(
+    Name,
+    Prestige,
+    Budget,
+    IsActive,
+    EventIntervalWeeks,
+    NextEventWeek,
+    MinSkillToSign,
+    MinPopularityToSign,
+    CircuitType,
+    ParentPromotionId,
+    TitleFightIntervalWeeks,
+    MajorEventIntervalWeeks,
+    EarlyPrelimFightCount,
+    PrelimFightCount,
+    MainCardFightCount,
+    StandardCampWeeks,
+    MajorCampWeeks,
+    TitleCampWeeks,
+    ShortNoticeCampWeeks,
+    ShortNoticeMaxLeadWeeks
+)
+VALUES
+(
+    $name,
+    $prestige,
+    $budget,
+    1,
+    $eventIntervalWeeks,
+    0,
+    $minSkillToSign,
+    $minPopularityToSign,
+    'Amateur',
+    NULL,
+    99,
+    12,
+    0,
+    2,
+    2,
+    3,
+    4,
+    5,
+    1,
+    2
+);";
+                insertPromotion.Parameters.AddWithValue("$name", definition.Name);
+                insertPromotion.Parameters.AddWithValue("$prestige", definition.Prestige);
+                insertPromotion.Parameters.AddWithValue("$budget", definition.Budget);
+                insertPromotion.Parameters.AddWithValue("$eventIntervalWeeks", definition.EventIntervalWeeks);
+                insertPromotion.Parameters.AddWithValue("$minSkillToSign", definition.MinSkillToSign);
+                insertPromotion.Parameters.AddWithValue("$minPopularityToSign", definition.MinPopularityToSign);
+                await insertPromotion.ExecuteNonQueryAsync(cancellationToken);
+            }
+
+            foreach (var weightClass in StandardWeightClasses)
+            {
+                using var insertWeightClass = conn.CreateCommand();
+                insertWeightClass.CommandText = @"
+INSERT INTO PromotionWeightClasses (PromotionId, WeightClass, HasRanking, RankingSize)
+SELECT p.Id, $weightClass, 0, 0
+FROM Promotions p
+WHERE p.Name = $promotionName
+  AND NOT EXISTS
+  (
+      SELECT 1
+      FROM PromotionWeightClasses pwc
+      WHERE pwc.PromotionId = p.Id
+        AND pwc.WeightClass = $weightClass
+  );";
+                insertWeightClass.Parameters.AddWithValue("$promotionName", definition.Name);
+                insertWeightClass.Parameters.AddWithValue("$weightClass", weightClass);
+                await insertWeightClass.ExecuteNonQueryAsync(cancellationToken);
+            }
+        }
     }
 
     private static async Task EnsureEventColumnsAsync(SqliteConnection conn, CancellationToken cancellationToken)
@@ -240,6 +418,13 @@ SET Marketability = CASE
         await EnsureColumnAsync(conn, "FightOffers", "CampWeeksOffered", "INTEGER NOT NULL DEFAULT 0", cancellationToken);
         await EnsureColumnAsync(conn, "FightOffers", "IsTitleEliminator", "INTEGER NOT NULL DEFAULT 0", cancellationToken);
         await EnsureColumnAsync(conn, "FightOffers", "Notes", "TEXT NULL", cancellationToken);
+    }
+
+    private static async Task EnsureContractOfferColumnsAsync(SqliteConnection conn, CancellationToken cancellationToken)
+    {
+        await EnsureColumnAsync(conn, "ContractOffers", "SigningBonus", "INTEGER NOT NULL DEFAULT 0", cancellationToken);
+        await EnsureColumnAsync(conn, "ContractOffers", "ExclusivityType", "TEXT NOT NULL DEFAULT 'Exclusive'", cancellationToken);
+        await EnsureColumnAsync(conn, "Fighters", "ContractExclusivityType", "TEXT NOT NULL DEFAULT 'Exclusive'", cancellationToken);
     }
 
     private static async Task EnsureFightHistoryColumnsAsync(SqliteConnection conn, CancellationToken cancellationToken)
@@ -428,6 +613,19 @@ CREATE TABLE IF NOT EXISTS AgentTransactions
 );", cancellationToken);
 
         await ExecAsync(conn, @"
+CREATE TABLE IF NOT EXISTS AgentPromotionRelations
+(
+    AgentId INTEGER NOT NULL,
+    PromotionId INTEGER NOT NULL,
+    RelationshipScore INTEGER NOT NULL DEFAULT 50,
+    LastUpdatedDate TEXT NULL,
+    Notes TEXT NULL,
+    PRIMARY KEY (AgentId, PromotionId),
+    FOREIGN KEY(AgentId) REFERENCES AgentProfile(Id) ON DELETE CASCADE,
+    FOREIGN KEY(PromotionId) REFERENCES Promotions(Id) ON DELETE CASCADE
+);", cancellationToken);
+
+        await ExecAsync(conn, @"
 CREATE TABLE IF NOT EXISTS Rivalries
 (
     FighterAId INTEGER NOT NULL,
@@ -490,15 +688,31 @@ CREATE TABLE IF NOT EXISTS ScoutAssignments
     CompletedDate TEXT NULL
 );", cancellationToken);
 
+        await ExecAsync(conn, @"
+CREATE TABLE IF NOT EXISTS AmateurProspectWatchlist
+(
+    AgentId INTEGER NOT NULL,
+    FighterId INTEGER NOT NULL,
+    AddedDate TEXT NOT NULL DEFAULT '',
+    LastAlertDate TEXT NULL,
+    LastAlertType TEXT NULL,
+    Notes TEXT NULL,
+    PRIMARY KEY (AgentId, FighterId),
+    FOREIGN KEY(AgentId) REFERENCES AgentProfile(Id) ON DELETE CASCADE,
+    FOREIGN KEY(FighterId) REFERENCES Fighters(Id) ON DELETE CASCADE
+);", cancellationToken);
+
         await ExecAsync(conn, "CREATE INDEX IF NOT EXISTS IX_ScoutKnowledge_AgentId ON ScoutKnowledge(AgentId);", cancellationToken);
         await ExecAsync(conn, "CREATE INDEX IF NOT EXISTS IX_Storylines_Entity ON Storylines(EntityType, EntityId, Status);", cancellationToken);
         await ExecAsync(conn, "CREATE INDEX IF NOT EXISTS IX_ContenderQueue_Lookup ON ContenderQueue(PromotionId, WeightClass, QueueRank);", cancellationToken);
         await ExecAsync(conn, "CREATE INDEX IF NOT EXISTS IX_AgentTransactions_AgentId_Date ON AgentTransactions(AgentId, TxDate DESC);", cancellationToken);
+        await ExecAsync(conn, "CREATE INDEX IF NOT EXISTS IX_AgentPromotionRelations_PromotionId ON AgentPromotionRelations(PromotionId);", cancellationToken);
         await ExecAsync(conn, "CREATE INDEX IF NOT EXISTS IX_Rivalries_FighterA ON Rivalries(FighterAId);", cancellationToken);
         await ExecAsync(conn, "CREATE INDEX IF NOT EXISTS IX_Rivalries_FighterB ON Rivalries(FighterBId);", cancellationToken);
         await ExecAsync(conn, "CREATE INDEX IF NOT EXISTS IX_LegacyTags_FighterId ON LegacyTags(FighterId);", cancellationToken);
         await ExecAsync(conn, "CREATE INDEX IF NOT EXISTS IX_DecisionEvents_Agent_Status ON DecisionEvents(AgentId, Status, CreatedDate DESC);", cancellationToken);
         await ExecAsync(conn, "CREATE INDEX IF NOT EXISTS IX_ScoutAssignments_Agent_Status ON ScoutAssignments(AgentId, Status);", cancellationToken);
+        await ExecAsync(conn, "CREATE INDEX IF NOT EXISTS IX_AmateurProspectWatchlist_AgentId ON AmateurProspectWatchlist(AgentId, LastAlertDate DESC);", cancellationToken);
     }
 
     private static async Task EnsureColumnAsync(
@@ -539,5 +753,28 @@ CREATE TABLE IF NOT EXISTS ScoutAssignments
         cmd.CommandText = sql;
         await cmd.ExecuteNonQueryAsync(cancellationToken);
     }
+
+    private static async Task<int> ScalarIntAsync(
+        SqliteConnection conn,
+        string sql,
+        CancellationToken cancellationToken,
+        params (string Name, object? Value)[] parameters)
+    {
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = sql;
+
+        foreach (var (name, value) in parameters)
+            cmd.Parameters.AddWithValue(name, value ?? DBNull.Value);
+
+        return Convert.ToInt32(await cmd.ExecuteScalarAsync(cancellationToken));
+    }
+
+    private sealed record AmateurPromotionSeed(
+        string Name,
+        int Prestige,
+        int Budget,
+        int EventIntervalWeeks,
+        int MinSkillToSign,
+        int MinPopularityToSign);
 
 }

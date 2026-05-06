@@ -93,6 +93,7 @@ namespace MMAAgent.Infrastructure.Generation
 
                 var stats = GenerateAttributes(c, skill, potential, style);
                 var record = GenerateRecord(age, skill);
+                var careerStage = DetermineCareerStage(age, skill, record.W + record.L + record.D, isNewcomer: false);
                 var popularity = GeneratePopularity(skill, record.W, record.L, personality, age, isNewcomer: false);
                 var marketability = GenerateMarketability(popularity, personality, style, age, potential, isNewcomer: false);
                 var momentum = GenerateMomentum(skill, potential, age, record.W, record.L, isNewcomer: false);
@@ -120,6 +121,10 @@ namespace MMAAgent.Infrastructure.Generation
                     riskTolerance: personality.RiskTolerance,
                     stability: personality.Stability,
                     showmanship: personality.Showmanship,
+                    careerStage: careerStage,
+                    amateurWins: careerStage == "Amateur" ? record.W : 0,
+                    amateurLosses: careerStage == "Amateur" ? record.L : 0,
+                    amateurDraws: careerStage == "Amateur" ? record.D : 0,
                     retired: 0,
                     promotionId: null,
                     salary: 0,
@@ -170,6 +175,7 @@ namespace MMAAgent.Infrastructure.Generation
 
                 var stats = GenerateAttributes(c, skill, potential, style);
                 var record = GenerateNewcomerRecord(age, skill);
+                var careerStage = DetermineCareerStage(age, skill, record.W + record.L + record.D, isNewcomer: true);
                 var popularity = GeneratePopularity(skill, record.W, record.L, personality, age, isNewcomer: true);
                 var marketability = GenerateMarketability(popularity, personality, style, age, potential, isNewcomer: true);
                 var momentum = GenerateMomentum(skill, potential, age, record.W, record.L, isNewcomer: true);
@@ -197,6 +203,10 @@ namespace MMAAgent.Infrastructure.Generation
                     riskTolerance: personality.RiskTolerance,
                     stability: personality.Stability,
                     showmanship: personality.Showmanship,
+                    careerStage: careerStage,
+                    amateurWins: careerStage == "Amateur" ? record.W : 0,
+                    amateurLosses: careerStage == "Amateur" ? record.L : 0,
+                    amateurDraws: careerStage == "Amateur" ? record.D : 0,
                     retired: 0,
                     promotionId: null,
                     salary: 0,
@@ -922,6 +932,25 @@ LEFT JOIN Countries c ON c.Id = f.CountryId;";
                 + NextGaussian(0, 4)), 5, 95);
         }
 
+        private string DetermineCareerStage(int age, int skill, int totalFights, bool isNewcomer)
+        {
+            if (isNewcomer)
+            {
+                if (age <= 23 && (skill <= 62 || totalFights <= 6))
+                    return "Amateur";
+
+                return age <= 24 && skill <= 58 ? "Amateur" : "Pro";
+            }
+
+            if (age <= 21 && totalFights <= 4)
+                return "Amateur";
+
+            if (age <= 23 && totalFights <= 8 && skill <= 63 && _rng.NextDouble() < 0.72)
+                return "Amateur";
+
+            return "Pro";
+        }
+
         // ---------------- Insert ----------------
 
         private void InsertFighter(
@@ -945,6 +974,10 @@ LEFT JOIN Countries c ON c.Id = f.CountryId;";
             int riskTolerance,
             int stability,
             int showmanship,
+            string careerStage,
+            int amateurWins,
+            int amateurLosses,
+            int amateurDraws,
             int retired,
             int? promotionId,
             int salary,
@@ -969,6 +1002,7 @@ INSERT INTO Fighters
  KOWins, SubWins, DecWins,
  Popularity, Marketability, Momentum, ReliabilityScore, MediaHeat,
  Ambition, Discipline, RiskTolerance, Stability, Showmanship,
+ CareerStage, AmateurWins, AmateurLosses, AmateurDraws,
  Retired,
  PromotionId, Salary, ContractFightsRemaining, TotalFightsInContract, ContractStatus, NegotiationTurnsRemaining)
 VALUES
@@ -982,6 +1016,7 @@ VALUES
  $KOWins, $SubWins, $DecWins,
  $Popularity, $Marketability, $Momentum, $ReliabilityScore, $MediaHeat,
  $Ambition, $Discipline, $RiskTolerance, $Stability, $Showmanship,
+ $CareerStage, $AmateurWins, $AmateurLosses, $AmateurDraws,
  $Retired,
  $PromotionId, $Salary, $ContractFightsRemaining, $TotalFightsInContract, $ContractStatus, $NegotiationTurnsRemaining);
 ";
@@ -1019,6 +1054,10 @@ VALUES
             cmd.Parameters.AddWithValue("$RiskTolerance", riskTolerance);
             cmd.Parameters.AddWithValue("$Stability", stability);
             cmd.Parameters.AddWithValue("$Showmanship", showmanship);
+            cmd.Parameters.AddWithValue("$CareerStage", careerStage);
+            cmd.Parameters.AddWithValue("$AmateurWins", amateurWins);
+            cmd.Parameters.AddWithValue("$AmateurLosses", amateurLosses);
+            cmd.Parameters.AddWithValue("$AmateurDraws", amateurDraws);
             cmd.Parameters.AddWithValue("$Retired", retired);
 
             if (promotionId.HasValue) cmd.Parameters.AddWithValue("$PromotionId", promotionId.Value);

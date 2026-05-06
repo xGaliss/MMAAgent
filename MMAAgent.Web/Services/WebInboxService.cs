@@ -367,7 +367,8 @@ WHERE Id = $fighterId;",
                     {
                         await ExecAsync(conn, tx, @"
 UPDATE AgentProfile
-SET Money = COALESCE(Money, 0) + 2200
+SET Money = COALESCE(Money, 0) + 2200,
+    PublicReputation = MIN(99, COALESCE(PublicReputation, 50) + 2)
 WHERE Id = $agentId;", ("$agentId", agentId));
 
                         await ExecAsync(conn, tx, @"
@@ -396,6 +397,11 @@ WHERE FighterId = $fighterId;",
                             ("$fighterId", fighterId3),
                             ("$moraleGain", personality.Stability >= 68 ? 5 : 4),
                             ("$sharpnessGain", personality.Discipline >= 68 ? 4 : 3));
+
+                        await ExecAsync(conn, tx, @"
+UPDATE AgentProfile
+SET FighterTrust = MIN(99, COALESCE(FighterTrust, 50) + 2)
+WHERE Id = $agentId;", ("$agentId", agentId));
                     }
 
                     var summary = adCampaign
@@ -431,7 +437,9 @@ WHERE FighterId = $fighterId;", ("$fighterId", fighterId4));
 
                         await ExecAsync(conn, tx, @"
 UPDATE AgentProfile
-SET Reputation = MIN(99, COALESCE(Reputation, 50) + 1)
+SET Reputation = MIN(99, COALESCE(Reputation, 50) + 1),
+    FighterTrust = MIN(99, COALESCE(FighterTrust, 50) + 1),
+    PromotionLeverage = MIN(99, COALESCE(PromotionLeverage, 50) + 1)
 WHERE Id = $agentId;", ("$agentId", agentId));
                     }
                     else
@@ -448,6 +456,11 @@ WHERE Id = $fighterId;",
                             ("$marketabilityGain", 3 + (personality.Showmanship >= 72 ? 2 : 0)),
                             ("$momentumGain", 2 + (personality.Ambition >= 68 ? 1 : 0)),
                             ("$reliabilityLoss", personality.Stability >= 70 ? 2 : 3));
+
+                        await ExecAsync(conn, tx, @"
+UPDATE AgentProfile
+SET PublicReputation = MIN(99, COALESCE(PublicReputation, 50) + 2)
+WHERE Id = $agentId;", ("$agentId", agentId));
                     }
 
                     var summary = stayMeasured
@@ -468,7 +481,8 @@ WHERE Id = $fighterId;",
                     {
                         await ExecAsync(conn, tx, @"
 UPDATE AgentProfile
-SET Money = COALESCE(Money, 0) - 2400
+SET Money = COALESCE(Money, 0) - 2400,
+    FighterTrust = MIN(99, COALESCE(FighterTrust, 50) + 1)
 WHERE Id = $agentId;", ("$agentId", agentId));
 
                         await ExecAsync(conn, tx, @"
@@ -517,6 +531,11 @@ UPDATE FighterStates
 SET Morale = MIN(95, COALESCE(Morale, 50) + 2),
     Energy = MIN(95, COALESCE(Energy, 50) + 1)
 WHERE FighterId = $fighterId;", ("$fighterId", fighterId5));
+
+                        await ExecAsync(conn, tx, @"
+UPDATE AgentProfile
+SET FighterTrust = MIN(99, COALESCE(FighterTrust, 50) + 1)
+WHERE Id = $agentId;", ("$agentId", agentId));
                     }
 
                     var summary = bringSpecialists
@@ -637,6 +656,8 @@ SELECT co.Id,
        co.OfferedFights,
        co.BasePurse,
        co.WinBonus,
+       COALESCE(co.SigningBonus, 0) AS SigningBonus,
+       COALESCE(co.ExclusivityType, 'Exclusive') AS ExclusivityType,
        co.WeeksToRespond,
        co.Status,
        co.SourceType,
@@ -668,6 +689,8 @@ ORDER BY CASE WHEN co.Status = 'Pending' THEN 0 ELSE 1 END,
                 OfferedFights = Convert.ToInt32(reader["OfferedFights"]),
                 BasePurse = Convert.ToInt32(reader["BasePurse"]),
                 WinBonus = Convert.ToInt32(reader["WinBonus"]),
+                SigningBonus = Convert.ToInt32(reader["SigningBonus"]),
+                ExclusivityType = reader["ExclusivityType"]?.ToString() ?? "Exclusive",
                 WeeksToRespond = Convert.ToInt32(reader["WeeksToRespond"]),
                 Status = reader["Status"]?.ToString() ?? "",
                 SourceType = reader["SourceType"]?.ToString() ?? "",
@@ -676,6 +699,8 @@ ORDER BY CASE WHEN co.Status = 'Pending' THEN 0 ELSE 1 END,
                     Convert.ToInt32(reader["OfferedFights"]),
                     Convert.ToInt32(reader["BasePurse"]),
                     Convert.ToInt32(reader["WinBonus"]),
+                    Convert.ToInt32(reader["SigningBonus"]),
+                    reader["ExclusivityType"]?.ToString() ?? "Exclusive",
                     reader["SourceType"]?.ToString() ?? "",
                     Convert.ToInt32(reader["FighterAge"]),
                     Convert.ToInt32(reader["FighterPopularity"]),
@@ -734,6 +759,8 @@ ORDER BY Id DESC;";
         int offeredFights,
         int basePurse,
         int winBonus,
+        int signingBonus,
+        string exclusivityType,
         string sourceType,
         int fighterAge,
         int fighterPopularity,
@@ -747,6 +774,12 @@ ORDER BY Id DESC;";
 
         if (promotionPrestige >= 78 && fighterPopularity < 62 && fighterMarketability < 62)
             return "Exposure";
+
+        if (signingBonus >= 3500 || winBonus >= Math.Max(2800, (int)(basePurse * 0.45)))
+            return "Bonus";
+
+        if (string.Equals(exclusivityType, "Open", StringComparison.OrdinalIgnoreCase) && fighterAge >= 31)
+            return "Take as-is";
 
         if (basePurse >= 12000 || winBonus >= 4500)
             return "Money";

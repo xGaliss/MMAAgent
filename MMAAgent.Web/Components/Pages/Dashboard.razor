@@ -16,13 +16,6 @@
 
 <PageTitle>Dashboard - MMA Agent</PageTitle>
 
-<div class="page-header">
-    <div>
-        <h1>Dashboard</h1>
-        <p class="muted-text">Live overview of your current MMA universe.</p>
-    </div>
-</div>
-
 @if (_error is not null)
 {
     <div class="panel-card error-panel">@_error</div>
@@ -33,28 +26,44 @@ else if (_loading)
 }
 else
 {
+    <section class="panel-card dashboard-command-hero">
+        <div class="dashboard-command-copy">
+            <div class="dashboard-command-kicker">Agency Control</div>
+            <h1 class="dashboard-command-title">Fight business at a glance.</h1>
+            <p class="dashboard-command-text">
+                Track roster pressure, live negotiations, title movement and the next flashpoint in your world.
+            </p>
+        </div>
+
+        <div class="dashboard-command-side">
+            <div class="dashboard-command-chip">Roster @_fighterCount</div>
+            <div class="dashboard-command-chip">Promotions @_promotionCount</div>
+            <div class="dashboard-command-chip">Inbox @_unreadMessages</div>
+        </div>
+    </section>
+
     <div class="stats-grid">
-        <article class="stat-card">
+        <article class="stat-card dashboard-stat-card">
             <div class="stat-label">Fighters Loaded</div>
             <div class="stat-value">@_fighterCount</div>
         </article>
 
-        <article class="stat-card">
+        <article class="stat-card dashboard-stat-card">
             <div class="stat-label">Promotions Loaded</div>
             <div class="stat-value">@_promotionCount</div>
         </article>
 
-        <article class="stat-card">
+        <article class="stat-card dashboard-stat-card">
             <div class="stat-label">Pending Fight Offers</div>
             <div class="stat-value">@_pendingFightOffers</div>
         </article>
 
-        <article class="stat-card">
+        <article class="stat-card dashboard-stat-card">
             <div class="stat-label">Pending Contract Offers</div>
             <div class="stat-value">@_pendingContractOffers</div>
         </article>
 
-        <article class="stat-card">
+        <article class="stat-card dashboard-stat-card">
             <div class="stat-label">Unread Messages</div>
             <div class="stat-value">@_unreadMessages</div>
         </article>

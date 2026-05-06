@@ -1,17 +1,10 @@
-﻿@page "/agent"
+@page "/agent"
 @rendermode InteractiveServer
 @using MMAAgent.Web.Models
 @using MMAAgent.Web.Services
 @inject WebAgentProfileService AgentProfileService
 
-<PageTitle>Agent Profile - MMA Agent</PageTitle>
-
-<div class="page-header">
-    <div>
-        <h1>Agent Profile</h1>
-        <p class="muted-text">Read-only agent overview loaded from the current save.</p>
-    </div>
-</div>
+<PageTitle>Agency HQ - MMA Agent</PageTitle>
 
 @if (_error is not null)
 {
@@ -19,7 +12,7 @@
 }
 else if (_loading)
 {
-    <div class="panel-card">Cargando agent profile...</div>
+    <div class="panel-card">Cargando agency HQ...</div>
 }
 else if (_agent is null)
 {
@@ -27,76 +20,162 @@ else if (_agent is null)
 }
 else
 {
+    <div class="dashboard-command-hero">
+        <div class="fighter-command-layout">
+            <div class="fighter-command-main">
+                <div class="fighter-command-kicker">AGENCY HQ</div>
+                <h1 class="fighter-command-title">Run the room behind the fighters</h1>
+                <div class="fighter-command-summary">
+                    Your staff, reputation and promotion leverage now shape camps, scouting, media pressure and deal-making across the save.
+                </div>
+                <div class="fighter-hero-chip-row">
+                    <span class="fighter-hero-chip">@_agent.ManagedFightersCount fighters</span>
+                    <span class="fighter-hero-chip">Public rep @_agent.PublicReputation</span>
+                    <span class="fighter-hero-chip">Fighter trust @_agent.FighterTrust</span>
+                    <span class="fighter-hero-chip">Promotion leverage @_agent.PromotionLeverage</span>
+                </div>
+            </div>
+
+            <div class="fighter-command-side">
+                <div class="agent-identity-card">
+                    <div class="agent-avatar-large @BuildAgentAvatarClass(_agent.AvatarKey)">
+                        <span>@BuildAgentAvatarMonogram(_agent.AvatarKey)</span>
+                    </div>
+
+                    <div>
+                        <h2 class="profile-name">@_agent.Name</h2>
+                        <div class="muted-text">@_agent.AgencyName</div>
+                        <div class="muted-text inline-meta" style="margin-top:10px;">
+                            @if (!string.IsNullOrWhiteSpace(_agent.CountryFlagUrl))
+                            {
+                                <span class="country-flag-image"
+                                      role="img"
+                                      aria-label="@($"{_agent.Nationality} flag")"
+                                      title="@_agent.Nationality"
+                                      style="@($"background-image:url('{_agent.CountryFlagUrl}');")"></span>
+                            }
+                            <span>@_agent.Nationality</span>
+                            <span class="message-badge">@FormatAvatarLabel(_agent.AvatarKey)</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="fighter-mini-grid">
+                    <div class="fighter-mini-card">
+                        <div class="fighter-mini-label">Money</div>
+                        <div class="fighter-mini-value">@_agent.Money</div>
+                    </div>
+                    <div class="fighter-mini-card">
+                        <div class="fighter-mini-label">Agency rep</div>
+                        <div class="fighter-mini-value">@_agent.Reputation</div>
+                    </div>
+                    <div class="fighter-mini-card">
+                        <div class="fighter-mini-label">Created</div>
+                        <div class="fighter-mini-value">@_agent.CreatedDate</div>
+                    </div>
+                    <div class="fighter-mini-card">
+                        <div class="fighter-mini-label">Roster</div>
+                        <div class="fighter-mini-value">@_agent.ManagedFightersCount</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <div class="agent-grid">
-        <section class="panel-card">
-            <div class="section-kicker">AGENT</div>
-            <h2 class="profile-name">@_agent.Name</h2>
-            <div class="muted-text">@_agent.AgencyName</div>
-        </section>
+        <section class="panel-card" style="grid-column: 1 / -1;">
+            <div class="table-toolbar">
+                <div class="toolbar-title">Agency Reputation</div>
+                <div class="toolbar-subtitle">These three tracks affect who trusts your agency, how much noise you can create and how seriously promotions take your asks.</div>
+            </div>
 
-        <section class="stat-card">
-            <div class="stat-label">Money</div>
-            <div class="stat-value">@_agent.Money</div>
-        </section>
-
-        <section class="stat-card">
-            <div class="stat-label">Reputation</div>
-            <div class="stat-value">@_agent.Reputation</div>
-        </section>
-
-        <section class="stat-card">
-            <div class="stat-label">Managed Fighters</div>
-            <div class="stat-value">@_agent.ManagedFightersCount</div>
-        </section>
-
-        <section class="stat-card">
-            <div class="stat-label">Created</div>
-            <div class="stat-value">@_agent.CreatedDate</div>
+            <div class="fighter-mini-grid">
+                <div class="fighter-mini-card">
+                    <div class="fighter-mini-label">Public Reputation</div>
+                    <div class="fighter-mini-value">@_agent.PublicReputation</div>
+                    <div class="muted-text">How much media and fans care about your agency brand.</div>
+                </div>
+                <div class="fighter-mini-card">
+                    <div class="fighter-mini-label">Fighter Trust</div>
+                    <div class="fighter-mini-value">@_agent.FighterTrust</div>
+                    <div class="muted-text">How believable you feel to prospects, clients and current fighters.</div>
+                </div>
+                <div class="fighter-mini-card">
+                    <div class="fighter-mini-label">Promotion Leverage</div>
+                    <div class="fighter-mini-value">@_agent.PromotionLeverage</div>
+                    <div class="muted-text">How strongly promotions react to your requests, pitches and negotiations.</div>
+                </div>
+            </div>
         </section>
 
         <section class="panel-card" style="grid-column: 1 / -1;">
             <div class="table-toolbar">
-                <div class="toolbar-title">Manager Levers</div>
-                <div class="toolbar-subtitle">Small strategic settings that shape camp quality, medical support and weekly costs</div>
+                <div class="toolbar-title">Agency Staff</div>
+                <div class="toolbar-subtitle">Lean, balanced or premium departments that now feed camps, scouting, media work and negotiations.</div>
             </div>
 
             <div class="profile-meta-grid">
-                <div class="meta-box">
-                    <div class="meta-label">Camp Investment</div>
-                    <div class="button-row" style="gap:8px; flex-wrap:wrap; margin-top:10px;">
-                        @foreach (var option in _investmentOptions)
-                        {
-                            <button class="@(option.Level == _agent.CampInvestmentLevel ? "btn-primary" : "btn-secondary")"
-                                    disabled="@_savingSettings"
-                                    @onclick="@(() => UpdateCampInvestmentAsync(option.Level))">
-                                @option.Label
-                            </button>
-                        }
-                    </div>
-                    <div class="muted-text" style="margin-top:10px;">@DescribeCampInvestment(_agent.CampInvestmentLevel)</div>
-                </div>
-
-                <div class="meta-box">
-                    <div class="meta-label">Medical Support</div>
-                    <div class="button-row" style="gap:8px; flex-wrap:wrap; margin-top:10px;">
-                        @foreach (var option in _investmentOptions)
-                        {
-                            <button class="@(option.Level == _agent.MedicalInvestmentLevel ? "btn-primary" : "btn-secondary")"
-                                    disabled="@_savingSettings"
-                                    @onclick="@(() => UpdateMedicalInvestmentAsync(option.Level))">
-                                @option.Label
-                            </button>
-                        }
-                    </div>
-                    <div class="muted-text" style="margin-top:10px;">@DescribeMedicalInvestment(_agent.MedicalInvestmentLevel)</div>
-                </div>
+                @RenderStaffBox("Camp Investment", _agent.CampInvestmentLevel, DescribeCampInvestment(_agent.CampInvestmentLevel), UpdateCampInvestmentAsync)
+                @RenderStaffBox("Medical Support", _agent.MedicalInvestmentLevel, DescribeMedicalInvestment(_agent.MedicalInvestmentLevel), UpdateMedicalInvestmentAsync)
+                @RenderStaffBox("Scouting Department", _agent.ScoutingStaffLevel, DescribeScoutingStaff(_agent.ScoutingStaffLevel), UpdateScoutingStaffAsync)
+                @RenderStaffBox("PR Team", _agent.MediaStaffLevel, DescribeMediaStaff(_agent.MediaStaffLevel), UpdateMediaStaffAsync)
+                @RenderStaffBox("Negotiation Team", _agent.NegotiationStaffLevel, DescribeNegotiationStaff(_agent.NegotiationStaffLevel), UpdateNegotiationStaffAsync)
+                @RenderStaffBox("Performance Staff", _agent.PerformanceStaffLevel, DescribePerformanceStaff(_agent.PerformanceStaffLevel), UpdatePerformanceStaffAsync)
             </div>
         </section>
 
         <section class="panel-card" style="grid-column: 1 / -1;">
             <div class="table-toolbar">
+                <div class="toolbar-title">Operational Impact</div>
+                <div class="toolbar-subtitle">Not just sliders: this is the live edge each department is currently giving your agency.</div>
+            </div>
+
+            <div class="profile-meta-grid">
+                @foreach (var impact in _agent.StaffImpacts)
+                {
+                    <div class="meta-box">
+                        <div class="meta-label">@impact.Title</div>
+                        <div class="message-badge" style="margin:8px 0 12px 0;">@impact.LevelLabel</div>
+                        <div class="fighter-mini-value" style="font-size:1.1rem; margin-bottom:10px;">@impact.PrimaryEffect</div>
+                        <div class="muted-text">@impact.SecondaryEffect</div>
+                        <div class="muted-text" style="margin-top:8px;">@impact.TertiaryEffect</div>
+                    </div>
+                }
+            </div>
+        </section>
+
+        <section class="panel-card">
+            <div class="table-toolbar">
+                <div class="toolbar-title">Promotion Relationships</div>
+                <div class="toolbar-subtitle">Quick read on which promotions currently trust or freeze out your agency.</div>
+            </div>
+
+            @if (_agent.PromotionRelations.Count == 0)
+            {
+                <div class="muted-text">No promotion relationship data yet.</div>
+            }
+            else
+            {
+                <div class="division-history-row">
+                    @foreach (var relation in _agent.PromotionRelations)
+                    {
+                        <div class="division-history-chip">
+                            <strong>@relation.PromotionName</strong>
+                            <span>@relation.RelationshipBand · @relation.RelationshipScore</span>
+                            @if (!string.IsNullOrWhiteSpace(relation.Notes))
+                            {
+                                <small class="muted-text">@relation.Notes</small>
+                            }
+                        </div>
+                    }
+                </div>
+            }
+        </section>
+
+        <section class="panel-card">
+            <div class="table-toolbar">
                 <div class="toolbar-title">Recent Transactions</div>
-                <div class="toolbar-subtitle">Payouts, expenses and money flow from the live save</div>
+                <div class="toolbar-subtitle">Payouts, expenses and live agency cash flow.</div>
             </div>
 
             @if (_agent.Transactions.Count == 0)
@@ -150,15 +229,12 @@ else
         finally { _loading = false; }
     }
 
-    private async Task UpdateCampInvestmentAsync(int level)
-    {
-        await UpdateSettingsAsync(() => AgentProfileService.UpdateCampInvestmentAsync(level));
-    }
-
-    private async Task UpdateMedicalInvestmentAsync(int level)
-    {
-        await UpdateSettingsAsync(() => AgentProfileService.UpdateMedicalInvestmentAsync(level));
-    }
+    private async Task UpdateCampInvestmentAsync(int level) => await UpdateSettingsAsync(() => AgentProfileService.UpdateCampInvestmentAsync(level));
+    private async Task UpdateMedicalInvestmentAsync(int level) => await UpdateSettingsAsync(() => AgentProfileService.UpdateMedicalInvestmentAsync(level));
+    private async Task UpdateScoutingStaffAsync(int level) => await UpdateSettingsAsync(() => AgentProfileService.UpdateScoutingStaffAsync(level));
+    private async Task UpdateMediaStaffAsync(int level) => await UpdateSettingsAsync(() => AgentProfileService.UpdateMediaStaffAsync(level));
+    private async Task UpdateNegotiationStaffAsync(int level) => await UpdateSettingsAsync(() => AgentProfileService.UpdateNegotiationStaffAsync(level));
+    private async Task UpdatePerformanceStaffAsync(int level) => await UpdateSettingsAsync(() => AgentProfileService.UpdatePerformanceStaffAsync(level));
 
     private async Task UpdateSettingsAsync(Func<Task> action)
     {
@@ -178,6 +254,21 @@ else
         }
     }
 
+    private RenderFragment RenderStaffBox(string label, int currentLevel, string description, Func<int, Task> callback) => @<div class="meta-box">
+        <div class="meta-label">@label</div>
+        <div class="button-row" style="gap:8px; flex-wrap:wrap; margin-top:10px;">
+            @foreach (var option in _investmentOptions)
+            {
+                <button class="@(option.Level == currentLevel ? "btn-primary" : "btn-secondary")"
+                        disabled="@_savingSettings"
+                        @onclick="@(() => callback(option.Level))">
+                    @option.Label
+                </button>
+            }
+        </div>
+        <div class="muted-text" style="margin-top:10px;">@description</div>
+    </div>;
+
     private static string DescribeCampInvestment(int level)
         => level switch
         {
@@ -192,5 +283,70 @@ else
             2 => "Premium medical support increases weekly costs, but helps reduce bad camp and cut outcomes.",
             0 => "Lean medical support is cheaper, but injuries and rough cuts become a little more dangerous.",
             _ => "Balanced medical support keeps a reasonable safety net without overspending."
+        };
+
+    private static string DescribeScoutingStaff(int level)
+        => level switch
+        {
+            2 => "Premium scouting tightens reads faster and makes prospect discovery more efficient.",
+            0 => "Lean scouting is cheaper, but reports take longer to sharpen.",
+            _ => "Balanced scouting keeps reports moving at a reasonable pace."
+        };
+
+    private static string DescribeMediaStaff(int level)
+        => level switch
+        {
+            2 => "Premium PR amplifies sponsor and press upside while helping shape cleaner narratives.",
+            0 => "Lean PR keeps costs down, but you generate less controlled buzz and fewer commercial edges.",
+            _ => "Balanced PR gives a healthy amount of visibility without overcommitting resources."
+        };
+
+    private static string DescribeNegotiationStaff(int level)
+        => level switch
+        {
+            2 => "Premium negotiators improve your edge in contract talks and promotion asks.",
+            0 => "Lean negotiators save money, but deals get harder to push beyond baseline terms.",
+            _ => "Balanced negotiators keep your agency credible without going all-in on leverage."
+        };
+
+    private static string DescribePerformanceStaff(int level)
+        => level switch
+        {
+            2 => "Premium performance staff make camp upgrades and matchup preparation more effective.",
+            0 => "Lean performance support saves money, but camp bonuses land less cleanly.",
+            _ => "Balanced performance staff support solid camps without elite overhead."
+        };
+
+    private static string BuildAgentAvatarClass(string avatarKey)
+        => avatarKey switch
+        {
+            "Tactician" => "agent-avatar-tactician",
+            "Veteran" => "agent-avatar-veteran",
+            "Corporate" => "agent-avatar-corporate",
+            "Wildcard" => "agent-avatar-wildcard",
+            "Shark" => "agent-avatar-shark",
+            _ => "agent-avatar-promoter"
+        };
+
+    private static string BuildAgentAvatarMonogram(string avatarKey)
+        => avatarKey switch
+        {
+            "Tactician" => "TC",
+            "Veteran" => "VF",
+            "Corporate" => "CP",
+            "Wildcard" => "WC",
+            "Shark" => "SH",
+            _ => "PR"
+        };
+
+    private static string FormatAvatarLabel(string avatarKey)
+        => avatarKey switch
+        {
+            "Tactician" => "Tactician",
+            "Veteran" => "Veteran Fighter",
+            "Corporate" => "Corporate Closer",
+            "Wildcard" => "Wildcard",
+            "Shark" => "Deal Shark",
+            _ => "Promoter"
         };
 }

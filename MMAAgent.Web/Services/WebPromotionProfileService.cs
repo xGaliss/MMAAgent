@@ -25,6 +25,7 @@ public sealed class WebPromotionProfileService
 SELECT
     Id,
     Name,
+    COALESCE(CircuitType, 'Professional') AS CircuitType,
     COALESCE(Prestige, 0) AS Prestige,
     COALESCE(Budget, 0) AS Budget,
     COALESCE(IsActive, 1) AS IsActive,
@@ -42,6 +43,7 @@ LIMIT 1;";
             profile = new PromotionProfileVm(
                 Convert.ToInt32(r["Id"]),
                 r["Name"]?.ToString() ?? "",
+                r["CircuitType"]?.ToString() ?? "Professional",
                 Convert.ToInt32(r["Prestige"]),
                 Convert.ToInt32(r["Budget"]),
                 Convert.ToInt32(r["IsActive"]) == 1,
@@ -143,7 +145,15 @@ ORDER BY cq.WeightClass, cq.QueueRank;";
             }
         }
 
-        var divisionPictures = BuildDivisionPictures(profile.Name, champions, contenders, await LoadDivisionStakesAsync(conn, promotionId), await LoadDivisionRivalriesAsync(conn, promotionId));
+        var divisionPictures = BuildDivisionPictures(
+            profile.Name,
+            champions,
+            contenders,
+            await LoadConfiguredWeightClassesAsync(conn, promotionId),
+            await LoadManagedContendersAsync(conn, promotionId),
+            await LoadChampionHistoryAsync(conn, promotionId),
+            await LoadDivisionStakesAsync(conn, promotionId),
+            await LoadDivisionRivalriesAsync(conn, promotionId));
 
         return profile with
         {
@@ -158,11 +168,17 @@ ORDER BY cq.WeightClass, cq.QueueRank;";
         string promotionName,
         IReadOnlyList<PromotionChampionVm> champions,
         IReadOnlyList<PromotionContenderVm> contenders,
+        IReadOnlyList<string> configuredWeightClasses,
+        IReadOnlyDictionary<string, PromotionContenderVm> managedContendersByWeightClass,
+        IReadOnlyDictionary<string, IReadOnlyList<DivisionChampionHistoryVm>> championHistoryByWeightClass,
         IReadOnlyDictionary<string, string> stakesByWeightClass,
         IReadOnlyDictionary<string, string> rivalriesByWeightClass)
     {
         var weightClasses = champions.Select(x => x.WeightClass)
             .Concat(contenders.Select(x => x.WeightClass))
+            .Concat(configuredWeightClasses)
+            .Concat(managedContendersByWeightClass.Keys)
+            .Concat(championHistoryByWeightClass.Keys)
             .Concat(stakesByWeightClass.Keys)
             .Concat(rivalriesByWeightClass.Keys)
             .Distinct(StringComparer.OrdinalIgnoreCase)
@@ -181,16 +197,134 @@ ORDER BY cq.WeightClass, cq.QueueRank;";
 
                 stakesByWeightClass.TryGetValue(weightClass, out var stakes);
                 rivalriesByWeightClass.TryGetValue(weightClass, out var rivalry);
+                managedContendersByWeightClass.TryGetValue(weightClass, out var managedContender);
+                championHistoryByWeightClass.TryGetValue(weightClass, out var recentChampions);
 
                 return new PromotionDivisionPictureVm(
                     weightClass,
                     champion?.FighterId,
                     champion?.FighterId is int ? (champion.FighterName ?? "Vacant") : "Vacant",
                     nextContenders,
+                    managedContender,
+                    recentChampions ?? Array.Empty<DivisionChampionHistoryVm>(),
                     stakes,
                     rivalry);
             })
             .ToList();
+    }
+
+    private static async Task<IReadOnlyList<string>> LoadConfiguredWeightClassesAsync(SqliteConnection conn, int promotionId)
+    {
+        var result = new List<string>();
+
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = @"
+SELECT WeightClass
+FROM PromotionWeightClasses
+WHERE PromotionId = $promotionId
+ORDER BY WeightClass;";
+        cmd.Parameters.AddWithValue("$promotionId", promotionId);
+
+        using var reader = await cmd.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+        {
+            var weightClass = reader["WeightClass"]?.ToString() ?? "";
+            if (string.IsNullOrWhiteSpace(weightClass))
+                continue;
+
+            result.Add(weightClass);
+        }
+
+        return result;
+    }
+
+    private static async Task<IReadOnlyDictionary<string, PromotionContenderVm>> LoadManagedContendersAsync(SqliteConnection conn, int promotionId)
+    {
+        var result = new Dictionary<string, PromotionContenderVm>(StringComparer.OrdinalIgnoreCase);
+
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = @"
+SELECT
+    cq.WeightClass,
+    cq.QueueRank,
+    cq.FighterId,
+    (f.FirstName || ' ' || f.LastName) AS FighterName,
+    cq.QueueScore,
+    COALESCE(cq.Notes, '') AS Notes
+FROM ContenderQueue cq
+JOIN Fighters f ON f.Id = cq.FighterId
+JOIN ManagedFighters mf ON mf.FighterId = cq.FighterId
+WHERE cq.PromotionId = $promotionId
+  AND COALESCE(mf.IsActive, 1) = 1
+  AND mf.AgentId = (SELECT Id FROM AgentProfile ORDER BY Id LIMIT 1)
+ORDER BY cq.WeightClass, cq.QueueRank, cq.QueueScore DESC;";
+        cmd.Parameters.AddWithValue("$promotionId", promotionId);
+
+        using var reader = await cmd.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+        {
+            var weightClass = reader["WeightClass"]?.ToString() ?? "";
+            if (string.IsNullOrWhiteSpace(weightClass) || result.ContainsKey(weightClass))
+                continue;
+
+            result[weightClass] = new PromotionContenderVm(
+                weightClass,
+                Convert.ToInt32(reader["QueueRank"]),
+                Convert.ToInt32(reader["FighterId"]),
+                reader["FighterName"]?.ToString() ?? "",
+                Convert.ToInt32(reader["QueueScore"]),
+                reader["Notes"]?.ToString() ?? "");
+        }
+
+        return result;
+    }
+
+    private static async Task<IReadOnlyDictionary<string, IReadOnlyList<DivisionChampionHistoryVm>>> LoadChampionHistoryAsync(SqliteConnection conn, int promotionId)
+    {
+        var result = new Dictionary<string, IReadOnlyList<DivisionChampionHistoryVm>>(StringComparer.OrdinalIgnoreCase);
+
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = @"
+SELECT
+    COALESCE(fh.WeightClass, '') AS WeightClass,
+    fh.WinnerId,
+    (w.FirstName || ' ' || w.LastName) AS WinnerName,
+    COALESCE(fh.FightDate, '') AS FightDate
+FROM FightHistory fh
+JOIN Fighters w ON w.Id = fh.WinnerId
+WHERE fh.PromotionId = $promotionId
+  AND COALESCE(fh.IsTitle, 0) = 1
+ORDER BY fh.WeightClass, fh.FightDate DESC, fh.Id DESC;";
+        cmd.Parameters.AddWithValue("$promotionId", promotionId);
+
+        using var reader = await cmd.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+        {
+            var weightClass = reader["WeightClass"]?.ToString() ?? "";
+            if (string.IsNullOrWhiteSpace(weightClass))
+                continue;
+
+            if (!result.TryGetValue(weightClass, out var existing))
+            {
+                existing = new List<DivisionChampionHistoryVm>();
+                result[weightClass] = existing;
+            }
+
+            var list = (List<DivisionChampionHistoryVm>)existing;
+            if (list.Count >= 3)
+                continue;
+
+            var fighterId = Convert.ToInt32(reader["WinnerId"]);
+            if (list.Any(x => x.FighterId == fighterId))
+                continue;
+
+            list.Add(new DivisionChampionHistoryVm(
+                fighterId,
+                reader["WinnerName"]?.ToString() ?? "Champion",
+                reader["FightDate"]?.ToString() ?? ""));
+        }
+
+        return result;
     }
 
     private static async Task<IReadOnlyDictionary<string, string>> LoadDivisionStakesAsync(SqliteConnection conn, int promotionId)

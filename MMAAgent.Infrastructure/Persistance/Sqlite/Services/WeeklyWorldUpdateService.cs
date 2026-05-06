@@ -117,6 +117,8 @@ public sealed class WeeklyWorldUpdateService : IWeeklyWorldUpdateService
         WorldEcosystemServiceSqlite.AnnualWorldShiftSummary? annualShift = null;
         var annualNewcomers = 0;
         var annualProspectDebuts = 0;
+        var amateurGraduates = 0;
+        var prospectWatchAlerts = 0;
 
         foreach (var promo in duePromotions)
         {
@@ -136,9 +138,11 @@ public sealed class WeeklyWorldUpdateService : IWeeklyWorldUpdateService
         }
 
         await CleanupStaleScheduledFightsAsync(state.CurrentDate, cancellationToken);
+        amateurGraduates = await _worldEcosystemService.AdvanceAmateurCircuitAsync(state.CurrentDate, cancellationToken);
         await _initialSigningPass.RunWeeklyTopUpAsync(cancellationToken);
         await _fighterWorldService.AdvanceWeekAsync(absoluteWeek, state.CurrentDate, cancellationToken);
         await _worldEcosystemService.SynchronizeAsync(cancellationToken);
+        prospectWatchAlerts = await _worldEcosystemService.ProcessProspectWatchAlertsAsync(state.CurrentDate, cancellationToken);
         await _worldEcosystemService.ApplyWeeklyExpensesAsync(cancellationToken);
         await _worldAgendaService.SynchronizeAsync(cancellationToken);
         var newFightOffers = await _fightOfferGenerationService.GenerateWeeklyOffersAsync(cancellationToken);
@@ -174,6 +178,18 @@ WHERE CreatedDate = $date
                 cancellationToken);
             newMessages += 1;
         }
+
+        if (amateurGraduates > 0)
+        {
+            await InsertAmateurGraduationMessageAsync(
+                state.CurrentDate,
+                amateurGraduates,
+                cancellationToken);
+            newMessages += 1;
+        }
+
+        if (prospectWatchAlerts > 0)
+            newMessages += prospectWatchAlerts;
 
         return new WeeklyWorldUpdateSummary(
             state.CurrentDate,
@@ -280,6 +296,34 @@ LIMIT 1;";
         cmd.Parameters.AddWithValue("$subject", $"Year {currentYear} world shift");
         cmd.Parameters.AddWithValue("$body",
             $"The annual reset hit the universe hard: {annualShift.Retirements} retirements, {annualNewcomers} newcomers, {annualProspectDebuts} fast-rising prospects, {annualShift.VeteranDeclines} veteran decline cases and {annualShift.DivisionsReshuffled} divisions meaningfully reshuffled.");
+        cmd.Parameters.AddWithValue("$createdDate", currentDate);
+        await cmd.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    private async Task InsertAmateurGraduationMessageAsync(
+        string currentDate,
+        int amateurGraduates,
+        CancellationToken cancellationToken)
+    {
+        using var conn = _factory.CreateConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = @"
+INSERT INTO InboxMessages (AgentId, MessageType, Subject, Body, CreatedDate, IsRead, IsArchived, IsDeleted)
+SELECT
+    ap.Id,
+    'AmateurGraduation',
+    $subject,
+    $body,
+    $createdDate,
+    0,
+    0,
+    0
+FROM AgentProfile ap
+ORDER BY ap.Id
+LIMIT 1;";
+        cmd.Parameters.AddWithValue("$subject", "Amateur circuit movement");
+        cmd.Parameters.AddWithValue("$body",
+            $"{amateurGraduates} fighter(s) outgrew the amateur circuit this week and re-entered the market as professional free agents.");
         cmd.Parameters.AddWithValue("$createdDate", currentDate);
         await cmd.ExecuteNonQueryAsync(cancellationToken);
     }

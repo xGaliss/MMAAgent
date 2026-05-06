@@ -26,6 +26,8 @@ INSERT INTO ContractOffers
     OfferedFights,
     BasePurse,
     WinBonus,
+    SigningBonus,
+    ExclusivityType,
     WeeksToRespond,
     Status,
     SourceType,
@@ -41,6 +43,8 @@ VALUES
     $offeredFights,
     $basePurse,
     $winBonus,
+    $signingBonus,
+    $exclusivityType,
     $weeksToRespond,
     $status,
     $sourceType,
@@ -55,6 +59,8 @@ SELECT last_insert_rowid();";
         cmd.Parameters.AddWithValue("$offeredFights", offer.OfferedFights);
         cmd.Parameters.AddWithValue("$basePurse", offer.BasePurse);
         cmd.Parameters.AddWithValue("$winBonus", offer.WinBonus);
+        cmd.Parameters.AddWithValue("$signingBonus", offer.SigningBonus);
+        cmd.Parameters.AddWithValue("$exclusivityType", offer.ExclusivityType);
         cmd.Parameters.AddWithValue("$weeksToRespond", offer.WeeksToRespond);
         cmd.Parameters.AddWithValue("$status", offer.Status);
         cmd.Parameters.AddWithValue("$sourceType", offer.SourceType);
@@ -71,6 +77,8 @@ SELECT last_insert_rowid();";
         using var cmd = conn.CreateCommand();
         cmd.CommandText = @"
 SELECT Id, FighterId, PromotionId, OfferedFights, BasePurse, WinBonus,
+       COALESCE(SigningBonus, 0) AS SigningBonus,
+       COALESCE(ExclusivityType, 'Exclusive') AS ExclusivityType,
        WeeksToRespond, Status, SourceType, Notes, CreatedWeek, CreatedDate, RespondedDate
 FROM ContractOffers
 WHERE Id = $id
@@ -90,6 +98,8 @@ LIMIT 1;";
         using var cmd = conn.CreateCommand();
         cmd.CommandText = $@"
 SELECT co.Id, co.FighterId, co.PromotionId, co.OfferedFights, co.BasePurse, co.WinBonus,
+       COALESCE(co.SigningBonus, 0) AS SigningBonus,
+       COALESCE(co.ExclusivityType, 'Exclusive') AS ExclusivityType,
        co.WeeksToRespond, co.Status, co.SourceType, co.Notes, co.CreatedWeek, co.CreatedDate, co.RespondedDate
 FROM ContractOffers co
 JOIN ManagedFighters mf ON mf.FighterId = co.FighterId AND mf.AgentId = $agentId
@@ -154,6 +164,8 @@ WHERE co.Status = 'Pending';";
             OfferedFights = Convert.ToInt32(reader["OfferedFights"]),
             BasePurse = Convert.ToInt32(reader["BasePurse"]),
             WinBonus = Convert.ToInt32(reader["WinBonus"]),
+            SigningBonus = Convert.ToInt32(reader["SigningBonus"]),
+            ExclusivityType = reader["ExclusivityType"]?.ToString() ?? "Exclusive",
             WeeksToRespond = Convert.ToInt32(reader["WeeksToRespond"]),
             Status = reader["Status"]?.ToString() ?? "Pending",
             SourceType = reader["SourceType"]?.ToString() ?? "Market",

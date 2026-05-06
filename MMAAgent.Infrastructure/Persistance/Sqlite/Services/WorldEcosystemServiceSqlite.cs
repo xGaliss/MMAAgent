@@ -25,6 +25,8 @@ public sealed class WorldEcosystemServiceSqlite
         await RebuildStorylinesAsync(conn, tx, currentDate, cancellationToken);
         await RebuildLegacyTagsAsync(conn, tx, currentDate, cancellationToken);
         await RebuildContenderQueueAsync(conn, tx, currentDate, cancellationToken);
+        if (agentId is int relationAgentId)
+            await SynchronizePromotionRelationsAsync(conn, tx, relationAgentId, currentDate, cancellationToken);
 
         if (agentId is int resolvedAgentId)
             await RebuildScoutKnowledgeAsync(conn, tx, resolvedAgentId, currentDate, cancellationToken);
@@ -252,6 +254,190 @@ WHERE Id IN (SELECT Id FROM ProspectClass);", cancellationToken,
         return prospectDebuts;
     }
 
+    public async Task<int> AdvanceAmateurCircuitAsync(string currentDate, CancellationToken cancellationToken = default)
+    {
+        using var conn = _factory.CreateConnection();
+        using var tx = conn.BeginTransaction();
+
+        var graduates = await ExecWithCountAsync(conn, tx, @"
+UPDATE Fighters
+SET CareerStage = 'Pro',
+    PromotionId = NULL,
+    Salary = 0,
+    ContractFightsRemaining = 0,
+    TotalFightsInContract = 0,
+    ContractStatus = 'FreeAgent',
+    NegotiationTurnsRemaining = 0,
+    Marketability = MIN(99, COALESCE(Marketability, 50) + 2),
+    Momentum = MIN(99, COALESCE(Momentum, 50) + 4),
+    Popularity = MIN(100, COALESCE(Popularity, 50) + 3),
+    MediaHeat = MIN(99, COALESCE(MediaHeat, 20) + 2)
+WHERE COALESCE(Retired, 0) = 0
+  AND COALESCE(CareerStage, 'Pro') = 'Amateur'
+  AND (
+      (
+          COALESCE(AmateurWins, COALESCE(Wins, 0)) + COALESCE(AmateurLosses, COALESCE(Losses, 0)) + COALESCE(AmateurDraws, COALESCE(Draws, 0))
+      ) >= 6
+      OR (
+          COALESCE(Skill, 50) >= 58
+          AND COALESCE(Potential, 50) >= 68
+          AND (
+              COALESCE(AmateurWins, COALESCE(Wins, 0)) + COALESCE(AmateurLosses, COALESCE(Losses, 0)) + COALESCE(AmateurDraws, COALESCE(Draws, 0))
+          ) >= 4
+      )
+      OR COALESCE(Age, 18) >= 24
+      OR COALESCE(Popularity, 50) >= 56
+  );", cancellationToken);
+
+        await ExecAsync(conn, tx, @"
+UPDATE Fighters
+SET ContractStatus = 'Amateur'
+WHERE COALESCE(Retired, 0) = 0
+  AND COALESCE(CareerStage, 'Pro') = 'Amateur'
+  AND PromotionId IN
+  (
+      SELECT Id
+      FROM Promotions
+      WHERE COALESCE(CircuitType, 'Professional') = 'Amateur'
+  )
+  AND COALESCE(ContractStatus, '') <> 'Amateur';", cancellationToken);
+
+        tx.Commit();
+        return graduates;
+    }
+
+    public async Task<int> ProcessProspectWatchAlertsAsync(string currentDate, CancellationToken cancellationToken = default)
+    {
+        using var conn = _factory.CreateConnection();
+        using var tx = conn.BeginTransaction();
+
+        var agentId = await LoadPrimaryAgentIdAsync(conn, tx, cancellationToken);
+        if (agentId is null)
+            return 0;
+
+        var alertsSent = 0;
+
+        using var cmd = conn.CreateCommand();
+        cmd.Transaction = tx;
+        cmd.CommandText = @"
+SELECT
+    w.FighterId,
+    (f.FirstName || ' ' || f.LastName) AS FighterName,
+    COALESCE(f.CareerStage, 'Pro') AS CareerStage,
+    COALESCE(f.AmateurWins, 0) AS AmateurWins,
+    COALESCE(f.AmateurLosses, 0) AS AmateurLosses,
+    COALESCE(f.AmateurDraws, 0) AS AmateurDraws,
+    COALESCE(f.Wins, 0) AS Wins,
+    COALESCE(f.Losses, 0) AS Losses,
+    COALESCE(f.Draws, 0) AS Draws,
+    COALESCE(f.Age, 18) AS Age,
+    COALESCE(f.Skill, 50) AS Skill,
+    COALESCE(f.Potential, 50) AS Potential,
+    COALESCE(f.Popularity, 50) AS Popularity,
+    COALESCE(f.WeightClass, '') AS WeightClass,
+    COALESCE(p.Name, 'Free Agent') AS PromotionName,
+    COALESCE(p.CircuitType, 'Professional') AS PromotionCircuitType,
+    COALESCE(f.ContractStatus, 'FreeAgent') AS ContractStatus,
+    w.LastAlertDate,
+    COALESCE(w.LastAlertType, '') AS LastAlertType
+FROM AmateurProspectWatchlist w
+JOIN Fighters f ON f.Id = w.FighterId
+LEFT JOIN Promotions p ON p.Id = f.PromotionId
+WHERE w.AgentId = $agentId
+  AND COALESCE(f.Retired, 0) = 0
+ORDER BY f.Potential DESC, f.Skill DESC, f.Popularity DESC, f.Id DESC;";
+        cmd.Parameters.AddWithValue("$agentId", agentId.Value);
+
+        using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            var fighterId = Convert.ToInt32(reader["FighterId"]);
+            var fighterName = reader["FighterName"]?.ToString() ?? "Prospect";
+            var careerStage = reader["CareerStage"]?.ToString() ?? "Pro";
+            var amateurWins = Convert.ToInt32(reader["AmateurWins"]);
+            var amateurLosses = Convert.ToInt32(reader["AmateurLosses"]);
+            var amateurDraws = Convert.ToInt32(reader["AmateurDraws"]);
+            var wins = Convert.ToInt32(reader["Wins"]);
+            var losses = Convert.ToInt32(reader["Losses"]);
+            var draws = Convert.ToInt32(reader["Draws"]);
+            var age = Convert.ToInt32(reader["Age"]);
+            var skill = Convert.ToInt32(reader["Skill"]);
+            var potential = Convert.ToInt32(reader["Potential"]);
+            var popularity = Convert.ToInt32(reader["Popularity"]);
+            var weightClass = reader["WeightClass"]?.ToString() ?? "Division";
+            var promotionName = reader["PromotionName"]?.ToString() ?? "Free Agent";
+            var contractStatus = reader["ContractStatus"]?.ToString() ?? "FreeAgent";
+            var lastAlertDate = reader["LastAlertDate"] == DBNull.Value ? null : reader["LastAlertDate"]?.ToString();
+            var lastAlertType = reader["LastAlertType"]?.ToString() ?? "";
+
+            var amateurTotal = amateurWins + amateurLosses + amateurDraws;
+            string? alertType = null;
+            string? subject = null;
+            string? body = null;
+
+            if (string.Equals(careerStage, "Amateur", StringComparison.OrdinalIgnoreCase)
+                && IsReadyForProJump(age, skill, potential, popularity, amateurTotal))
+            {
+                alertType = "ReadyForProJump";
+                subject = $"{fighterName} looks ready for the pro jump";
+                body = $"{fighterName} is building real pressure in the amateur circuit at {weightClass}. The profile now looks close to pro-ready and worth tracking aggressively.";
+            }
+            else if (string.Equals(careerStage, "Pro", StringComparison.OrdinalIgnoreCase)
+                && amateurTotal > 0
+                && (string.Equals(contractStatus, "FreeAgent", StringComparison.OrdinalIgnoreCase) || string.Equals(promotionName, "Free Agent", StringComparison.OrdinalIgnoreCase)))
+            {
+                alertType = "GraduatedToProMarket";
+                subject = $"{fighterName} just hit the pro market";
+                body = $"{fighterName} has moved out of the amateur circuit and is now a professional free agent. Amateur record: {amateurWins}-{amateurLosses}-{amateurDraws}.";
+            }
+            else if (string.Equals(careerStage, "Pro", StringComparison.OrdinalIgnoreCase)
+                && amateurTotal > 0
+                && !string.Equals(contractStatus, "FreeAgent", StringComparison.OrdinalIgnoreCase))
+            {
+                alertType = "GraduatedAndSigned";
+                subject = $"{fighterName} already landed a pro deal";
+                body = $"{fighterName} has completed the amateur jump and already signed with {promotionName}, so the market window has moved fast.";
+            }
+
+            if (alertType is null || subject is null || body is null)
+                continue;
+
+            if (!ShouldSendProspectAlert(currentDate, lastAlertDate, alertType, lastAlertType))
+                continue;
+
+            await InsertAgentMessageAsync(
+                conn,
+                tx,
+                agentId.Value,
+                "ProspectWatchAlert",
+                subject,
+                body,
+                currentDate,
+                cancellationToken);
+
+            using var updateWatchCmd = conn.CreateCommand();
+            updateWatchCmd.Transaction = tx;
+            updateWatchCmd.CommandText = @"
+UPDATE AmateurProspectWatchlist
+SET LastAlertDate = $currentDate,
+    LastAlertType = $alertType,
+    Notes = $notes
+WHERE AgentId = $agentId
+  AND FighterId = $fighterId;";
+            updateWatchCmd.Parameters.AddWithValue("$currentDate", currentDate);
+            updateWatchCmd.Parameters.AddWithValue("$alertType", alertType);
+            updateWatchCmd.Parameters.AddWithValue("$notes", body);
+            updateWatchCmd.Parameters.AddWithValue("$agentId", agentId.Value);
+            updateWatchCmd.Parameters.AddWithValue("$fighterId", fighterId);
+            await updateWatchCmd.ExecuteNonQueryAsync(cancellationToken);
+
+            alertsSent++;
+        }
+
+        tx.Commit();
+        return alertsSent;
+    }
+
     public async Task<int> ApplyWeeklyExpensesAsync(CancellationToken cancellationToken = default)
     {
         using var conn = _factory.CreateConnection();
@@ -262,7 +448,7 @@ WHERE Id IN (SELECT Id FROM ProspectClass);", cancellationToken,
             return 0;
 
         var currentDate = await LoadCurrentDateAsync(conn, tx, cancellationToken);
-        var (campInvestmentLevel, medicalInvestmentLevel) = await LoadAgentInvestmentLevelsAsync(conn, tx, agentId.Value, cancellationToken);
+        var levels = await LoadAgentInvestmentLevelsAsync(conn, tx, agentId.Value, cancellationToken);
 
         var managedFighters = await CountAsync(conn, tx, @"
 SELECT COUNT(*)
@@ -291,9 +477,13 @@ WHERE mf.AgentId = $agentId
 
         var officeCost = 1400;
         var staffCost = managedFighters * 350;
-        var gymCost = bookedFighters * (175 + (campInvestmentLevel * 120));
-        var medicalCost = medicalCases * (300 + (medicalInvestmentLevel * 150));
-        var total = officeCost + staffCost + gymCost + medicalCost;
+        var gymCost = bookedFighters * (175 + (levels.CampInvestmentLevel * 120));
+        var medicalCost = medicalCases * (300 + (levels.MedicalInvestmentLevel * 150));
+        var scoutingCost = 500 + (levels.ScoutingStaffLevel * 450);
+        var mediaCost = 450 + (levels.MediaStaffLevel * 400);
+        var negotiationCost = 400 + (levels.NegotiationStaffLevel * 425);
+        var performanceCost = 550 + (levels.PerformanceStaffLevel * 475);
+        var total = officeCost + staffCost + gymCost + medicalCost + scoutingCost + mediaCost + negotiationCost + performanceCost;
 
         if (total <= 0)
             return 0;
@@ -305,7 +495,7 @@ WHERE Id = $agentId;", cancellationToken,
             ("$amount", total),
             ("$agentId", agentId.Value));
 
-        var notes = $"Office {officeCost} · Staff {staffCost} · Gyms {gymCost} · Medical {medicalCost} · Camp tier {campInvestmentLevel} · Medical tier {medicalInvestmentLevel}";
+        var notes = $"Office {officeCost} · Staff {staffCost} · Gyms {gymCost} · Medical {medicalCost} · Scouting {scoutingCost} · PR {mediaCost} · Negotiation {negotiationCost} · Performance {performanceCost} · Camp tier {levels.CampInvestmentLevel} · Medical tier {levels.MedicalInvestmentLevel}";
 
         await InsertAgentTransactionAsync(
             conn,
@@ -1185,7 +1375,7 @@ WHERE RankPosition <= 15;", cancellationToken);
         return divisions;
     }
 
-    private static async Task<(int CampInvestmentLevel, int MedicalInvestmentLevel)> LoadAgentInvestmentLevelsAsync(
+    private static async Task<(int CampInvestmentLevel, int MedicalInvestmentLevel, int ScoutingStaffLevel, int MediaStaffLevel, int NegotiationStaffLevel, int PerformanceStaffLevel)> LoadAgentInvestmentLevelsAsync(
         SqliteConnection conn,
         SqliteTransaction tx,
         int agentId,
@@ -1196,7 +1386,11 @@ WHERE RankPosition <= 15;", cancellationToken);
         cmd.CommandText = @"
 SELECT
     COALESCE(CampInvestmentLevel, 1) AS CampInvestmentLevel,
-    COALESCE(MedicalInvestmentLevel, 1) AS MedicalInvestmentLevel
+    COALESCE(MedicalInvestmentLevel, 1) AS MedicalInvestmentLevel,
+    COALESCE(ScoutingStaffLevel, 1) AS ScoutingStaffLevel,
+    COALESCE(MediaStaffLevel, 1) AS MediaStaffLevel,
+    COALESCE(NegotiationStaffLevel, 1) AS NegotiationStaffLevel,
+    COALESCE(PerformanceStaffLevel, 1) AS PerformanceStaffLevel
 FROM AgentProfile
 WHERE Id = $agentId
 LIMIT 1;";
@@ -1204,11 +1398,46 @@ LIMIT 1;";
 
         using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
         if (!await reader.ReadAsync(cancellationToken))
-            return (1, 1);
+            return (1, 1, 1, 1, 1, 1);
 
         return (
             Convert.ToInt32(reader["CampInvestmentLevel"]),
-            Convert.ToInt32(reader["MedicalInvestmentLevel"]));
+            Convert.ToInt32(reader["MedicalInvestmentLevel"]),
+            Convert.ToInt32(reader["ScoutingStaffLevel"]),
+            Convert.ToInt32(reader["MediaStaffLevel"]),
+            Convert.ToInt32(reader["NegotiationStaffLevel"]),
+            Convert.ToInt32(reader["PerformanceStaffLevel"]));
+    }
+
+    private static async Task SynchronizePromotionRelationsAsync(
+        SqliteConnection conn,
+        SqliteTransaction tx,
+        int agentId,
+        string currentDate,
+        CancellationToken cancellationToken)
+    {
+        await ExecAsync(conn, tx, @"
+INSERT INTO AgentPromotionRelations
+(
+    AgentId,
+    PromotionId,
+    RelationshipScore,
+    LastUpdatedDate,
+    Notes
+)
+SELECT
+    $agentId,
+    p.Id,
+    COALESCE(existing.RelationshipScore, MIN(85, MAX(30, 42 + (COALESCE(p.Prestige, 50) / 5)))),
+    COALESCE(existing.LastUpdatedDate, $currentDate),
+    COALESCE(existing.Notes, 'Baseline relationship.')
+FROM Promotions p
+LEFT JOIN AgentPromotionRelations existing
+  ON existing.AgentId = $agentId
+ AND existing.PromotionId = p.Id
+WHERE existing.PromotionId IS NULL;", cancellationToken,
+            ("$agentId", agentId),
+            ("$currentDate", currentDate));
     }
 
     private static async Task RebuildRivalriesAsync(
@@ -1333,6 +1562,46 @@ VALUES
             ("$notes", notes));
     }
 
+    private static async Task InsertAgentMessageAsync(
+        SqliteConnection conn,
+        SqliteTransaction tx,
+        int agentId,
+        string messageType,
+        string subject,
+        string body,
+        string createdDate,
+        CancellationToken cancellationToken)
+    {
+        await ExecAsync(conn, tx, @"
+INSERT INTO InboxMessages
+(
+    AgentId,
+    MessageType,
+    Subject,
+    Body,
+    CreatedDate,
+    IsRead,
+    IsArchived,
+    IsDeleted
+)
+VALUES
+(
+    $agentId,
+    $messageType,
+    $subject,
+    $body,
+    $createdDate,
+    0,
+    0,
+    0
+);", cancellationToken,
+            ("$agentId", agentId),
+            ("$messageType", messageType),
+            ("$subject", subject),
+            ("$body", body),
+            ("$createdDate", createdDate));
+    }
+
     private static async Task<string> LoadCurrentDateAsync(
         SqliteConnection conn,
         SqliteTransaction tx,
@@ -1354,6 +1623,26 @@ VALUES
         cmd.CommandText = "SELECT Id FROM AgentProfile ORDER BY Id LIMIT 1;";
         var result = await cmd.ExecuteScalarAsync(cancellationToken);
         return result == null || result == DBNull.Value ? null : Convert.ToInt32(result);
+    }
+
+    private static bool IsReadyForProJump(int age, int skill, int potential, int popularity, int amateurTotal)
+        => amateurTotal >= 5
+           || (skill >= 58 && potential >= 68 && amateurTotal >= 4)
+           || age >= 24
+           || popularity >= 56;
+
+    private static bool ShouldSendProspectAlert(string currentDate, string? lastAlertDate, string alertType, string lastAlertType)
+    {
+        if (!string.Equals(alertType, lastAlertType, StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        if (!DateOnly.TryParse(currentDate, out var today))
+            return true;
+
+        if (!DateOnly.TryParse(lastAlertDate, out var lastDate))
+            return true;
+
+        return today.DayNumber - lastDate.DayNumber >= 21;
     }
 
     private static async Task<int> CountAsync(

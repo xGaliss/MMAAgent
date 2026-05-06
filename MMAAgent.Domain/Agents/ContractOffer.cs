@@ -8,6 +8,8 @@ public sealed class ContractOffer
     public int OfferedFights { get; set; }
     public int BasePurse { get; set; }
     public int WinBonus { get; set; }
+    public int SigningBonus { get; set; }
+    public string ExclusivityType { get; set; } = "Exclusive";
     public int WeeksToRespond { get; set; } = 2;
     public string Status { get; set; } = "Pending";
     public string SourceType { get; set; } = "Market";

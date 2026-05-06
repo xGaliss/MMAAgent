@@ -27,6 +27,9 @@ public sealed class ContractOfferResponseServiceSqlite : IContractOfferResponseS
     public async Task<ServiceResult> AcceptForMoneyAsync(int contractOfferId, CancellationToken cancellationToken = default)
         => await AcceptInternalAsync(contractOfferId, "Money", cancellationToken);
 
+    public async Task<ServiceResult> AcceptForBonusAsync(int contractOfferId, CancellationToken cancellationToken = default)
+        => await AcceptInternalAsync(contractOfferId, "Bonus", cancellationToken);
+
     public async Task<ServiceResult> AcceptForSecurityAsync(int contractOfferId, CancellationToken cancellationToken = default)
         => await AcceptInternalAsync(contractOfferId, "Security", cancellationToken);
 
@@ -45,7 +48,8 @@ public sealed class ContractOfferResponseServiceSqlite : IContractOfferResponseS
         using var preConn = _factory.CreateConnection();
         var fighterSignals = await LoadFighterSignalsAsync(preConn, offer.FighterId, cancellationToken);
         var promotionSignals = await LoadPromotionSignalsAsync(preConn, offer.PromotionId, cancellationToken);
-        var negotiation = BuildNegotiationOutcome(offer, fighterSignals, promotionSignals, strategy);
+        var agentSignals = await LoadAgentSignalsAsync(preConn, offer.FighterId, offer.PromotionId, cancellationToken);
+        var negotiation = BuildNegotiationOutcome(offer, fighterSignals, promotionSignals, agentSignals, strategy);
 
         if (!negotiation.Accepted)
             return ServiceResult.Fail(negotiation.Message);
@@ -62,6 +66,7 @@ SET PromotionId = $promotionId,
     ContractFightsRemaining = $contractFightsRemaining,
     BasePurse = $basePurse,
     WinBonus = $winBonus,
+    ContractExclusivityType = $exclusivityType,
     Popularity = MIN(100, COALESCE(Popularity, 50) + $popularityDelta),
     Marketability = MIN(99, COALESCE(Marketability, 50) + $marketabilityDelta),
     MediaHeat = MIN(99, COALESCE(MediaHeat, 20) + $mediaHeatDelta)
@@ -70,11 +75,35 @@ WHERE Id = $fighterId;";
             cmd.Parameters.AddWithValue("$contractFightsRemaining", negotiation.OfferedFights);
             cmd.Parameters.AddWithValue("$basePurse", negotiation.BasePurse);
             cmd.Parameters.AddWithValue("$winBonus", negotiation.WinBonus);
+            cmd.Parameters.AddWithValue("$exclusivityType", negotiation.ExclusivityType);
             cmd.Parameters.AddWithValue("$popularityDelta", negotiation.PopularityDelta);
             cmd.Parameters.AddWithValue("$marketabilityDelta", negotiation.MarketabilityDelta);
             cmd.Parameters.AddWithValue("$mediaHeatDelta", negotiation.MediaHeatDelta);
             cmd.Parameters.AddWithValue("$fighterId", offer.FighterId);
             await cmd.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        if (agentSignals.AgentId.HasValue && negotiation.SigningBonus > 0)
+        {
+            using var bonusCmd = conn.CreateCommand();
+            bonusCmd.Transaction = tx;
+            bonusCmd.CommandText = @"
+UPDATE AgentProfile
+SET Money = COALESCE(Money, 0) + $signingBonus
+WHERE Id = $agentId;";
+            bonusCmd.Parameters.AddWithValue("$agentId", agentSignals.AgentId.Value);
+            bonusCmd.Parameters.AddWithValue("$signingBonus", negotiation.SigningBonus);
+            await bonusCmd.ExecuteNonQueryAsync(cancellationToken);
+
+            using var txCmd = conn.CreateCommand();
+            txCmd.Transaction = tx;
+            txCmd.CommandText = @"
+INSERT INTO AgentTransactions (AgentId, TxDate, Amount, TxType, Notes)
+VALUES ($agentId, date('now'), $amount, 'SigningBonus', $notes);";
+            txCmd.Parameters.AddWithValue("$agentId", agentSignals.AgentId.Value);
+            txCmd.Parameters.AddWithValue("$amount", negotiation.SigningBonus);
+            txCmd.Parameters.AddWithValue("$notes", $"Signing bonus landed from contract offer #{offer.Id}.");
+            await txCmd.ExecuteNonQueryAsync(cancellationToken);
         }
 
         using (var cmd = conn.CreateCommand())
@@ -106,6 +135,25 @@ WHERE FighterId = $fighterId
             await cmd.ExecuteNonQueryAsync(cancellationToken);
         }
 
+        if (agentSignals.AgentId.HasValue)
+        {
+            using var cmd = conn.CreateCommand();
+            cmd.Transaction = tx;
+            cmd.CommandText = @"
+UPDATE AgentProfile
+SET PromotionLeverage = MIN(99, COALESCE(PromotionLeverage, 50) + $leverageGain),
+    FighterTrust = MIN(99, COALESCE(FighterTrust, 50) + $trustGain),
+    PublicReputation = MIN(99, COALESCE(PublicReputation, 50) + $publicGain)
+WHERE Id = $agentId;";
+            cmd.Parameters.AddWithValue("$agentId", agentSignals.AgentId.Value);
+            cmd.Parameters.AddWithValue("$leverageGain", strategy == "Security" ? 1 : 2);
+            cmd.Parameters.AddWithValue("$trustGain", strategy == "Security" ? 2 : 1);
+            cmd.Parameters.AddWithValue("$publicGain", strategy == "Exposure" ? 2 : 0);
+            await cmd.ExecuteNonQueryAsync(cancellationToken);
+
+            await UpsertPromotionRelationAsync(conn, tx, agentSignals.AgentId.Value, offer.PromotionId, currentDelta: strategy == "Money" ? 1 : 2, DateTime.UtcNow.ToString("yyyy-MM-dd"), "Contract talks landed cleanly.", cancellationToken);
+        }
+
         tx.Commit();
 
         var agentId = await LoadAgentIdAsync(offer.FighterId, cancellationToken);
@@ -117,7 +165,7 @@ WHERE FighterId = $fighterId
                 AgentId = agentId.Value,
                 MessageType = "ContractAccepted",
                 Subject = $"Contract accepted for fighter {offer.FighterId}",
-                Body = $"Your fighter has signed with {promotionName} for {negotiation.OfferedFights} fights. {negotiation.Message}",
+                Body = $"Your fighter has signed with {promotionName} for {negotiation.OfferedFights} fights. Exclusivity: {negotiation.ExclusivityType}. Signing bonus: {negotiation.SigningBonus}. {negotiation.Message}",
                 CreatedDate = DateTime.UtcNow.ToString("yyyy-MM-dd"),
                 IsRead = false
             }, cancellationToken);
@@ -140,6 +188,25 @@ WHERE FighterId = $fighterId
             "Rejected",
             DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss"),
             cancellationToken);
+
+        AgentSignals agentSignals;
+        using (var preConn = _factory.CreateConnection())
+        {
+            agentSignals = await LoadAgentSignalsAsync(preConn, offer.FighterId, offer.PromotionId, cancellationToken);
+        }
+        if (agentSignals.AgentId.HasValue)
+        {
+            using var conn = _factory.CreateConnection();
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = @"
+UPDATE AgentProfile
+SET PromotionLeverage = MAX(15, COALESCE(PromotionLeverage, 50) - 1)
+WHERE Id = $agentId;";
+            cmd.Parameters.AddWithValue("$agentId", agentSignals.AgentId.Value);
+            await cmd.ExecuteNonQueryAsync(cancellationToken);
+
+            await UpsertPromotionRelationAsync(conn, null, agentSignals.AgentId.Value, offer.PromotionId, currentDelta: -1, DateTime.UtcNow.ToString("yyyy-MM-dd"), "Contract talks cooled off.", cancellationToken);
+        }
 
         var agentId = await LoadAgentIdAsync(offer.FighterId, cancellationToken);
         if (agentId.HasValue)
@@ -237,13 +304,54 @@ LIMIT 1;";
             Convert.ToInt32(reader.GetValue(1)));
     }
 
+    private async Task<AgentSignals> LoadAgentSignalsAsync(SqliteConnection conn, int fighterId, int promotionId, CancellationToken cancellationToken)
+    {
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = @"
+SELECT
+    mf.AgentId,
+    COALESCE(ap.PublicReputation, 50),
+    COALESCE(ap.FighterTrust, 50),
+    COALESCE(ap.PromotionLeverage, 50),
+    COALESCE(ap.NegotiationStaffLevel, 1),
+    COALESCE(apr.RelationshipScore, 50)
+FROM ManagedFighters mf
+JOIN AgentProfile ap ON ap.Id = mf.AgentId
+LEFT JOIN AgentPromotionRelations apr
+  ON apr.AgentId = mf.AgentId
+ AND apr.PromotionId = $promotionId
+WHERE mf.FighterId = $fighterId
+  AND COALESCE(mf.IsActive, 1) = 1
+LIMIT 1;";
+        cmd.Parameters.AddWithValue("$fighterId", fighterId);
+        cmd.Parameters.AddWithValue("$promotionId", promotionId);
+
+        using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
+        if (!await reader.ReadAsync(cancellationToken))
+            return new AgentSignals(null, 50, 50, 50, 1, 50);
+
+        return new AgentSignals(
+            reader["AgentId"] == DBNull.Value ? null : Convert.ToInt32(reader["AgentId"]),
+            Convert.ToInt32(reader.GetValue(1)),
+            Convert.ToInt32(reader.GetValue(2)),
+            Convert.ToInt32(reader.GetValue(3)),
+            Convert.ToInt32(reader.GetValue(4)),
+            Convert.ToInt32(reader.GetValue(5)));
+    }
+
     private static NegotiationOutcome BuildNegotiationOutcome(
         ContractOffer offer,
         FighterSignals fighter,
         PromotionSignals promotion,
+        AgentSignals agent,
         string strategy)
     {
         var leverage = (fighter.Popularity + fighter.MediaHeat + fighter.ReliabilityScore + fighter.Marketability) / 4;
+        leverage += Math.Max(0, (agent.PublicReputation - 50) / 4);
+        leverage += Math.Max(0, (agent.FighterTrust - 50) / 4);
+        leverage += Math.Max(0, (agent.PromotionLeverage - 50) / 3);
+        leverage += Math.Max(0, (agent.PromotionRelationship - 50) / 3);
+        leverage += agent.NegotiationStaffLevel * 3;
         var veteranSecurityBias = fighter.Age >= 33 ? 6 : 0;
         var youngExposureBias = fighter.Age <= 27 ? 5 : 0;
         var ambitionBias = fighter.Ambition / 10;
@@ -256,6 +364,7 @@ LIMIT 1;";
         var accepted = strategy switch
         {
             "Money" => leverage + ambitionBias + (fighter.Marketability / 10) >= 46 + (promotionStrictness * 7),
+            "Bonus" => leverage + spotlightBias + (fighter.RiskTolerance / 10) >= 44 + (promotionStrictness * 5),
             "Security" => leverage + veteranSecurityBias + securityBias + (string.Equals(offer.SourceType, "Renewal", StringComparison.OrdinalIgnoreCase) ? 4 : 0) >= 40 + (promotionStrictness * 4),
             "Exposure" => leverage + youngExposureBias + spotlightBias + Math.Max(0, promotion.Prestige - 60) / 5 >= 42 + (budgetPressure * 4),
             _ => true
@@ -263,10 +372,11 @@ LIMIT 1;";
 
         if (!accepted)
         {
-            return new NegotiationOutcome(false, offer.OfferedFights, offer.BasePurse, offer.WinBonus, 0, 0, 0,
+            return new NegotiationOutcome(false, offer.OfferedFights, offer.BasePurse, offer.WinBonus, offer.SigningBonus, offer.ExclusivityType, 0, 0, 0,
                 strategy switch
                 {
                     "Money" => "The promotion pushed back on the money ask and would not stretch the purse that far right now.",
+                    "Bonus" => "The promotion would not move far enough on the signing and win-bonus structure.",
                     "Security" => "The promotion would not add more security to this deal at the moment.",
                     "Exposure" => "The promotion would not sweeten the visibility angle beyond the current offer.",
                     _ => "The promotion held firm and the original deal remains the best available option right now."
@@ -280,15 +390,30 @@ LIMIT 1;";
                 Math.Max(1, offer.OfferedFights - (offer.OfferedFights >= 4 ? 1 : 0)),
                 (int)Math.Round(offer.BasePurse * (promotion.Prestige >= 80 ? 1.09 : 1.14)),
                 (int)Math.Round(offer.WinBonus * 1.10),
+                (int)Math.Round(offer.SigningBonus * 1.20 + 450),
+                "Exclusive",
                 0,
                 1,
                 0,
                 "You pushed for money and landed a richer deal, with a little less long-term security baked into it."),
+            "Bonus" => new NegotiationOutcome(
+                true,
+                offer.OfferedFights,
+                (int)Math.Round(offer.BasePurse * 1.02),
+                (int)Math.Round(offer.WinBonus * 1.18),
+                (int)Math.Round(offer.SigningBonus * 1.32 + 600),
+                promotion.Prestige >= 75 ? "Exclusive" : "Flexible",
+                0,
+                1,
+                1,
+                "You pushed the bonus structure and got more money tied to the signature and the win line."),
             "Security" => new NegotiationOutcome(
                 true,
                 offer.OfferedFights + (fighter.Age >= 33 ? 2 : 1),
                 (int)Math.Round(offer.BasePurse * (fighter.Age >= 33 ? 0.97 : 0.95)),
                 offer.WinBonus,
+                Math.Max(0, (int)Math.Round(offer.SigningBonus * 0.92)),
+                "Flexible",
                 0,
                 0,
                 0,
@@ -298,6 +423,8 @@ LIMIT 1;";
                 offer.OfferedFights,
                 (int)Math.Round(offer.BasePurse * 1.04),
                 (int)Math.Round(offer.WinBonus * 1.04),
+                (int)Math.Round(offer.SigningBonus * 1.08 + 250),
+                promotion.Prestige >= 80 ? "Open" : "Flexible",
                 2,
                 promotion.Prestige >= 75 ? 4 : 3,
                 promotion.Prestige >= 75 ? 7 : 5,
@@ -307,6 +434,8 @@ LIMIT 1;";
                 offer.OfferedFights,
                 offer.BasePurse,
                 offer.WinBonus,
+                offer.SigningBonus,
+                offer.ExclusivityType,
                 0,
                 0,
                 0,
@@ -325,14 +454,65 @@ LIMIT 1;";
         int RiskTolerance,
         int Stability,
         int Showmanship);
+    private sealed record AgentSignals(
+        int? AgentId,
+        int PublicReputation,
+        int FighterTrust,
+        int PromotionLeverage,
+        int NegotiationStaffLevel,
+        int PromotionRelationship);
     private sealed record PromotionSignals(int Prestige, int Budget);
     private sealed record NegotiationOutcome(
         bool Accepted,
         int OfferedFights,
         int BasePurse,
         int WinBonus,
+        int SigningBonus,
+        string ExclusivityType,
         int PopularityDelta,
         int MarketabilityDelta,
         int MediaHeatDelta,
         string Message);
+
+    private static async Task UpsertPromotionRelationAsync(
+        SqliteConnection conn,
+        SqliteTransaction? tx,
+        int agentId,
+        int promotionId,
+        int currentDelta,
+        string currentDate,
+        string notes,
+        CancellationToken cancellationToken)
+    {
+        using var cmd = conn.CreateCommand();
+        cmd.Transaction = tx;
+        cmd.CommandText = @"
+INSERT INTO AgentPromotionRelations
+(
+    AgentId,
+    PromotionId,
+    RelationshipScore,
+    LastUpdatedDate,
+    Notes
+)
+VALUES
+(
+    $agentId,
+    $promotionId,
+    MIN(99, MAX(15, 50 + $delta)),
+    $currentDate,
+    $notes
+)
+ON CONFLICT(AgentId, PromotionId)
+DO UPDATE SET
+    RelationshipScore = MIN(99, MAX(15, COALESCE(AgentPromotionRelations.RelationshipScore, 50) + $delta)),
+    LastUpdatedDate = $currentDate,
+    Notes = $notes;";
+        cmd.Parameters.AddWithValue("$agentId", agentId);
+        cmd.Parameters.AddWithValue("$promotionId", promotionId);
+        cmd.Parameters.AddWithValue("$delta", currentDelta);
+        cmd.Parameters.AddWithValue("$currentDate", currentDate);
+        cmd.Parameters.AddWithValue("$notes", notes);
+        await cmd.ExecuteNonQueryAsync(cancellationToken);
+    }
 }

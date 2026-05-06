@@ -350,6 +350,9 @@ SELECT COUNT(*) FROM
 
     private static int ResolveRequiredCampWeeks(PromotionSnapshot promotion, ManagedAvailability fighter)
     {
+        if (promotion.IsAmateurCircuit)
+            return Math.Max(2, promotion.StandardCampWeeks);
+
         if (fighter.IsChampion || fighter.RankPosition is > 0 and <= 3 || fighter.ContenderQueueRank is > 0 and <= 3)
             return Math.Max(promotion.MajorCampWeeks, promotion.TitleCampWeeks);
 
@@ -367,6 +370,7 @@ SELECT COUNT(*) FROM
 SELECT
     Id AS PromotionId,
     Name,
+    COALESCE(CircuitType, 'Professional') AS CircuitType,
     COALESCE(NextEventWeek, 0) AS NextEventWeek,
     COALESCE(EventIntervalWeeks, 1) AS EventIntervalWeeks,
     COALESCE(StandardCampWeeks, 4) AS StandardCampWeeks,
@@ -385,6 +389,7 @@ ORDER BY COALESCE(NextEventWeek, 999999), Id;";
             list.Add(new PromotionSnapshot(
                 Convert.ToInt32(r["PromotionId"]),
                 r["Name"]?.ToString() ?? "",
+                string.Equals(r["CircuitType"]?.ToString(), "Amateur", StringComparison.OrdinalIgnoreCase),
                 Convert.ToInt32(r["NextEventWeek"]),
                 Math.Max(1, Convert.ToInt32(r["EventIntervalWeeks"])),
                 Math.Max(MinimumOfferLeadWeeks, Convert.ToInt32(r["StandardCampWeeks"])),
@@ -786,7 +791,7 @@ LIMIT 1;";
             standardCampWeeks,
             false);
 
-        var tryShortNotice = ShouldAttemptShortNotice(fighter, promotion, absoluteWeek);
+        var tryShortNotice = !promotion.IsAmateurCircuit && ShouldAttemptShortNotice(fighter, promotion, absoluteWeek);
         if (tryShortNotice)
         {
             var shortNoticePlan = BuildOfferPlan(
@@ -820,7 +825,7 @@ LIMIT 1;";
             fighter,
             promotion,
             standardPlan,
-            includeTitleFights: true,
+            includeTitleFights: !promotion.IsAmateurCircuit,
             cancellationToken);
 
         return opponent is null
@@ -904,6 +909,7 @@ LIMIT 1;";
     private sealed record PromotionSnapshot(
         int PromotionId,
         string Name,
+        bool IsAmateurCircuit,
         int NextEventWeek,
         int EventIntervalWeeks,
         int StandardCampWeeks,

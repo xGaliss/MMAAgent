@@ -3,13 +3,14 @@
 @using MMAAgent.Web.Models
 @using MMAAgent.Web.Services
 @inject WebDivisionsService DivisionsService
+@inject WebDivisionActionService DivisionActionService
 
 <PageTitle>Divisions - MMA Agent</PageTitle>
 
 <div class="page-header">
     <div>
         <h1>Divisions</h1>
-        <p class="muted-text">Champion, contender queue, stakes and rivalries across the live world.</p>
+        <p class="muted-text">Champion, contender queue, rivalry heat and the political pressure you can apply to move your fighters up.</p>
     </div>
 </div>
 
@@ -41,8 +42,15 @@ else
                 <div class="dashboard-list">
                     @foreach (var division in group.Divisions)
                     {
-                        <div class="dashboard-list-item">
-                            <strong>@division.WeightClass</strong>
+                        <article class="dashboard-list-item division-battle-card">
+                            <div class="division-battle-top">
+                                <strong>@division.WeightClass</strong>
+                                @if (!string.IsNullOrWhiteSpace(division.UpcomingStakes))
+                                {
+                                    <span class="message-badge">@division.UpcomingStakes</span>
+                                }
+                            </div>
+
                             <div class="muted-text">
                                 Champion:
                                 @if (division.ChampionId is int championId)
@@ -74,32 +82,126 @@ else
                                 </div>
                             }
 
-                            @if (!string.IsNullOrWhiteSpace(division.UpcomingStakes))
-                            {
-                                <div class="muted-text">Stakes: @division.UpcomingStakes</div>
-                            }
-
                             @if (!string.IsNullOrWhiteSpace(division.RivalryHeadline))
                             {
                                 <div class="muted-text">Rivalry: @division.RivalryHeadline</div>
                             }
-                        </div>
+
+                            @if (division.ManagedContender is not null)
+                            {
+                                <div class="division-managed-box">
+                                    <strong>Your fighter in the picture</strong>
+                                    <div class="muted-text">
+                                        #@division.ManagedContender.QueueRank
+                                        <a class="fighter-link" href="@($"/fighters/{division.ManagedContender.FighterId}")">@division.ManagedContender.FighterName</a>
+                                    </div>
+
+                                    <div class="button-row" style="margin-top:10px; gap:10px; flex-wrap:wrap;">
+                                        <button class="btn-secondary"
+                                                disabled="@_busyDivisionAction"
+                                                @onclick="() => PushManagedFighterAsync(group.PromotionId, division.WeightClass, division.ManagedContender.FighterId)">
+                                            Push fighter
+                                        </button>
+                                        <button class="btn-secondary"
+                                                disabled="@_busyDivisionAction"
+                                                @onclick="() => RequestEliminatorAsync(group.PromotionId, division.WeightClass, division.ManagedContender.FighterId)">
+                                            Request eliminator
+                                        </button>
+                                        <button class="btn-primary"
+                                                disabled="@_busyDivisionAction"
+                                                @onclick="() => RequestTitleShotAsync(group.PromotionId, division.WeightClass, division.ManagedContender.FighterId)">
+                                            Request title shot
+                                        </button>
+                                    </div>
+                                </div>
+                            }
+
+                            @if (division.RecentChampions.Count > 0)
+                            {
+                                <div class="division-history-row">
+                                    <span class="meta-label">Recent champions</span>
+                                    <div class="muted-text">
+                                        @for (var i = 0; i < division.RecentChampions.Count; i++)
+                                        {
+                                            var champ = division.RecentChampions[i];
+                                            <span>
+                                                <a class="fighter-link" href="@($"/fighters/{champ.FighterId}")">@champ.FighterName</a>
+                                                @if (!string.IsNullOrWhiteSpace(champ.FightDate))
+                                                {
+                                                    <span> (@champ.FightDate)</span>
+                                                }
+                                                @if (i < division.RecentChampions.Count - 1)
+                                                {
+                                                    <span> · </span>
+                                                }
+                                            </span>
+                                        }
+                                    </div>
+                                </div>
+                            }
+                        </article>
                     }
                 </div>
             </section>
         }
     </div>
+
+    @if (!string.IsNullOrWhiteSpace(_status))
+    {
+        <div class="panel-card" style="margin-top:20px;">@_status</div>
+    }
 }
 
 @code {
     private List<DivisionPromotionGroupVm> _groups = new();
     private bool _loading = true;
+    private bool _busyDivisionAction;
     private string? _error;
+    private string? _status;
 
     protected override async Task OnInitializedAsync()
     {
+        await ReloadAsync();
+    }
+
+    private async Task RequestTitleShotAsync(int promotionId, string weightClass, int fighterId)
+        => await RunDivisionActionAsync(() => DivisionActionService.RequestTitleShotAsync(promotionId, weightClass, fighterId));
+
+    private async Task RequestEliminatorAsync(int promotionId, string weightClass, int fighterId)
+        => await RunDivisionActionAsync(() => DivisionActionService.RequestEliminatorAsync(promotionId, weightClass, fighterId));
+
+    private async Task PushManagedFighterAsync(int promotionId, string weightClass, int fighterId)
+        => await RunDivisionActionAsync(() => DivisionActionService.PushManagedFighterAsync(promotionId, weightClass, fighterId));
+
+    private async Task RunDivisionActionAsync(Func<Task<MMAAgent.Application.Abstractions.ServiceResult>> action)
+    {
         try
         {
+            _busyDivisionAction = true;
+            _status = null;
+            var result = await action();
+            _status = result.Message;
+            if (result.Success)
+            {
+                await ReloadAsync();
+            }
+        }
+        catch (Exception ex)
+        {
+            _error = ex.ToString();
+        }
+        finally
+        {
+            _busyDivisionAction = false;
+        }
+    }
+
+    private async Task ReloadAsync()
+    {
+        try
+        {
+            _loading = true;
+            _error = null;
             _groups = (await DivisionsService.LoadAsync()).ToList();
         }
         catch (Exception ex)

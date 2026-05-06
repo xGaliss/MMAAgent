@@ -1,0 +1,229 @@
+@page "/prospects"
+@rendermode InteractiveServer
+@using MMAAgent.Web.Models
+@using MMAAgent.Web.Services
+
+@inject WebProspectPipelineService ProspectPipelineService
+
+<PageTitle>Prospects - MMA Agent</PageTitle>
+
+<div class="page-header">
+    <div>
+        <h1>Prospect Pipeline</h1>
+        <p class="muted-text">Amateur heat, pro-jump alerts and the young free agents worth getting in front of early.</p>
+    </div>
+</div>
+
+@if (_error is not null)
+{
+    <div class="panel-card error-panel">@_error</div>
+}
+else if (_loading)
+{
+    <div class="panel-card">Loading prospect pipeline...</div>
+}
+else
+{
+    <section class="panel-card dashboard-command-hero">
+        <div class="dashboard-command-copy">
+            <div class="dashboard-command-kicker">Regional Scene</div>
+            <h2 class="dashboard-command-title">Track the next wave before the market does.</h2>
+            <div class="dashboard-command-text">Use the amateur pipeline to follow hot prospects, catch pro-ready jumps and react before bigger agencies clean up the board.</div>
+        </div>
+        <div class="dashboard-command-side">
+            <span class="dashboard-command-chip">Amateurs @_vm.AmateurCount</span>
+            <span class="dashboard-command-chip">Watched @_vm.WatchedCount</span>
+            <span class="dashboard-command-chip">Ready @_vm.ReadyCount</span>
+            <span class="dashboard-command-chip">Pro FA @_vm.GraduatingProFreeAgentsCount</span>
+        </div>
+    </section>
+
+    <div class="dashboard-live-grid">
+        <section class="panel-card">
+            <div class="table-toolbar">
+                <div class="toolbar-title">Watched Prospects</div>
+                <div class="toolbar-subtitle">@_vm.WatchedProspects.Count items</div>
+            </div>
+            @if (_vm.WatchedProspects.Count == 0)
+            {
+                <div class="muted-text">Nothing on the watchlist yet. Tag a few amateurs and the game will alert you when they start to outgrow the circuit.</div>
+            }
+            else
+            {
+                <div class="dashboard-list">
+                    @foreach (var item in _vm.WatchedProspects)
+                    {
+                        @RenderProspectCard(item)
+                    }
+                </div>
+            }
+        </section>
+
+        <section class="panel-card">
+            <div class="table-toolbar">
+                <div class="toolbar-title">Ready For Pro Jump</div>
+                <div class="toolbar-subtitle">@_vm.ReadyForProJump.Count items</div>
+            </div>
+            @if (_vm.ReadyForProJump.Count == 0)
+            {
+                <div class="muted-text">No amateur prospect is reading as truly pro-ready right now.</div>
+            }
+            else
+            {
+                <div class="dashboard-list">
+                    @foreach (var item in _vm.ReadyForProJump)
+                    {
+                        @RenderProspectCard(item)
+                    }
+                </div>
+            }
+        </section>
+
+        <section class="panel-card">
+            <div class="table-toolbar">
+                <div class="toolbar-title">Hot Amateurs</div>
+                <div class="toolbar-subtitle">@_vm.HotAmateurs.Count items</div>
+            </div>
+            <div class="dashboard-list">
+                @foreach (var item in _vm.HotAmateurs)
+                {
+                    @RenderProspectCard(item)
+                }
+            </div>
+        </section>
+
+        <section class="panel-card">
+            <div class="table-toolbar">
+                <div class="toolbar-title">New Pro Free Agents</div>
+                <div class="toolbar-subtitle">@_vm.NewProFreeAgents.Count items</div>
+            </div>
+            @if (_vm.NewProFreeAgents.Count == 0)
+            {
+                <div class="muted-text">No fresh pro graduates are sitting on the open market right now.</div>
+            }
+            else
+            {
+                <div class="dashboard-list">
+                    @foreach (var item in _vm.NewProFreeAgents)
+                    {
+                        @RenderProspectCard(item)
+                    }
+                </div>
+            }
+        </section>
+    </div>
+}
+
+@code {
+    private ProspectPipelineVm _vm = new(0, 0, 0, 0, Array.Empty<ProspectItemVm>(), Array.Empty<ProspectItemVm>(), Array.Empty<ProspectItemVm>(), Array.Empty<ProspectItemVm>());
+    private bool _loading = true;
+    private bool _busy;
+    private string? _error;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        try
+        {
+            _loading = true;
+            _error = null;
+            _vm = await ProspectPipelineService.LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            _error = ex.ToString();
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private async Task ToggleWatchAsync(ProspectItemVm item)
+    {
+        try
+        {
+            _busy = true;
+            await ProspectPipelineService.SetWatchAsync(item.Id, !item.IsWatched);
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            _error = ex.ToString();
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task StartScoutAsync(ProspectItemVm item)
+    {
+        try
+        {
+            _busy = true;
+            await ProspectPipelineService.StartScoutAsync(item.Id, "Ceiling");
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            _error = ex.ToString();
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private RenderFragment RenderProspectCard(ProspectItemVm item) => @<article class="dashboard-list-item world-feed-item @(item.IsReadyForProJump ? "world-feed-gold" : "world-feed-neutral")">
+        <div class="world-feed-top">
+            <span class="message-badge">@item.CareerStage</span>
+            <span class="message-badge">@item.WeightClass</span>
+            @if (item.IsReadyForProJump)
+            {
+                <span class="message-badge">Ready</span>
+            }
+        </div>
+
+        <div class="promotion-row" style="justify-content:space-between; align-items:flex-start;">
+            <div>
+                <a class="world-feed-headline fighter-link" href="@($"/fighters/{item.Id}")">@item.Name</a>
+                <div class="muted-text">
+                    @if (!string.IsNullOrWhiteSpace(item.CountryFlagUrl))
+                    {
+                        <span class="country-flag-image"
+                              role="img"
+                              aria-label="@($"{item.CountryName} flag")"
+                              title="@item.CountryName"
+                              style="@BuildFlagStyle(item.CountryFlagUrl)"></span>
+                    }
+                    <span>@item.CountryName · Age @item.Age · @item.PromotionName</span>
+                </div>
+            </div>
+            <div class="muted-text">Potential @item.Potential · Skill @item.Skill</div>
+        </div>
+
+        <div class="muted-text" style="margin-top:8px;">@item.Summary</div>
+
+        <div class="fighter-hero-chip-row" style="margin-top:12px;">
+            <span class="message-badge">Scout: @item.ScoutStatus</span>
+            <span class="message-badge">Confidence: @item.ConfidenceLabel</span>
+            <span class="message-badge">Popularity: @item.Popularity</span>
+            <span class="message-badge">Momentum: @item.Momentum</span>
+            <span class="message-badge">Heat: @item.MediaHeat</span>
+        </div>
+
+        <div class="button-row" style="margin-top:12px; flex-wrap:wrap;">
+            <a class="btn-secondary" href="@($"/fighters/{item.Id}")">Open fighter</a>
+            <button class="btn-secondary" @onclick="() => StartScoutAsync(item)" disabled="@_busy">@((item.ScoutStatus == "Scouting") ? "Scouting..." : "Scout")</button>
+            <button class="btn-secondary" @onclick="() => ToggleWatchAsync(item)" disabled="@_busy">@(item.IsWatched ? "Unfollow" : "Follow")</button>
+        </div>
+    </article>;
+
+    private static string BuildFlagStyle(string? flagUrl)
+        => string.IsNullOrWhiteSpace(flagUrl) ? "" : $"background-image:url('{flagUrl}');";
+}

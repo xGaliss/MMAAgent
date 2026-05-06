@@ -160,6 +160,29 @@ WHERE Id = $id;";
             await cmd.ExecuteNonQueryAsync(cancellationToken);
         }
 
+        if (offer.PromotionId.HasValue)
+        {
+            var isCardRescue = IsEmergencyReplacementOffer(offer);
+            var relationDelta = isCardRescue
+                ? 5
+                : offer.IsShortNotice
+                    ? 3
+                    : offer.IsTitleEliminator || offer.IsTitleFight ? 2 : 1;
+            await UpsertPromotionRelationAsync(
+                conn,
+                tx,
+                agent.Id,
+                offer.PromotionId.Value,
+                relationDelta,
+                DateTime.UtcNow.ToString("yyyy-MM-dd"),
+                isCardRescue
+                    ? "Agency saved the card by accepting an emergency replacement booking."
+                    : offer.IsShortNotice
+                        ? "Agency accepted a short-notice booking and helped keep the card intact."
+                        : "Agency accepted a live fight offer cleanly.",
+                cancellationToken);
+        }
+
         tx.Commit();
 
         await _inboxRepository.CreateAsync(new InboxMessage
@@ -195,6 +218,26 @@ WHERE Id = $id;";
             cmd.CommandText = "UPDATE FightOffers SET Status = 'Rejected' WHERE Id = $id;";
             cmd.Parameters.AddWithValue("$id", offerId);
             await cmd.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        var offer = await LoadOfferAsync(conn, tx, offerId, cancellationToken);
+        if (offer?.PromotionId is int rejectedPromotionId)
+        {
+            var isCardRescue = IsEmergencyReplacementOffer(offer);
+            var relationDelta = isCardRescue ? -4 : offer.IsShortNotice ? -3 : -1;
+            await UpsertPromotionRelationAsync(
+                conn,
+                tx,
+                agent.Id,
+                rejectedPromotionId,
+                relationDelta,
+                DateTime.UtcNow.ToString("yyyy-MM-dd"),
+                isCardRescue
+                    ? "Agency declined an emergency replacement call and left the card exposed."
+                    : offer.IsShortNotice
+                        ? "Agency declined a short-notice rescue offer."
+                        : "Agency turned down a fight offer.",
+                cancellationToken);
         }
 
         tx.Commit();
@@ -233,7 +276,8 @@ SELECT
     IsShortNotice,
     WeightClass,
     IsTitleFight,
-    COALESCE(IsTitleEliminator, 0) AS IsTitleEliminator
+    COALESCE(IsTitleEliminator, 0) AS IsTitleEliminator,
+    COALESCE(Notes, '') AS Notes
 FROM FightOffers
 WHERE Id = $id
 LIMIT 1;";
@@ -255,7 +299,8 @@ LIMIT 1;";
             Convert.ToInt32(r["IsShortNotice"]) == 1,
             r["WeightClass"]?.ToString() ?? "",
             Convert.ToInt32(r["IsTitleFight"]) == 1,
-            Convert.ToInt32(r["IsTitleEliminator"]) == 1);
+            Convert.ToInt32(r["IsTitleEliminator"]) == 1,
+            r["Notes"]?.ToString() ?? "");
     }
 
     private static async Task<string?> GetEventDateAsync(
@@ -455,6 +500,10 @@ LIMIT 1;";
     private static int ToAbsoluteWeek(int year, int week)
         => Math.Max(1, (year - 1) * 52 + week);
 
+    private static bool IsEmergencyReplacementOffer(OfferSnapshot offer)
+        => offer.IsShortNotice
+           && offer.Notes.Contains("Emergency replacement", StringComparison.OrdinalIgnoreCase);
+
     private sealed record OfferSnapshot(
         int Id,
         int FighterId,
@@ -467,7 +516,50 @@ LIMIT 1;";
         bool IsShortNotice,
         string WeightClass,
         bool IsTitleFight,
-        bool IsTitleEliminator);
+        bool IsTitleEliminator,
+        string Notes);
+
+    private static async Task UpsertPromotionRelationAsync(
+        SqliteConnection conn,
+        SqliteTransaction tx,
+        int agentId,
+        int promotionId,
+        int delta,
+        string currentDate,
+        string notes,
+        CancellationToken cancellationToken)
+    {
+        using var cmd = conn.CreateCommand();
+        cmd.Transaction = tx;
+        cmd.CommandText = @"
+INSERT INTO AgentPromotionRelations
+(
+    AgentId,
+    PromotionId,
+    RelationshipScore,
+    LastUpdatedDate,
+    Notes
+)
+VALUES
+(
+    $agentId,
+    $promotionId,
+    MIN(99, MAX(15, 50 + $delta)),
+    $currentDate,
+    $notes
+)
+ON CONFLICT(AgentId, PromotionId)
+DO UPDATE SET
+    RelationshipScore = MIN(99, MAX(15, COALESCE(AgentPromotionRelations.RelationshipScore, 50) + $delta)),
+    LastUpdatedDate = $currentDate,
+    Notes = $notes;";
+        cmd.Parameters.AddWithValue("$agentId", agentId);
+        cmd.Parameters.AddWithValue("$promotionId", promotionId);
+        cmd.Parameters.AddWithValue("$delta", delta);
+        cmd.Parameters.AddWithValue("$currentDate", currentDate);
+        cmd.Parameters.AddWithValue("$notes", notes);
+        await cmd.ExecuteNonQueryAsync(cancellationToken);
+    }
 
     private sealed record ShortNoticeWillingnessSnapshot(
         int Ambition,

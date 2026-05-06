@@ -92,7 +92,13 @@ public sealed class WebGameSessionService
         SaveLastPath(path);
     }
 
-    public async Task<string> CreateNewGameAsync(string? saveName, string agentName, string agencyName, int fighterCount)
+    public async Task<string> CreateNewGameAsync(
+        string? saveName,
+        string agentName,
+        string agencyName,
+        int fighterCount,
+        string? nationality,
+        string? avatarKey)
     {
         if (string.IsNullOrWhiteSpace(agentName))
             throw new InvalidOperationException("Introduce el nombre del agente.");
@@ -138,8 +144,17 @@ public sealed class WebGameSessionService
         {
             Name = agentName.Trim(),
             AgencyName = agencyName.Trim(),
+            Nationality = string.IsNullOrWhiteSpace(nationality) ? "Spain" : nationality.Trim(),
+            AvatarKey = string.IsNullOrWhiteSpace(avatarKey) ? "Promoter" : avatarKey.Trim(),
             Money = 50000,
             Reputation = 10,
+            PublicReputation = 48,
+            FighterTrust = 52,
+            PromotionLeverage = 46,
+            ScoutingStaffLevel = 1,
+            MediaStaffLevel = 1,
+            NegotiationStaffLevel = 1,
+            PerformanceStaffLevel = 1,
             CreatedDate = DateTime.UtcNow.ToString("yyyy-MM-dd")
         });
 
