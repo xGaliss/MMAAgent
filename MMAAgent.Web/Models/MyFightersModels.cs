@@ -24,4 +24,11 @@ public sealed record SaveCardVm(
     string Path,
     string FileName,
     DateTime LastWriteTimeUtc,
-    long FileSizeBytes);
+    long FileSizeBytes,
+    string? SaveId = null,
+    string? OwnerUserId = null,
+    bool IsCurrent = false,
+    string? DisplayName = null,
+    string? StorageKind = null,
+    string? LifecycleState = null,
+    string? TemplateSource = null);

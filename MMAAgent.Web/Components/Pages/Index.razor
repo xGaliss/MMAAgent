@@ -84,7 +84,7 @@
                             </div>
 
                             <div class="save-card-actions">
-                                <button class="btn-primary" @onclick="() => LoadDetectedAsync(save.Path)">Continue</button>
+                                <button class="btn-primary" @onclick="() => LoadDetectedAsync(save)">Continue</button>
                                 <button class="btn-secondary" @onclick="() => StartRename(save.Path)">Rename</button>
                                 <button class="btn-secondary" @onclick="() => DeleteSaveAsync(save.Path)">Delete</button>
                             </div>
@@ -340,11 +340,19 @@
         _saves = (await MainMenuService.DetectSavesAsync()).ToList();
     }
 
-    private async Task LoadDetectedAsync(string path)
+    private async Task LoadDetectedAsync(SaveCardVm save)
     {
         await RunAsync(async () =>
         {
-            await GameSession.LoadByPathAsync(path);
+            if (!string.IsNullOrWhiteSpace(save.SaveId))
+            {
+                await GameSession.LoadBySaveIdAsync(save.SaveId);
+            }
+            else
+            {
+                await GameSession.LoadByPathAsync(save.Path);
+            }
+
             _currentSavePath = GameSession.CurrentSavePath;
             Navigation.NavigateTo("/dashboard");
         });

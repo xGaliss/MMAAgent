@@ -1,16 +1,35 @@
-﻿using MMAAgent.Web.Models;
+using MMAAgent.Web.Infrastructure;
+using MMAAgent.Web.Models;
 
 namespace MMAAgent.Web.Services;
 
 public sealed class WebMainMenuService
 {
-    public Task<IReadOnlyList<SaveCardVm>> DetectSavesAsync()
+    private readonly ISaveCatalogService _saveCatalogService;
+    private readonly IUserContextAccessor _userContextAccessor;
+    private readonly ISaveSessionContext _saveSessionContext;
+
+    public WebMainMenuService(
+        ISaveCatalogService saveCatalogService,
+        IUserContextAccessor userContextAccessor,
+        ISaveSessionContext saveSessionContext)
     {
-        var results = new List<SaveCardVm>();
+        _saveCatalogService = saveCatalogService;
+        _userContextAccessor = userContextAccessor;
+        _saveSessionContext = saveSessionContext;
+    }
+
+    public async Task<IReadOnlyList<SaveCardVm>> DetectSavesAsync()
+    {
+        var ownerUserId = _userContextAccessor.CurrentUserId;
         var roots = new List<string>();
 
         roots.Add(Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "MMAAgent", "Saves"));
+
+        roots.Add(Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
             "MMAAgent", "Saves"));
 
         roots.Add(Path.Combine(
@@ -21,17 +40,26 @@ public sealed class WebMainMenuService
         {
             foreach (var file in Directory.EnumerateFiles(root, "*.db", SearchOption.AllDirectories))
             {
-                var info = new FileInfo(file);
-                results.Add(new SaveCardVm(
-                    file,
-                    info.Name,
-                    info.LastWriteTimeUtc,
-                    info.Length));
+                await _saveCatalogService.RegisterOrUpdateLocalAsync(file, ownerUserId);
             }
         }
 
-        return Task.FromResult<IReadOnlyList<SaveCardVm>>(
-            results.OrderByDescending(x => x.LastWriteTimeUtc).ToList());
+        var entries = await _saveCatalogService.ListByOwnerAsync(ownerUserId);
+
+        return entries
+            .Select(x => new SaveCardVm(
+                x.LocalPath ?? x.StorageLocator,
+                x.FileName,
+                x.LastWriteTimeUtc,
+                x.FileSizeBytes,
+                x.SaveId,
+                x.OwnerUserId,
+                string.Equals(x.SaveId, _saveSessionContext.CurrentSaveId, StringComparison.OrdinalIgnoreCase),
+                x.DisplayName,
+                x.StorageKind,
+                x.LifecycleState,
+                x.TemplateSource))
+            .ToArray();
     }
 
     public async Task RenameSaveAsync(string path, string newNameWithoutExtension)
@@ -49,7 +77,7 @@ public sealed class WebMainMenuService
             throw new InvalidOperationException("A save with that name already exists.");
 
         File.Move(path, newPath);
-        await Task.CompletedTask;
+        await _saveCatalogService.RenameLocalPathAsync(path, newPath, _userContextAccessor.CurrentUserId);
     }
 
     public async Task DeleteSaveAsync(string path)
@@ -58,6 +86,6 @@ public sealed class WebMainMenuService
             return;
 
         File.Delete(path);
-        await Task.CompletedTask;
+        await _saveCatalogService.RemoveByLocalPathAsync(path);
     }
 }

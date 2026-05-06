@@ -6,6 +6,7 @@ using MMAAgent.Infrastructure.Generation;
 using MMAAgent.Infrastructure.Persistence.Sqlite;
 using MMAAgent.Infrastructure.Persistence.Sqlite.Repositories;
 using MMAAgent.Infrastructure.Persistence.Sqlite.Services;
+using MMAAgent.Web.Api;
 using MMAAgent.Web.Components;
 using MMAAgent.Web.Infrastructure;
 using MMAAgent.Web.Services;
@@ -33,7 +34,11 @@ builder.Services.AddScoped<IWeeklyWorldUpdateService, WeeklyWorldUpdateService>(
 builder.Services.AddScoped<IFightOfferGenerationService, FightOfferGenerationServiceSqlite>();
 
 
-builder.Services.AddSingleton<ISavePathProvider, WebSavePathProvider>();
+builder.Services.AddSingleton<IUserContextAccessor, LocalUserContextAccessor>();
+builder.Services.AddSingleton<ISaveCatalogService, JsonSaveCatalogService>();
+builder.Services.AddSingleton<WebSaveSessionContext>();
+builder.Services.AddSingleton<ISaveSessionContext>(sp => sp.GetRequiredService<WebSaveSessionContext>());
+builder.Services.AddSingleton<ISavePathProvider>(sp => sp.GetRequiredService<WebSaveSessionContext>());
 builder.Services.AddSingleton<SqliteConnectionFactory>();
 builder.Services.AddSingleton<IDatabasePathInitializer, DatabasePathInitializer>();
 
@@ -127,6 +132,8 @@ if (!app.Environment.IsDevelopment())
 app.UseHttpsRedirection();
 app.UseStaticFiles();
 app.UseAntiforgery();
+
+app.MapGameApi();
 
 app.MapRazorComponents<App>()
     .AddInteractiveServerRenderMode();

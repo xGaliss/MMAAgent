@@ -1,4 +1,4 @@
-﻿using MMAAgent.Application.Abstractions;
+using MMAAgent.Application.Abstractions;
 using MMAAgent.Domain.Agents;
 using MMAAgent.Infrastructure.Files;
 using MMAAgent.Infrastructure.Generation;
@@ -11,8 +11,22 @@ namespace MMAAgent.Web.Services;
 
 public sealed class WebGameSessionService
 {
+    public sealed record SessionContextSnapshot(
+        string UserId,
+        string UserDisplayName,
+        string? SaveId,
+        string? OwnerUserId,
+        string? SavePath,
+        string? StorageKind,
+        string? StorageLocator,
+        string? SaveState,
+        string? TemplateSource,
+        string? BackendInstance);
+
     private readonly DatabaseOptions _dbOptions;
-    private readonly ISavePathProvider _savePathProvider;
+    private readonly ISaveSessionContext _saveSessionContext;
+    private readonly IUserContextAccessor _userContextAccessor;
+    private readonly ISaveCatalogService _saveCatalogService;
     private readonly IGameStateRepository _gameStateRepo;
     private readonly IAgentProfileRepository _agentProfileRepository;
     private readonly DbBootstrap _bootstrap;
@@ -27,7 +41,9 @@ public sealed class WebGameSessionService
 
     public WebGameSessionService(
         IOptions<DatabaseOptions> dbOptions,
-        ISavePathProvider savePathProvider,
+        ISaveSessionContext saveSessionContext,
+        IUserContextAccessor userContextAccessor,
+        ISaveCatalogService saveCatalogService,
         IGameStateRepository gameStateRepo,
         IAgentProfileRepository agentProfileRepository,
         DbBootstrap bootstrap,
@@ -41,7 +57,9 @@ public sealed class WebGameSessionService
         PromotionScheduleSeeder scheduleSeeder)
     {
         _dbOptions = dbOptions.Value;
-        _savePathProvider = savePathProvider;
+        _saveSessionContext = saveSessionContext;
+        _userContextAccessor = userContextAccessor;
+        _saveCatalogService = saveCatalogService;
         _gameStateRepo = gameStateRepo;
         _agentProfileRepository = agentProfileRepository;
         _bootstrap = bootstrap;
@@ -55,7 +73,27 @@ public sealed class WebGameSessionService
         _scheduleSeeder = scheduleSeeder;
     }
 
-    public string? CurrentSavePath => _savePathProvider.CurrentPath;
+    public string? CurrentSavePath => _saveSessionContext.CurrentPath;
+    public string? CurrentSaveId => _saveSessionContext.CurrentSaveId;
+    public string? CurrentOwnerUserId => _saveSessionContext.CurrentOwnerUserId;
+
+    public SessionContextSnapshot GetSessionContext()
+        => new(
+            _userContextAccessor.CurrentUserId,
+            _userContextAccessor.DisplayName,
+            CurrentSaveId,
+            CurrentOwnerUserId,
+            CurrentSavePath,
+            _saveSessionContext.CurrentStorageKind,
+            _saveSessionContext.CurrentStorageLocator,
+            _saveSessionContext.CurrentSaveState,
+            _saveSessionContext.CurrentTemplateSource,
+            _saveSessionContext.CurrentBackendInstance);
+
+    public Task<SaveRecord?> GetCurrentSaveRecordAsync(CancellationToken cancellationToken = default)
+        => string.IsNullOrWhiteSpace(CurrentSaveId)
+            ? Task.FromResult<SaveRecord?>(null)
+            : _saveCatalogService.GetBySaveIdAsync(CurrentSaveId, cancellationToken);
 
     public Task LoadConfiguredSaveAsync()
     {
@@ -68,12 +106,23 @@ public sealed class WebGameSessionService
 
     public async Task<bool> TryLoadLastSaveAsync()
     {
-        var path = ReadLastSavePath();
-        if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
-            return false;
+        var ownerUserId = _userContextAccessor.CurrentUserId;
+        var entry = await _saveCatalogService.GetLastOpenedAsync(ownerUserId);
 
-        await LoadByPathAsync(path);
-        return true;
+        if (entry is not null && !string.IsNullOrWhiteSpace(entry.LocalPath) && File.Exists(entry.LocalPath))
+        {
+            await LoadCatalogedSaveAsync(entry);
+            return true;
+        }
+
+        var path = ReadLastSavePath();
+        if (!string.IsNullOrWhiteSpace(path) && File.Exists(path))
+        {
+            await LoadByPathAsync(path);
+            return true;
+        }
+
+        return false;
     }
 
     public async Task LoadByPathAsync(string path)
@@ -84,12 +133,34 @@ public sealed class WebGameSessionService
         if (!File.Exists(path))
             throw new FileNotFoundException("No se encontró la save DB.", path);
 
-        _savePathProvider.Set(path);
-        await _careerSchemaPreparation.PrepareAsync();
-        await _fighterWorldService.SynchronizeAsync();
-        await _worldEcosystemService.SynchronizeAsync();
-        await _worldAgendaService.SynchronizeAsync();
-        SaveLastPath(path);
+        var entry = await _saveCatalogService.RegisterOrUpdateLocalAsync(
+            path,
+            _userContextAccessor.CurrentUserId,
+            markOpened: true);
+
+        await LoadCatalogedSaveAsync(entry);
+    }
+
+    public async Task LoadBySaveIdAsync(string saveId)
+    {
+        if (string.IsNullOrWhiteSpace(saveId))
+            throw new InvalidOperationException("Debes indicar un save id.");
+
+        var entry = await _saveCatalogService.GetBySaveIdAsync(saveId);
+        if (entry is null)
+            throw new FileNotFoundException("No se encontró la save registrada.", saveId);
+
+        if (string.IsNullOrWhiteSpace(entry.LocalPath) || !File.Exists(entry.LocalPath))
+            throw new FileNotFoundException("La save registrada ya no existe en disco.", entry.LocalPath ?? entry.StorageLocator);
+
+        var refreshed = await _saveCatalogService.RegisterOrUpdateLocalAsync(
+            entry.LocalPath,
+            entry.OwnerUserId,
+            entry.DisplayName,
+            entry.TemplateSource,
+            markOpened: true);
+
+        await LoadCatalogedSaveAsync(refreshed);
     }
 
     public async Task<string> CreateNewGameAsync(
@@ -116,7 +187,14 @@ public sealed class WebGameSessionService
             throw new FileNotFoundException("No se encontró la DB plantilla.", templateDbPath);
 
         var savePath = _bootstrap.CreateNewSaveFromTemplate(templateDbPath, saveName);
-        _savePathProvider.Set(savePath);
+        var registryEntry = await _saveCatalogService.RegisterOrUpdateLocalAsync(
+            savePath,
+            _userContextAccessor.CurrentUserId,
+            saveName,
+            SaveTemplateSources.DefaultTemplateDb,
+            markOpened: true);
+
+        _saveSessionContext.SetCurrent(registryEntry);
         await _careerSchemaPreparation.PrepareAsync();
 
         var seed = Random.Shared.Next(1, int.MaxValue);
@@ -162,8 +240,18 @@ public sealed class WebGameSessionService
         await _worldEcosystemService.SynchronizeAsync();
         await _worldAgendaService.SynchronizeAsync();
 
-        SaveLastPath(savePath);
-        return savePath;
+        SaveLastPath(registryEntry.LocalPath ?? registryEntry.StorageLocator);
+        return registryEntry.LocalPath ?? registryEntry.StorageLocator;
+    }
+
+    private async Task LoadCatalogedSaveAsync(SaveRecord entry)
+    {
+        _saveSessionContext.SetCurrent(entry);
+        await _careerSchemaPreparation.PrepareAsync();
+        await _fighterWorldService.SynchronizeAsync();
+        await _worldEcosystemService.SynchronizeAsync();
+        await _worldAgendaService.SynchronizeAsync();
+        SaveLastPath(entry.LocalPath ?? entry.StorageLocator);
     }
 
     private static string GetLastSaveFilePath()
