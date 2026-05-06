@@ -4,6 +4,7 @@ using MMAAgent.Domain.Common;
 using MMAAgent.Web.Infrastructure;
 using MMAAgent.Web.Services;
 using Microsoft.Data.Sqlite;
+using Microsoft.Extensions.Options;
 
 namespace MMAAgent.Web.Api;
 
@@ -21,6 +22,8 @@ public static class ApiEndpointExtensions
                 UtcNow: DateTime.UtcNow.ToString("O"),
                 ApiVersion: "v1")))
             .WithName("GetApiHealth");
+        group.MapGet("/auth/me", GetAuthMeAsync)
+            .WithName("GetAuthMe");
 
         group.MapGet("/session", GetSessionAsync)
             .WithName("GetCurrentSession");
@@ -36,6 +39,8 @@ public static class ApiEndpointExtensions
             .WithName("LoadSaveByPath");
         group.MapPost("/session/create", CreateNewGameAsync)
             .WithName("CreateNewGame");
+        group.MapPost("/session/persist", PersistCurrentSaveAsync)
+            .WithName("PersistCurrentSave");
 
         group.MapGet("/dashboard", GetDashboardAsync)
             .WithName("GetDashboard");
@@ -51,6 +56,19 @@ public static class ApiEndpointExtensions
         return endpoints;
     }
 
+    private static IResult GetAuthMeAsync(WebGameSessionService gameSessionService)
+    {
+        var context = gameSessionService.GetSessionContext();
+        return Results.Ok(new ApiAuthIdentityResponse(
+            new ApiUserContextSummary(
+                context.UserId,
+                context.UserDisplayName,
+                context.IsAuthenticated,
+                context.AuthMode,
+                context.AuthProvider,
+                context.ProviderUserId)));
+    }
+
     private static async Task<IResult> GetSessionAsync(
         WebGameSessionService gameSessionService,
         IAgentProfileRepository agentProfileRepository,
@@ -64,31 +82,96 @@ public static class ApiEndpointExtensions
         return Results.Ok(response);
     }
 
-    private static async Task<IResult> GetDetectedSavesAsync(WebMainMenuService mainMenuService)
+    private static async Task<IResult> GetDetectedSavesAsync(
+        WebMainMenuService mainMenuService,
+        WebGameSessionService gameSessionService,
+        IHostEnvironment environment,
+        IOptions<SupabaseJwtOptions> supabaseOptions,
+        IOptions<ApiSecurityOptions> apiSecurityOptions)
     {
-        var saves = await mainMenuService.DetectSavesAsync();
-        return Results.Ok(saves.Select(x => new ApiSaveSummary(
-            x.SaveId ?? string.Empty,
-            x.OwnerUserId ?? string.Empty,
-            x.Path,
-            x.FileName,
-            x.DisplayName ?? x.FileName,
-            x.LastWriteTimeUtc,
-            x.FileSizeBytes,
-            x.IsCurrent,
-            x.StorageKind ?? SaveStorageKinds.LocalSqliteFile,
-            x.LifecycleState ?? SaveLifecycleStates.Ready,
-            x.TemplateSource ?? SaveTemplateSources.DefaultTemplateDb,
-            null,
-            x.Path)));
+        var authGuard = RequireSaveOperationIdentity(
+            gameSessionService,
+            environment,
+            supabaseOptions.Value,
+            apiSecurityOptions.Value);
+        if (authGuard is not null)
+            return authGuard;
+
+        try
+        {
+            var saves = await mainMenuService.DetectSavesAsync();
+            return Results.Ok(saves.Select(x => new ApiSaveSummary(
+                x.SaveId ?? string.Empty,
+                x.OwnerUserId ?? string.Empty,
+                x.Path,
+                x.FileName,
+                x.DisplayName ?? x.FileName,
+                x.LastWriteTimeUtc,
+                x.FileSizeBytes,
+                x.IsCurrent,
+                x.StorageKind ?? SaveStorageKinds.LocalSqliteFile,
+                x.LifecycleState ?? SaveLifecycleStates.Ready,
+                x.TemplateSource ?? SaveTemplateSources.DefaultTemplateDb,
+                null,
+                x.Path)));
+        }
+        catch (Exception ex)
+        {
+            if (environment.IsDevelopment())
+            {
+                return Results.Json(
+                    new
+                    {
+                        message = "Failed to detect saves.",
+                        detail = ex.ToString()
+                    },
+                    statusCode: StatusCodes.Status500InternalServerError);
+            }
+
+            throw;
+        }
     }
 
     private static async Task<IResult> LoadConfiguredSaveAsync(
         WebGameSessionService gameSessionService,
         IAgentProfileRepository agentProfileRepository,
-        IGameStateRepository gameStateRepository)
+        IGameStateRepository gameStateRepository,
+        IHostEnvironment environment,
+        IOptions<SupabaseJwtOptions> supabaseOptions,
+        IOptions<ApiSecurityOptions> apiSecurityOptions)
     {
-        await gameSessionService.LoadConfiguredSaveAsync();
+        var authGuard = RequireSaveOperationIdentity(
+            gameSessionService,
+            environment,
+            supabaseOptions.Value,
+            apiSecurityOptions.Value);
+        if (authGuard is not null)
+            return authGuard;
+
+        try
+        {
+            await gameSessionService.LoadConfiguredSaveAsync();
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            return Results.Json(new { message = ex.Message }, statusCode: StatusCodes.Status403Forbidden);
+        }
+        catch (Exception ex)
+        {
+            if (environment.IsDevelopment())
+            {
+                return Results.Json(
+                    new
+                    {
+                        message = "Failed to load configured save.",
+                        detail = ex.ToString()
+                    },
+                    statusCode: StatusCodes.Status500InternalServerError);
+            }
+
+            throw;
+        }
+
         var response = await BuildSessionResponseAsync(
             gameSessionService,
             agentProfileRepository,
@@ -100,9 +183,44 @@ public static class ApiEndpointExtensions
     private static async Task<IResult> LoadLastSaveAsync(
         WebGameSessionService gameSessionService,
         IAgentProfileRepository agentProfileRepository,
-        IGameStateRepository gameStateRepository)
+        IGameStateRepository gameStateRepository,
+        IHostEnvironment environment,
+        IOptions<SupabaseJwtOptions> supabaseOptions,
+        IOptions<ApiSecurityOptions> apiSecurityOptions)
     {
-        var loaded = await gameSessionService.TryLoadLastSaveAsync();
+        var authGuard = RequireSaveOperationIdentity(
+            gameSessionService,
+            environment,
+            supabaseOptions.Value,
+            apiSecurityOptions.Value);
+        if (authGuard is not null)
+            return authGuard;
+
+        bool loaded;
+        try
+        {
+            loaded = await gameSessionService.TryLoadLastSaveAsync();
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            return Results.Json(new { message = ex.Message }, statusCode: StatusCodes.Status403Forbidden);
+        }
+        catch (Exception ex)
+        {
+            if (environment.IsDevelopment())
+            {
+                return Results.Json(
+                    new
+                    {
+                        message = "Failed to load last save.",
+                        detail = ex.ToString()
+                    },
+                    statusCode: StatusCodes.Status500InternalServerError);
+            }
+
+            throw;
+        }
+
         if (!loaded)
             return Results.NotFound(new { message = "No previous save could be loaded." });
 
@@ -118,12 +236,46 @@ public static class ApiEndpointExtensions
         ApiLoadBySaveIdRequest request,
         WebGameSessionService gameSessionService,
         IAgentProfileRepository agentProfileRepository,
-        IGameStateRepository gameStateRepository)
+        IGameStateRepository gameStateRepository,
+        IHostEnvironment environment,
+        IOptions<SupabaseJwtOptions> supabaseOptions,
+        IOptions<ApiSecurityOptions> apiSecurityOptions)
     {
         if (string.IsNullOrWhiteSpace(request.SaveId))
             return Results.BadRequest(new { message = "A save id is required." });
 
-        await gameSessionService.LoadBySaveIdAsync(request.SaveId);
+        var authGuard = RequireSaveOperationIdentity(
+            gameSessionService,
+            environment,
+            supabaseOptions.Value,
+            apiSecurityOptions.Value);
+        if (authGuard is not null)
+            return authGuard;
+
+        try
+        {
+            await gameSessionService.LoadBySaveIdAsync(request.SaveId);
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            return Results.Json(new { message = ex.Message }, statusCode: StatusCodes.Status403Forbidden);
+        }
+        catch (Exception ex)
+        {
+            if (environment.IsDevelopment())
+            {
+                return Results.Json(
+                    new
+                    {
+                        message = "Failed to load save by id.",
+                        detail = ex.ToString()
+                    },
+                    statusCode: StatusCodes.Status500InternalServerError);
+            }
+
+            throw;
+        }
+
         var response = await BuildSessionResponseAsync(
             gameSessionService,
             agentProfileRepository,
@@ -136,12 +288,46 @@ public static class ApiEndpointExtensions
         ApiLoadByPathRequest request,
         WebGameSessionService gameSessionService,
         IAgentProfileRepository agentProfileRepository,
-        IGameStateRepository gameStateRepository)
+        IGameStateRepository gameStateRepository,
+        IHostEnvironment environment,
+        IOptions<SupabaseJwtOptions> supabaseOptions,
+        IOptions<ApiSecurityOptions> apiSecurityOptions)
     {
         if (string.IsNullOrWhiteSpace(request.Path))
             return Results.BadRequest(new { message = "A save path is required." });
 
-        await gameSessionService.LoadByPathAsync(request.Path);
+        var authGuard = RequireSaveOperationIdentity(
+            gameSessionService,
+            environment,
+            supabaseOptions.Value,
+            apiSecurityOptions.Value);
+        if (authGuard is not null)
+            return authGuard;
+
+        try
+        {
+            await gameSessionService.LoadByPathAsync(request.Path);
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            return Results.Json(new { message = ex.Message }, statusCode: StatusCodes.Status403Forbidden);
+        }
+        catch (Exception ex)
+        {
+            if (environment.IsDevelopment())
+            {
+                return Results.Json(
+                    new
+                    {
+                        message = "Failed to load save by path.",
+                        detail = ex.ToString()
+                    },
+                    statusCode: StatusCodes.Status500InternalServerError);
+            }
+
+            throw;
+        }
+
         var response = await BuildSessionResponseAsync(
             gameSessionService,
             agentProfileRepository,
@@ -154,7 +340,10 @@ public static class ApiEndpointExtensions
         ApiCreateGameRequest request,
         WebGameSessionService gameSessionService,
         IAgentProfileRepository agentProfileRepository,
-        IGameStateRepository gameStateRepository)
+        IGameStateRepository gameStateRepository,
+        IHostEnvironment environment,
+        IOptions<SupabaseJwtOptions> supabaseOptions,
+        IOptions<ApiSecurityOptions> apiSecurityOptions)
     {
         if (string.IsNullOrWhiteSpace(request.AgentName))
             return Results.BadRequest(new { message = "AgentName is required." });
@@ -165,13 +354,39 @@ public static class ApiEndpointExtensions
         if (request.FighterCount <= 0)
             return Results.BadRequest(new { message = "FighterCount must be greater than zero." });
 
-        await gameSessionService.CreateNewGameAsync(
-            request.SaveName,
-            request.AgentName,
-            request.AgencyName,
-            request.FighterCount,
-            request.Nationality,
-            request.AvatarKey);
+        var authGuard = RequireSaveOperationIdentity(
+            gameSessionService,
+            environment,
+            supabaseOptions.Value,
+            apiSecurityOptions.Value);
+        if (authGuard is not null)
+            return authGuard;
+
+        try
+        {
+            await gameSessionService.CreateNewGameAsync(
+                request.SaveName,
+                request.AgentName,
+                request.AgencyName,
+                request.FighterCount,
+                request.Nationality,
+                request.AvatarKey);
+        }
+        catch (Exception ex)
+        {
+            if (environment.IsDevelopment())
+            {
+                return Results.Json(
+                    new
+                    {
+                        message = "Failed to create new game.",
+                        detail = ex.ToString()
+                    },
+                    statusCode: StatusCodes.Status500InternalServerError);
+            }
+
+            throw;
+        }
 
         var response = await BuildSessionResponseAsync(
             gameSessionService,
@@ -179,6 +394,48 @@ public static class ApiEndpointExtensions
             gameStateRepository);
 
         return Results.Created("/api/v1/session", response);
+    }
+
+    private static async Task<IResult> PersistCurrentSaveAsync(
+        WebGameSessionService gameSessionService,
+        ISavePersistenceService savePersistenceService,
+        IHostEnvironment environment,
+        IOptions<SupabaseJwtOptions> supabaseOptions,
+        IOptions<ApiSecurityOptions> apiSecurityOptions)
+    {
+        var authGuard = RequireSaveOperationIdentity(
+            gameSessionService,
+            environment,
+            supabaseOptions.Value,
+            apiSecurityOptions.Value);
+        if (authGuard is not null)
+            return authGuard;
+
+        bool persisted;
+        try
+        {
+            persisted = await savePersistenceService.PersistCurrentSaveAsync("manual-api-persist");
+        }
+        catch (Exception ex)
+        {
+            if (environment.IsDevelopment())
+            {
+                return Results.Json(
+                    new
+                    {
+                        message = "Failed to persist current save.",
+                        detail = ex.ToString()
+                    },
+                    statusCode: StatusCodes.Status500InternalServerError);
+            }
+
+            throw;
+        }
+
+        return Results.Ok(new ApiPersistSaveResponse(
+            persisted,
+            gameSessionService.CurrentSaveId,
+            persisted ? "manual-api-persist" : "no-op"));
     }
 
     private static async Task<IResult> GetDashboardAsync(
@@ -308,6 +565,14 @@ public static class ApiEndpointExtensions
         IAgentProfileRepository agentProfileRepository,
         IGameStateRepository gameStateRepository)
     {
+        var sessionContext = gameSessionService.GetSessionContext();
+        var user = new ApiUserContextSummary(
+            sessionContext.UserId,
+            sessionContext.UserDisplayName,
+            sessionContext.IsAuthenticated,
+            sessionContext.AuthMode,
+            sessionContext.AuthProvider,
+            sessionContext.ProviderUserId);
         var currentSaveRecord = await gameSessionService.GetCurrentSaveRecordAsync();
         var currentSavePath = gameSessionService.CurrentSavePath;
         var currentSaveId = gameSessionService.CurrentSaveId;
@@ -316,8 +581,9 @@ public static class ApiEndpointExtensions
         if (string.IsNullOrWhiteSpace(currentSavePath)
             || string.IsNullOrWhiteSpace(currentSaveId)
             || currentSaveRecord is null
+            || !string.Equals(currentSaveRecord.OwnerUserId, sessionContext.UserId, StringComparison.OrdinalIgnoreCase)
             || !string.Equals(currentSaveRecord.LifecycleState, SaveLifecycleStates.Ready, StringComparison.OrdinalIgnoreCase))
-            return new ApiSessionResponse(false, null, null, null, null, null, null);
+            return new ApiSessionResponse(false, user, null, null, null, null, null, null);
 
         var currentSave = new ApiSaveContextSummary(
             currentSaveRecord.SaveId,
@@ -338,6 +604,7 @@ public static class ApiEndpointExtensions
             {
                 return new ApiSessionResponse(
                     HasActiveSave: false,
+                    User: user,
                     CurrentSaveId: null,
                     CurrentOwnerUserId: null,
                     CurrentSavePath: null,
@@ -348,6 +615,7 @@ public static class ApiEndpointExtensions
 
             return new ApiSessionResponse(
                 HasActiveSave: true,
+                User: user,
                 CurrentSaveId: currentSaveId,
                 CurrentOwnerUserId: currentOwnerUserId,
                 CurrentSavePath: currentSavePath,
@@ -359,6 +627,7 @@ public static class ApiEndpointExtensions
         {
             return new ApiSessionResponse(
                 HasActiveSave: false,
+                User: user,
                 CurrentSaveId: null,
                 CurrentOwnerUserId: null,
                 CurrentSavePath: null,
@@ -390,4 +659,34 @@ public static class ApiEndpointExtensions
 
     private static bool IsBootstrapStateException(SqliteException ex)
         => ex.Message.Contains("no such table", StringComparison.OrdinalIgnoreCase);
+
+    private static IResult? RequireSaveOperationIdentity(
+        WebGameSessionService gameSessionService,
+        IHostEnvironment environment,
+        SupabaseJwtOptions supabaseOptions,
+        ApiSecurityOptions apiSecurityOptions)
+    {
+        if (!supabaseOptions.Enabled || !apiSecurityOptions.RequireExternalAuthForSaveOperations)
+            return null;
+
+        var context = gameSessionService.GetSessionContext();
+        if (context.IsAuthenticated && string.Equals(context.AuthMode, AuthModes.External, StringComparison.OrdinalIgnoreCase))
+            return null;
+
+        if (environment.IsDevelopment()
+            && apiSecurityOptions.AllowDevelopmentBypassForSaveOperations
+            && (string.Equals(context.AuthMode, AuthModes.Header, StringComparison.OrdinalIgnoreCase)
+                || string.Equals(context.AuthMode, AuthModes.Local, StringComparison.OrdinalIgnoreCase)))
+        {
+            return null;
+        }
+
+        return Results.Json(
+            new
+            {
+                message = "This save operation requires an authenticated external user.",
+                requiredAuthMode = AuthModes.External
+            },
+            statusCode: StatusCodes.Status401Unauthorized);
+    }
 }

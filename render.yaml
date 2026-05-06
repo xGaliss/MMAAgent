@@ -1,0 +1,33 @@
+services:
+  - type: web
+    name: mmaagent-api
+    runtime: docker
+    plan: free
+    dockerfilePath: ./MMAAgent.Web/Dockerfile
+    autoDeploy: true
+    healthCheckPath: /api/v1/health
+    envVars:
+      - key: ASPNETCORE_ENVIRONMENT
+        value: Production
+      - key: Database__Path
+        value: /data/saves/bootstrap.db
+      - key: Database__SaveRootDirectory
+        value: /data/saves
+      - key: AuthBridge__AllowDevelopmentHeaders
+        value: "false"
+      - key: ApiSecurity__RequireExternalAuthForSaveOperations
+        value: "true"
+      - key: ApiSecurity__AllowDevelopmentBypassForSaveOperations
+        value: "false"
+      - key: SaveCatalog__Provider
+        value: supabase-postgres
+      - key: SaveCatalog__MirrorLocalJson
+        value: "false"
+      - key: SaveCatalog__Schema
+        value: mma_agent
+      - key: SaveCatalog__BackendInstanceName
+        value: render
+      - key: SupabaseAuth__Enabled
+        value: "true"
+      - key: SupabaseAuth__Audience
+        value: authenticated

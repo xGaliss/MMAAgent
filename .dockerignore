@@ -1,0 +1,13 @@
+.git
+.github
+.vs
+**/bin
+**/obj
+**/*.user
+**/*.suo
+**/*.cache
+**/*.db
+**/*.log
+tools-build.log
+msbuild-infra.log
+docs/*.png

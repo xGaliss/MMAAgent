@@ -10,6 +10,9 @@ public sealed record ApiHealthResponse(
     string UtcNow,
     string ApiVersion);
 
+public sealed record ApiAuthIdentityResponse(
+    ApiUserContextSummary User);
+
 public sealed record ApiSaveSummary(
     string SaveId,
     string OwnerUserId,
@@ -41,7 +44,11 @@ public sealed record ApiGameStateSummary(
 
 public sealed record ApiUserContextSummary(
     string UserId,
-    string DisplayName);
+    string DisplayName,
+    bool IsAuthenticated,
+    string AuthMode,
+    string? Provider,
+    string? ProviderUserId);
 
 public sealed record ApiSaveContextSummary(
     string SaveId,
@@ -63,6 +70,7 @@ public sealed record ApiEnvelope<T>(
 
 public sealed record ApiSessionResponse(
     bool HasActiveSave,
+    ApiUserContextSummary User,
     string? CurrentSaveId,
     string? CurrentOwnerUserId,
     string? CurrentSavePath,
@@ -80,6 +88,11 @@ public sealed record ApiCreateGameRequest(
     int FighterCount,
     string? Nationality,
     string? AvatarKey);
+
+public sealed record ApiPersistSaveResponse(
+    bool Persisted,
+    string? SaveId,
+    string? Reason);
 
 public sealed record ApiDashboardStatsResponse(
     int FighterCount,
@@ -397,7 +410,11 @@ public static class ApiContractMappings
         => new(
             new ApiUserContextSummary(
                 snapshot.UserId,
-                snapshot.UserDisplayName),
+                snapshot.UserDisplayName,
+                snapshot.IsAuthenticated,
+                snapshot.AuthMode,
+                snapshot.AuthProvider,
+                snapshot.ProviderUserId),
             string.IsNullOrWhiteSpace(snapshot.SaveId) || string.IsNullOrWhiteSpace(snapshot.SavePath)
                 ? null
                 : new ApiSaveContextSummary(

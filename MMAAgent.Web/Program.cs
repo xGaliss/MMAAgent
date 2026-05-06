@@ -11,15 +11,89 @@ using MMAAgent.Web.Components;
 using MMAAgent.Web.Infrastructure;
 using MMAAgent.Web.Services;
 using MMAAgent.Infrastructure.Persistance.Sqlite.Services;
+using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.HttpOverrides;
+using Microsoft.IdentityModel.Tokens;
 
 
 var builder = WebApplication.CreateBuilder(args);
+var supabaseAuthOptions = builder.Configuration
+    .GetSection(SupabaseJwtOptions.SectionName)
+    .Get<SupabaseJwtOptions>() ?? new SupabaseJwtOptions();
 
 builder.Services.AddRazorComponents()
     .AddInteractiveServerComponents();
 
 builder.Services.Configure<DatabaseOptions>(
     builder.Configuration.GetSection(DatabaseOptions.SectionName));
+builder.Services.Configure<AuthBridgeOptions>(
+    builder.Configuration.GetSection(AuthBridgeOptions.SectionName));
+builder.Services.Configure<ApiSecurityOptions>(
+    builder.Configuration.GetSection(ApiSecurityOptions.SectionName));
+builder.Services.Configure<SaveCatalogOptions>(
+    builder.Configuration.GetSection(SaveCatalogOptions.SectionName));
+builder.Services.Configure<SupabaseJwtOptions>(
+    builder.Configuration.GetSection(SupabaseJwtOptions.SectionName));
+builder.Services
+    .AddAuthentication(options =>
+    {
+        options.DefaultAuthenticateScheme = AuthBridgeDefaults.HybridScheme;
+        options.DefaultChallengeScheme = AuthBridgeDefaults.HybridScheme;
+    })
+    .AddPolicyScheme(
+        AuthBridgeDefaults.HybridScheme,
+        "JWT bearer or development bridge",
+        options =>
+        {
+            options.ForwardDefaultSelector = context =>
+            {
+                var authHeader = context.Request.Headers.Authorization.FirstOrDefault();
+                if (supabaseAuthOptions.Enabled
+                    && !string.IsNullOrWhiteSpace(authHeader)
+                    && authHeader.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
+                {
+                    return JwtBearerDefaults.AuthenticationScheme;
+                }
+
+                return AuthBridgeDefaults.Scheme;
+            };
+        })
+    .AddScheme<AuthenticationSchemeOptions, AuthBridgeAuthenticationHandler>(
+        AuthBridgeDefaults.Scheme,
+        _ => { })
+    .AddJwtBearer(options =>
+    {
+        var authority = string.IsNullOrWhiteSpace(supabaseAuthOptions.Issuer)
+            ? null
+            : supabaseAuthOptions.Issuer.TrimEnd('/');
+
+        if (!string.IsNullOrWhiteSpace(authority))
+        {
+            options.Authority = authority;
+            options.MetadataAddress = $"{authority}/.well-known/openid-configuration";
+        }
+
+        options.RequireHttpsMetadata = supabaseAuthOptions.RequireHttpsMetadata;
+        options.IncludeErrorDetails = builder.Environment.IsDevelopment();
+        options.MapInboundClaims = false;
+        options.TokenValidationParameters = new TokenValidationParameters
+        {
+            ValidateIssuer = supabaseAuthOptions.ValidateIssuer && !string.IsNullOrWhiteSpace(supabaseAuthOptions.Issuer),
+            ValidIssuer = supabaseAuthOptions.Issuer,
+            ValidateAudience = supabaseAuthOptions.ValidateAudience
+                               && (!string.IsNullOrWhiteSpace(supabaseAuthOptions.Audience)
+                                   || supabaseAuthOptions.Audiences.Length > 0),
+            ValidAudience = supabaseAuthOptions.Audience,
+            ValidAudiences = supabaseAuthOptions.Audiences.Length > 0 ? supabaseAuthOptions.Audiences : null,
+            ValidateIssuerSigningKey = true,
+            ValidateLifetime = supabaseAuthOptions.ValidateLifetime,
+            NameClaimType = "name",
+            RoleClaimType = "role"
+        };
+    });
+builder.Services.AddAuthorization();
+builder.Services.AddTransient<IClaimsTransformation, SupabaseClaimsTransformation>();
 
 builder.Services.AddScoped<MMAAgent.Application.Abstractions.IContractOfferRepository,
     MMAAgent.Infrastructure.Persistence.Sqlite.Repositories.ContractOfferRepository>();
@@ -34,8 +108,25 @@ builder.Services.AddScoped<IWeeklyWorldUpdateService, WeeklyWorldUpdateService>(
 builder.Services.AddScoped<IFightOfferGenerationService, FightOfferGenerationServiceSqlite>();
 
 
-builder.Services.AddSingleton<IUserContextAccessor, LocalUserContextAccessor>();
-builder.Services.AddSingleton<ISaveCatalogService, JsonSaveCatalogService>();
+builder.Services.AddHttpContextAccessor();
+builder.Services.AddScoped<IUserContextAccessor, HttpAwareUserContextAccessor>();
+builder.Services.AddSingleton<JsonSaveCatalogService>();
+builder.Services.AddSingleton<PostgresSaveCatalogService>();
+builder.Services.AddSingleton<ISaveCatalogService, ConfiguredSaveCatalogService>();
+builder.Services.AddSingleton<PostgresSaveSnapshotStore>();
+builder.Services.AddSingleton<ISaveSnapshotStore>(sp =>
+{
+    var options = sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<SaveCatalogOptions>>().Value;
+    if (string.Equals(options.Provider, SaveCatalogProviders.SupabasePostgres, StringComparison.OrdinalIgnoreCase)
+        && (!string.IsNullOrWhiteSpace(options.PostgresConnectionString)
+            || !string.IsNullOrWhiteSpace(options.FallbackPostgresConnectionString)))
+    {
+        return sp.GetRequiredService<PostgresSaveSnapshotStore>();
+    }
+
+    return new NoopSaveSnapshotStore();
+});
+builder.Services.AddSingleton<ISavePersistenceService, SavePersistenceService>();
 builder.Services.AddSingleton<WebSaveSessionContext>();
 builder.Services.AddSingleton<ISaveSessionContext>(sp => sp.GetRequiredService<WebSaveSessionContext>());
 builder.Services.AddSingleton<ISavePathProvider>(sp => sp.GetRequiredService<WebSaveSessionContext>());
@@ -129,9 +220,20 @@ if (!app.Environment.IsDevelopment())
     app.UseHsts();
 }
 
-app.UseHttpsRedirection();
+app.UseForwardedHeaders(new ForwardedHeadersOptions
+{
+    ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto
+});
+
+if (app.Environment.IsDevelopment())
+{
+    app.UseHttpsRedirection();
+}
+
 app.UseStaticFiles();
 app.UseAntiforgery();
+app.UseAuthentication();
+app.UseAuthorization();
 
 app.MapGameApi();
 

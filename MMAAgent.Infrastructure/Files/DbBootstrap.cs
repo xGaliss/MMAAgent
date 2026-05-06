@@ -9,16 +9,17 @@ namespace MMAAgent.Infrastructure.Files
         /// Crea una nueva DB de partida copiando una plantilla (readonly) a una ruta de saves.
         /// Devuelve la ruta completa del archivo nuevo.
         /// </summary>
-        public string CreateNewSaveFromTemplate(string templateDbPath, string? saveName = null)
+        public string CreateNewSaveFromTemplate(string templateDbPath, string? saveName = null, string? saveRootDirectory = null)
         {
             if (!File.Exists(templateDbPath))
                 throw new FileNotFoundException($"No se encontró la DB plantilla en: {templateDbPath}");
 
-            var baseDir = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-                "MMAAgent",
-                "Saves"
-            );
+            var baseDir = string.IsNullOrWhiteSpace(saveRootDirectory)
+                ? Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+                    "MMAAgent",
+                    "Saves")
+                : Path.GetFullPath(saveRootDirectory.Trim());
 
             Directory.CreateDirectory(baseDir);
 
@@ -36,13 +37,14 @@ namespace MMAAgent.Infrastructure.Files
             return savePath;
         }
 
-        public string[] ListSaves()
+        public string[] ListSaves(string? saveRootDirectory = null)
         {
-            var baseDir = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-                "MMAAgent",
-                "Saves"
-            );
+            var baseDir = string.IsNullOrWhiteSpace(saveRootDirectory)
+                ? Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+                    "MMAAgent",
+                    "Saves")
+                : Path.GetFullPath(saveRootDirectory.Trim());
 
             if (!Directory.Exists(baseDir)) return Array.Empty<string>();
             return Directory.GetFiles(baseDir, "*.db", SearchOption.TopDirectoryOnly);

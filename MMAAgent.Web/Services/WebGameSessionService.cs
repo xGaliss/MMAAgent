@@ -14,6 +14,10 @@ public sealed class WebGameSessionService
     public sealed record SessionContextSnapshot(
         string UserId,
         string UserDisplayName,
+        bool IsAuthenticated,
+        string AuthMode,
+        string? AuthProvider,
+        string? ProviderUserId,
         string? SaveId,
         string? OwnerUserId,
         string? SavePath,
@@ -27,6 +31,7 @@ public sealed class WebGameSessionService
     private readonly ISaveSessionContext _saveSessionContext;
     private readonly IUserContextAccessor _userContextAccessor;
     private readonly ISaveCatalogService _saveCatalogService;
+    private readonly ISavePersistenceService _savePersistenceService;
     private readonly IGameStateRepository _gameStateRepo;
     private readonly IAgentProfileRepository _agentProfileRepository;
     private readonly DbBootstrap _bootstrap;
@@ -44,6 +49,7 @@ public sealed class WebGameSessionService
         ISaveSessionContext saveSessionContext,
         IUserContextAccessor userContextAccessor,
         ISaveCatalogService saveCatalogService,
+        ISavePersistenceService savePersistenceService,
         IGameStateRepository gameStateRepo,
         IAgentProfileRepository agentProfileRepository,
         DbBootstrap bootstrap,
@@ -60,6 +66,7 @@ public sealed class WebGameSessionService
         _saveSessionContext = saveSessionContext;
         _userContextAccessor = userContextAccessor;
         _saveCatalogService = saveCatalogService;
+        _savePersistenceService = savePersistenceService;
         _gameStateRepo = gameStateRepo;
         _agentProfileRepository = agentProfileRepository;
         _bootstrap = bootstrap;
@@ -78,9 +85,15 @@ public sealed class WebGameSessionService
     public string? CurrentOwnerUserId => _saveSessionContext.CurrentOwnerUserId;
 
     public SessionContextSnapshot GetSessionContext()
-        => new(
-            _userContextAccessor.CurrentUserId,
-            _userContextAccessor.DisplayName,
+    {
+        var user = _userContextAccessor.GetCurrent();
+        return new SessionContextSnapshot(
+            user.UserId,
+            user.DisplayName,
+            user.IsAuthenticated,
+            user.AuthMode,
+            user.Provider,
+            user.ProviderUserId,
             CurrentSaveId,
             CurrentOwnerUserId,
             CurrentSavePath,
@@ -89,6 +102,7 @@ public sealed class WebGameSessionService
             _saveSessionContext.CurrentSaveState,
             _saveSessionContext.CurrentTemplateSource,
             _saveSessionContext.CurrentBackendInstance);
+    }
 
     public Task<SaveRecord?> GetCurrentSaveRecordAsync(CancellationToken cancellationToken = default)
         => string.IsNullOrWhiteSpace(CurrentSaveId)
@@ -133,6 +147,22 @@ public sealed class WebGameSessionService
         if (!File.Exists(path))
             throw new FileNotFoundException("No se encontró la save DB.", path);
 
+        var existing = await _saveCatalogService.GetByLocalPathAsync(path);
+        if (existing is not null)
+        {
+            EnsureOwnedByCurrentUser(existing);
+
+            var refreshedExisting = await _saveCatalogService.RegisterOrUpdateLocalAsync(
+                path,
+                existing.OwnerUserId,
+                existing.DisplayName,
+                existing.TemplateSource,
+                markOpened: true);
+
+            await LoadCatalogedSaveAsync(refreshedExisting);
+            return;
+        }
+
         var entry = await _saveCatalogService.RegisterOrUpdateLocalAsync(
             path,
             _userContextAccessor.CurrentUserId,
@@ -150,11 +180,13 @@ public sealed class WebGameSessionService
         if (entry is null)
             throw new FileNotFoundException("No se encontró la save registrada.", saveId);
 
-        if (string.IsNullOrWhiteSpace(entry.LocalPath) || !File.Exists(entry.LocalPath))
-            throw new FileNotFoundException("La save registrada ya no existe en disco.", entry.LocalPath ?? entry.StorageLocator);
+        EnsureOwnedByCurrentUser(entry);
+
+        if (!await _savePersistenceService.EnsureLocalSaveAvailableAsync(entry))
+            throw new FileNotFoundException("La save registrada ya no existe en disco y no se pudo restaurar desde el backend.", entry.LocalPath ?? entry.StorageLocator);
 
         var refreshed = await _saveCatalogService.RegisterOrUpdateLocalAsync(
-            entry.LocalPath,
+            entry.LocalPath ?? entry.StorageLocator,
             entry.OwnerUserId,
             entry.DisplayName,
             entry.TemplateSource,
@@ -186,7 +218,10 @@ public sealed class WebGameSessionService
         if (!File.Exists(templateDbPath))
             throw new FileNotFoundException("No se encontró la DB plantilla.", templateDbPath);
 
-        var savePath = _bootstrap.CreateNewSaveFromTemplate(templateDbPath, saveName);
+        var savePath = _bootstrap.CreateNewSaveFromTemplate(
+            templateDbPath,
+            saveName,
+            _dbOptions.SaveRootDirectory);
         var registryEntry = await _saveCatalogService.RegisterOrUpdateLocalAsync(
             savePath,
             _userContextAccessor.CurrentUserId,
@@ -239,6 +274,7 @@ public sealed class WebGameSessionService
         await _fighterWorldService.SynchronizeAsync();
         await _worldEcosystemService.SynchronizeAsync();
         await _worldAgendaService.SynchronizeAsync();
+        await _savePersistenceService.PersistCurrentSaveAsync("new-game");
 
         SaveLastPath(registryEntry.LocalPath ?? registryEntry.StorageLocator);
         return registryEntry.LocalPath ?? registryEntry.StorageLocator;
@@ -246,12 +282,25 @@ public sealed class WebGameSessionService
 
     private async Task LoadCatalogedSaveAsync(SaveRecord entry)
     {
+        EnsureOwnedByCurrentUser(entry);
+        await _savePersistenceService.EnsureLocalSaveAvailableAsync(entry);
         _saveSessionContext.SetCurrent(entry);
         await _careerSchemaPreparation.PrepareAsync();
         await _fighterWorldService.SynchronizeAsync();
         await _worldEcosystemService.SynchronizeAsync();
         await _worldAgendaService.SynchronizeAsync();
+        await _savePersistenceService.PersistCurrentSaveAsync("load-save");
         SaveLastPath(entry.LocalPath ?? entry.StorageLocator);
+    }
+
+    private void EnsureOwnedByCurrentUser(SaveRecord entry)
+    {
+        var currentUserId = _userContextAccessor.CurrentUserId;
+        if (string.Equals(entry.OwnerUserId, currentUserId, StringComparison.OrdinalIgnoreCase))
+            return;
+
+        throw new UnauthorizedAccessException(
+            $"The save '{entry.SaveId}' is owned by '{entry.OwnerUserId}' and cannot be accessed by '{currentUserId}'.");
     }
 
     private static string GetLastSaveFilePath()

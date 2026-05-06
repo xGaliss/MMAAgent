@@ -24,13 +24,25 @@ public sealed class DatabasePathInitializer : IDatabasePathInitializer
     public void Initialize()
     {
         var path = _options.Value.Path?.Trim();
-
         if (string.IsNullOrWhiteSpace(path))
         {
-            throw new InvalidOperationException(
-                "Database:Path no está configurado en appsettings.json.");
+            var root = ResolveSaveRoot();
+            Directory.CreateDirectory(root);
+            path = Path.Combine(root, "bootstrap.db");
         }
 
         _savePathProvider.Set(path);
+    }
+
+    private string ResolveSaveRoot()
+    {
+        var configured = _options.Value.SaveRootDirectory?.Trim();
+        if (!string.IsNullOrWhiteSpace(configured))
+            return configured;
+
+        return Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+            "MMAAgent",
+            "Saves");
     }
 }

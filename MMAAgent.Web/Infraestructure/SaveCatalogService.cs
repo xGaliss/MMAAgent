@@ -166,6 +166,35 @@ public sealed class JsonSaveCatalogService : ISaveCatalogService
         }
     }
 
+    public async Task<SaveRecord> MirrorAsync(
+        SaveRecord record,
+        CancellationToken cancellationToken = default)
+    {
+        await _gate.WaitAsync(cancellationToken);
+        try
+        {
+            var document = await ReadAsync(cancellationToken);
+            var existingIndex = document.Saves.FindIndex(x =>
+                string.Equals(x.SaveId, record.SaveId, StringComparison.OrdinalIgnoreCase));
+
+            if (existingIndex >= 0)
+            {
+                document.Saves[existingIndex] = record;
+            }
+            else
+            {
+                document.Saves.Add(record);
+            }
+
+            await WriteAsync(document, cancellationToken);
+            return record;
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
     public async Task<SaveRecord?> GetBySaveIdAsync(string saveId, CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(saveId))

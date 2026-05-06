@@ -1,22 +1,29 @@
 using MMAAgent.Web.Infrastructure;
 using MMAAgent.Web.Models;
+using Microsoft.Extensions.Options;
 
 namespace MMAAgent.Web.Services;
 
 public sealed class WebMainMenuService
 {
     private readonly ISaveCatalogService _saveCatalogService;
+    private readonly ISavePersistenceService _savePersistenceService;
     private readonly IUserContextAccessor _userContextAccessor;
     private readonly ISaveSessionContext _saveSessionContext;
+    private readonly DatabaseOptions _databaseOptions;
 
     public WebMainMenuService(
         ISaveCatalogService saveCatalogService,
+        ISavePersistenceService savePersistenceService,
         IUserContextAccessor userContextAccessor,
-        ISaveSessionContext saveSessionContext)
+        ISaveSessionContext saveSessionContext,
+        IOptions<DatabaseOptions> databaseOptions)
     {
         _saveCatalogService = saveCatalogService;
+        _savePersistenceService = savePersistenceService;
         _userContextAccessor = userContextAccessor;
         _saveSessionContext = saveSessionContext;
+        _databaseOptions = databaseOptions.Value;
     }
 
     public async Task<IReadOnlyList<SaveCardVm>> DetectSavesAsync()
@@ -36,11 +43,29 @@ public sealed class WebMainMenuService
             Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
             "MMAAgent"));
 
-        foreach (var root in roots.Where(Directory.Exists))
+        if (!string.IsNullOrWhiteSpace(_databaseOptions.SaveRootDirectory))
+            roots.Add(Path.GetFullPath(_databaseOptions.SaveRootDirectory.Trim()));
+
+        foreach (var root in roots
+                     .Where(Directory.Exists)
+                     .Distinct(StringComparer.OrdinalIgnoreCase))
         {
             foreach (var file in Directory.EnumerateFiles(root, "*.db", SearchOption.AllDirectories))
             {
-                await _saveCatalogService.RegisterOrUpdateLocalAsync(file, ownerUserId);
+                var existing = await _saveCatalogService.GetByLocalPathAsync(file);
+                if (existing is null)
+                {
+                    await _saveCatalogService.RegisterOrUpdateLocalAsync(file, ownerUserId);
+                }
+                else
+                {
+                    await _saveCatalogService.RegisterOrUpdateLocalAsync(
+                        file,
+                        existing.OwnerUserId,
+                        existing.DisplayName,
+                        existing.TemplateSource,
+                        markOpened: false);
+                }
             }
         }
 
@@ -76,16 +101,33 @@ public sealed class WebMainMenuService
         if (File.Exists(newPath))
             throw new InvalidOperationException("A save with that name already exists.");
 
+        await EnsureOwnedAsync(path);
         File.Move(path, newPath);
         await _saveCatalogService.RenameLocalPathAsync(path, newPath, _userContextAccessor.CurrentUserId);
     }
 
     public async Task DeleteSaveAsync(string path)
     {
-        if (!File.Exists(path))
+        var existing = await _saveCatalogService.GetByLocalPathAsync(path);
+        if (existing is null && !File.Exists(path))
             return;
 
-        File.Delete(path);
+        await EnsureOwnedAsync(path);
+        if (File.Exists(path))
+            File.Delete(path);
+
+        if (existing is not null)
+            await _savePersistenceService.DeletePersistedSaveAsync(existing);
         await _saveCatalogService.RemoveByLocalPathAsync(path);
+    }
+
+    private async Task EnsureOwnedAsync(string path)
+    {
+        var existing = await _saveCatalogService.GetByLocalPathAsync(path);
+        if (existing is null)
+            return;
+
+        if (!string.Equals(existing.OwnerUserId, _userContextAccessor.CurrentUserId, StringComparison.OrdinalIgnoreCase))
+            throw new UnauthorizedAccessException("This save belongs to another owner and cannot be modified from the current session.");
     }
 }

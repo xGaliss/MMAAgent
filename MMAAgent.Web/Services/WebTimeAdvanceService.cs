@@ -2,6 +2,7 @@ using Microsoft.Data.Sqlite;
 using MMAAgent.Application;
 using MMAAgent.Application.Abstractions;
 using MMAAgent.Infrastructure.Persistence.Sqlite;
+using MMAAgent.Web.Infrastructure;
 using MMAAgent.Web.Models;
 using System.Globalization;
 
@@ -16,6 +17,7 @@ public sealed class WebTimeAdvanceService
     private readonly IWorldAgendaService _worldAgendaService;
     private readonly GameTimeService _gameTimeService;
     private readonly SqliteConnectionFactory _factory;
+    private readonly ISavePersistenceService _savePersistenceService;
 
     public WebTimeAdvanceService(
         IGameStateRepository gameStateRepository,
@@ -24,7 +26,8 @@ public sealed class WebTimeAdvanceService
         IFighterWorldService fighterWorldService,
         IWorldAgendaService worldAgendaService,
         GameTimeService gameTimeService,
-        SqliteConnectionFactory factory)
+        SqliteConnectionFactory factory,
+        ISavePersistenceService savePersistenceService)
     {
         _gameStateRepository = gameStateRepository;
         _dailyWorldEventService = dailyWorldEventService;
@@ -33,6 +36,7 @@ public sealed class WebTimeAdvanceService
         _worldAgendaService = worldAgendaService;
         _gameTimeService = gameTimeService;
         _factory = factory;
+        _savePersistenceService = savePersistenceService;
     }
 
     public async Task<TimeAdvanceResultVm> AdvanceDaysAsync(int days, CancellationToken cancellationToken = default)
@@ -125,6 +129,7 @@ public sealed class WebTimeAdvanceService
 
         await _fighterWorldService.SynchronizeAsync(cancellationToken);
         await _worldAgendaService.SynchronizeAsync(cancellationToken);
+        await _savePersistenceService.PersistCurrentSaveAsync("time-advance", cancellationToken);
         state = await _gameStateRepository.GetAsync();
 
         var finalDate = state?.CurrentDate ?? targetDateText;

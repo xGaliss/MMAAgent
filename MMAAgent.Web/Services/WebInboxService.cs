@@ -2,6 +2,7 @@
 using MMAAgent.Application.Abstractions;
 using MMAAgent.Web.Models;
 using MMAAgent.Infrastructure.Persistence.Sqlite;
+using MMAAgent.Web.Infrastructure;
 
 namespace MMAAgent.Web.Services;
 
@@ -10,15 +11,18 @@ public sealed class WebInboxService
     private readonly IAgentProfileRepository _agentProfileRepository;
     private readonly IInboxRepository _inboxRepository;
     private readonly SqliteConnectionFactory _factory;
+    private readonly ISavePersistenceService _savePersistenceService;
 
     public WebInboxService(
         IAgentProfileRepository agentProfileRepository,
         IInboxRepository inboxRepository,
-        SqliteConnectionFactory factory)
+        SqliteConnectionFactory factory,
+        ISavePersistenceService savePersistenceService)
     {
         _agentProfileRepository = agentProfileRepository;
         _inboxRepository = inboxRepository;
         _factory = factory;
+        _savePersistenceService = savePersistenceService;
     }
 
     public async Task<WebInboxResult> LoadAsync(string? messageType, bool includeArchived = false, bool archivedOnly = false)
@@ -64,25 +68,39 @@ public sealed class WebInboxService
         var agent = await _agentProfileRepository.GetAsync();
         if (agent is null) return;
         await _inboxRepository.MarkAllReadAsync(agent.Id);
+        await _savePersistenceService.PersistCurrentSaveAsync("inbox:mark-all-read");
     }
 
-    public Task MarkMessageAsReadAsync(int messageId)
-        => _inboxRepository.MarkAsReadAsync(messageId);
+    public async Task MarkMessageAsReadAsync(int messageId)
+    {
+        await _inboxRepository.MarkAsReadAsync(messageId);
+        await _savePersistenceService.PersistCurrentSaveAsync("inbox:mark-read");
+    }
 
-    public Task ArchiveMessageAsync(int messageId)
-        => _inboxRepository.ArchiveAsync(messageId);
+    public async Task ArchiveMessageAsync(int messageId)
+    {
+        await _inboxRepository.ArchiveAsync(messageId);
+        await _savePersistenceService.PersistCurrentSaveAsync("inbox:archive-message");
+    }
 
-    public Task RestoreMessageAsync(int messageId)
-        => _inboxRepository.RestoreAsync(messageId);
+    public async Task RestoreMessageAsync(int messageId)
+    {
+        await _inboxRepository.RestoreAsync(messageId);
+        await _savePersistenceService.PersistCurrentSaveAsync("inbox:restore-message");
+    }
 
-    public Task DeleteMessageAsync(int messageId)
-        => _inboxRepository.DeleteAsync(messageId);
+    public async Task DeleteMessageAsync(int messageId)
+    {
+        await _inboxRepository.DeleteAsync(messageId);
+        await _savePersistenceService.PersistCurrentSaveAsync("inbox:delete-message");
+    }
 
     public async Task ArchiveReadAsync()
     {
         var agent = await _agentProfileRepository.GetAsync();
         if (agent is null) return;
         await _inboxRepository.ArchiveReadAsync(agent.Id);
+        await _savePersistenceService.PersistCurrentSaveAsync("inbox:archive-read");
     }
 
     public async Task DeleteReadAsync()
@@ -90,6 +108,7 @@ public sealed class WebInboxService
         var agent = await _agentProfileRepository.GetAsync();
         if (agent is null) return;
         await _inboxRepository.DeleteReadAsync(agent.Id);
+        await _savePersistenceService.PersistCurrentSaveAsync("inbox:delete-read");
     }
 
     public async Task DeleteFightOfferAsync(int offerId)
@@ -113,6 +132,7 @@ WHERE Id = $offerId
         cmd.Parameters.AddWithValue("$agentId", agent.Id);
 
         await cmd.ExecuteNonQueryAsync();
+        await _savePersistenceService.PersistCurrentSaveAsync("inbox:delete-fight-offer");
     }
 
     public async Task DeleteProcessedFightOffersAsync()
@@ -135,6 +155,7 @@ WHERE Status <> 'Pending'
         cmd.Parameters.AddWithValue("$agentId", agent.Id);
 
         await cmd.ExecuteNonQueryAsync();
+        await _savePersistenceService.PersistCurrentSaveAsync("inbox:delete-processed-fight-offers");
     }
 
     public async Task DeleteContractOfferAsync(int contractOfferId)
@@ -158,6 +179,7 @@ WHERE Id = $offerId
         cmd.Parameters.AddWithValue("$agentId", agent.Id);
 
         await cmd.ExecuteNonQueryAsync();
+        await _savePersistenceService.PersistCurrentSaveAsync("inbox:delete-contract-offer");
     }
 
     public async Task DeleteProcessedContractOffersAsync()
@@ -180,6 +202,7 @@ WHERE Status <> 'Pending'
         cmd.Parameters.AddWithValue("$agentId", agent.Id);
 
         await cmd.ExecuteNonQueryAsync();
+        await _savePersistenceService.PersistCurrentSaveAsync("inbox:delete-processed-contract-offers");
     }
 
     public async Task ResolveDecisionAsync(int decisionId, string optionKey)
@@ -238,6 +261,7 @@ WHERE Id = $decisionId;";
         }
 
         tx.Commit();
+        await _savePersistenceService.PersistCurrentSaveAsync("inbox:resolve-decision");
     }
 
     private async Task<string> ApplyDecisionOutcomeAsync(

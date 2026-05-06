@@ -2,6 +2,7 @@ using Microsoft.Data.Sqlite;
 using MMAAgent.Application.Abstractions;
 using MMAAgent.Infrastructure.Persistence.Sqlite;
 using MMAAgent.Web.Helpers;
+using MMAAgent.Web.Infrastructure;
 using MMAAgent.Web.Models;
 
 namespace MMAAgent.Web.Services;
@@ -11,15 +12,18 @@ public sealed class WebAgentProfileService
     private readonly IAgentProfileRepository _agentRepository;
     private readonly IManagedFighterRepository _managedFighterRepository;
     private readonly SqliteConnectionFactory _factory;
+    private readonly ISavePersistenceService _savePersistenceService;
 
     public WebAgentProfileService(
         IAgentProfileRepository agentRepository,
         IManagedFighterRepository managedFighterRepository,
-        SqliteConnectionFactory factory)
+        SqliteConnectionFactory factory,
+        ISavePersistenceService savePersistenceService)
     {
         _agentRepository = agentRepository;
         _managedFighterRepository = managedFighterRepository;
         _factory = factory;
+        _savePersistenceService = savePersistenceService;
     }
 
     public async Task<AgentProfileVm?> LoadAsync()
@@ -79,6 +83,7 @@ WHERE Id = $agentId;";
         cmd.Parameters.AddWithValue("$level", safeLevel);
         cmd.Parameters.AddWithValue("$agentId", agent.Id);
         await cmd.ExecuteNonQueryAsync();
+        await _savePersistenceService.PersistCurrentSaveAsync($"agent-profile:{columnName}");
     }
 
     private async Task<(int CampInvestmentLevel, int MedicalInvestmentLevel, int ScoutingStaffLevel, int MediaStaffLevel, int NegotiationStaffLevel, int PerformanceStaffLevel)> LoadAgentLevelsAsync(int agentId)
